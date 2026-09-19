@@ -163,12 +163,21 @@ class GCRefCountedPtr {
 
     void SetPtr(_detail::RefCountedObj<T>* obj) { obj_.store(obj, std::memory_order_release); }
 
+
  public:
     GCRefCountedPtr() : obj_(nullptr) {}
 
     explicit GCRefCountedPtr(T* obj) { SetPtr(new _detail::RefCountedObj<T>(obj)); }
 
     ~GCRefCountedPtr() { DerefPtr(GetPtr()); }
+
+    /** True if any thread holds a ScopedRef to the managed object.
+     *  Lock-free; the caller must ensure no concurrent Reference/Dereference
+     *  makes the result stale. Used by the graph eviction logic (Phase 2). */
+    bool HasOutstandingRefs() const {
+        auto obj = GetPtr();
+        return obj && obj->HasReference();
+    }
 
     GCRefCountedPtr(const GCRefCountedPtr& rhs) {
         auto obj = rhs.GetPtr();
