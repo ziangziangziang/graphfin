@@ -146,6 +146,14 @@ class OpGqlCreate : public OpBase {
     }
 
     void CreateVE(RTContext *ctx) {
+        // Per-record state: CREATE must run once per input record (e.g.
+        // UNWIND ... CREATE), not only for the first one. Reset the
+        // created-node flags before this record so every record creates its
+        // own vertices/edges; the flags still dedupe shared nodes *within*
+        // a single record (e.g. (a)-[:R]->(b), (a)-[:R2]->(c)).
+        for (auto &node : pattern_graph_->GetNodes()) {
+            if (node.derivation_ == Node::CREATED) node.Visited() = false;
+        }
         for (auto path : paths_) {
             auto start = path->head();
             if (!start->filler()->v().has_value()) CYPHER_TODO();

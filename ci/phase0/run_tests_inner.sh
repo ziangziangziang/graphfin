@@ -43,9 +43,18 @@ run_it() {
     # Stage the test tree the way ci/github_ci.sh does.
     cp -r "${REPO}"/test/integration/* . 2>/dev/null
     cp -r "${REPO}"/src/client/python/TuGraphClient/*.py . 2>/dev/null
-    mkdir -p learn/examples demo/movie 2>/dev/null
+    mkdir -p learn/examples 2>/dev/null
     cp -r "${REPO}"/learn/examples/* learn/examples/ 2>/dev/null
-    cp -r "${REPO}"/demo/movie/* demo/movie/ 2>/dev/null
+    # github_ci.sh copies demo/movie into cwd; test_http_server.py reads
+    # ./movie/import.json.
+    cp -r "${REPO}"/demo/movie . 2>/dev/null
+    # cpp client test binary (ci/github_ci.sh:68-71), built out-of-source so
+    # the source tree stays clean.
+    mkdir -p "${REPO}"/build/clienttest
+    cmake -S "${REPO}"/test/test_rpc_client/cpp/CppClientTest \
+          -B "${REPO}"/build/clienttest >>"$OUT/it.log" 2>&1
+    cmake --build "${REPO}"/build/clienttest -j2 >>"$OUT/it.log" 2>&1
+    cp "${REPO}"/build/clienttest/clienttest . 2>/dev/null
     # BUILD_PROCEDURE=OFF: the algorithm/procedure suites cannot run.
     rm -f test_algo.py test_algo_v2.py test_sampling.py test_train.py
 

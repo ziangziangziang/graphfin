@@ -60,6 +60,20 @@ class Galaxy {
     double retry_login_time = 0.0;
 
  private:
+    /** Stops the current eviction task (if any) and waits for any in-flight
+     *  run to finish. Safe to call multiple times. */
+    void StopEvictionTask();
+
+    /** (Re)creates the idle-graph eviction task bound to this Galaxy, not to a
+     *  specific GraphManager: the callback re-resolves graphs_ under
+     *  graphs_lock_, so it stays correct across the copy-on-write in
+     *  CreateGraph/DeleteGraph/ModGraph. Returns the new task. */
+    fma_common::TimedTaskScheduler::TaskPtr StartEvictionTask();
+
+    /** Callback for the eviction task. Resolves the current manager under
+     *  graphs_lock_ so it can never fire on a destroyed manager. */
+    void EvictIdleGraphsTick();
+
     mutable KillableRWLock reload_lock_;
     Config config_;
     std::shared_ptr<GlobalConfig> global_config_;

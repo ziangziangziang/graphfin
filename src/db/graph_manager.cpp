@@ -66,8 +66,7 @@ lgraph::GraphManager::GraphManager(const GraphManager& rhs)
       parent_dir_(rhs.parent_dir_),
       config_(rhs.config_),
       metrics_(rhs.metrics_),
-      lock_(),
-      evict_task_(nullptr) {}
+      lock_() {}
 
 lgraph::GraphManager& lgraph::GraphManager::operator=(const GraphManager& rhs) {
     if (this != &rhs) {
@@ -77,7 +76,6 @@ lgraph::GraphManager& lgraph::GraphManager::operator=(const GraphManager& rhs) {
         parent_dir_ = rhs.parent_dir_;
         config_ = rhs.config_;
         metrics_ = rhs.metrics_;
-        evict_task_ = nullptr;
     }
     return *this;
 }
@@ -323,17 +321,6 @@ void lgraph::GraphManager::CloseAllGraphs() {
     std::unique_lock<std::mutex> l(m);
     while (n_opened != n_destroyed) cv.wait(l);
     open_graphs_.clear();
-}
-
-fma_common::TimedTaskScheduler::TaskPtr lgraph::GraphManager::StartEvictionTask() {
-    if (evict_task_) return evict_task_;
-    auto& scheduler = fma_common::TimedTaskScheduler::GetInstance();
-    int period_s = config_.graph_idle_timeout_s > 0
-                       ? std::max(config_.graph_idle_timeout_s / 2, 5)
-                       : 5;
-    evict_task_ = scheduler.ScheduleReccurringTask(
-        period_s * 1000, [this](fma_common::TimedTask*) { EvictIdleGraphs(); });
-    return evict_task_;
 }
 
 void lgraph::GraphManager::OpenGraphInternal(const std::string& name, const DBConfig& config) {

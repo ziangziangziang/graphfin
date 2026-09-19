@@ -69,8 +69,45 @@ lgraph::Galaxy::Galaxy(const lgraph::Galaxy::Config& config, bool create_if_not_
 }
 
 lgraph::Galaxy::~Galaxy() {
+    // Stop the idle-eviction task and wait for any in-flight run before the
+    // manager is destroyed: without this, the process-global scheduler can
+    // fire the eviction callback into freed memory after ~Galaxy returns
+    // (observed as a SIGSEGV in GraphManager::EvictIdleGraphs).
+    StopEvictionTask();
     // make sure all graphs are closed, so that they are persisted if necessary
     graphs_->CloseAllGraphs();
+}
+
+void lgraph::Galaxy::StopEvictionTask() {
+    if (evict_task_) {
+        evict_task_->Cancel();
+        evict_task_ = nullptr;
+        // The recurring task copies its function and runs it outside the task
+        // list lock, so Cancel() alone cannot stop an in-flight run. Holding
+        // graphs_lock_ write here is the drain barrier: an in-flight
+        // EvictIdleGraphsTick holds graphs_lock_ read, so acquiring write
+        // blocks until it finishes. After Cancel, no new run is scheduled.
+        AutoWriteLock l(graphs_lock_, GetMyThreadId());
+    }
+}
+
+fma_common::TimedTaskScheduler::TaskPtr lgraph::Galaxy::StartEvictionTask() {
+    auto& scheduler = fma_common::TimedTaskScheduler::GetInstance();
+    int period_s = global_config_->graph_idle_timeout_s > 0
+                       ? std::max(global_config_->graph_idle_timeout_s / 2, 5)
+                       : 5;
+    evict_task_ = scheduler.ScheduleReccurringTask(
+        period_s * 1000, [this](fma_common::TimedTask*) { EvictIdleGraphsTick(); });
+    return evict_task_;
+}
+
+void lgraph::Galaxy::EvictIdleGraphsTick() {
+    // Resolve the current manager under graphs_lock_ and hold the read lock
+    // for the whole eviction, so a concurrent CreateGraph/DeleteGraph/ModGraph
+    // copy-on-write (which takes graphs_lock_ write) can never destroy the
+    // manager while it is being evicted.
+    AutoReadLock l(graphs_lock_, GetMyThreadId());
+    if (graphs_) graphs_->EvictIdleGraphs();
 }
 
 bool lgraph::Galaxy::ValidateUser(const std::string& user, const std::string& password) {
@@ -494,6 +531,7 @@ void lgraph::Galaxy::LoadIpWhitelist(KvTransaction& txn) {
 
 bool lgraph::Galaxy::LoadSnapshot(const std::string& dir) {
     _HoldWriteLock(reload_lock_);
+    StopEvictionTask();
     auto confs = graphs_->ListGraphs();
     auto metaDir = GetMetaStoreDir(config_.dir);
     store_.reset(nullptr);
@@ -589,12 +627,10 @@ void lgraph::Galaxy::ReloadFromDisk(bool create_if_not_exist) {
     // now load contents
     GraphManager::Config gmc(*global_config_);
     gmc.load_plugins = config_.load_plugins;
-    // cancel the old eviction task before destroying the old manager: the
-    // task captures the manager pointer, which is about to be replaced
-    if (evict_task_) {
-        evict_task_->Cancel();
-        evict_task_ = nullptr;
-    }
+    // stop the old eviction task before destroying the old manager: the task
+    // resolves graphs_ through this Galaxy under graphs_lock_, and this
+    // manager is about to be replaced
+    StopEvictionTask();
     graphs_.reset(new GraphManager());
     graphs_->Init(store_.get(), *txn, _detail::GRAPH_CONFIG_TABLE_NAME, config_.dir, gmc);
     acl_.reset(new AclManager());
@@ -603,7 +639,7 @@ void lgraph::Galaxy::ReloadFromDisk(bool create_if_not_exist) {
         acl_->AddGraph(*txn, _detail::DEFAULT_ADMIN_NAME, _detail::DEFAULT_GRAPH_DB_NAME);
     txn->Commit();
     // start lazy-graph eviction after the catalog is committed
-    evict_task_ = graphs_->StartEvictionTask();
+    StartEvictionTask();
 }
 
 int64_t lgraph::Galaxy::GetRaftLogIndex() const { return LMDBKvStore::GetLastOpIdOfAllStores(); }

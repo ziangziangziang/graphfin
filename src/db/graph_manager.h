@@ -159,9 +159,6 @@ class GraphManager {
     std::shared_ptr<Metrics> metrics_;
     // Protects open_graphs_, the LRU order, and catalog mutations.
     mutable KillableRWLock lock_;
-    // Owned (started/cancelled) by Galaxy, which is not copied, so that the
-    // eviction callback can never outlive the manager it points at.
-    fma_common::TimedTaskScheduler::TaskPtr evict_task_;
 
     std::string GenNewGraphSubDir();
 
@@ -244,13 +241,9 @@ class GraphManager {
      *  a time instead of letting the open set grow to max_open_graphs. */
     void CloseGraph(const std::string& name);
 
-    /** Starts (or restarts) the idle-eviction task. Called by Galaxy after
-     *  (re)creating the manager; Galaxy owns the returned task and cancels it
-     *  before destroying this manager, so the callback can never fire on a
-     *  destroyed manager. */
-    fma_common::TimedTaskScheduler::TaskPtr StartEvictionTask();
-
-    // closes graphs idle longer than graph_idle_timeout_s; called by the task
+    /** Evicts graphs idle longer than graph_idle_timeout_s. Called by the
+     *  Galaxy-owned eviction task, which resolves this manager through the
+     *  current Galaxy::graphs_ pointer under graphs_lock_. */
     void EvictIdleGraphs();
 
     // registers a graph config in the catalog; called after the KV commit
