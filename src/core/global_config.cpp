@@ -44,6 +44,7 @@ std::map<std::string, std::string> lgraph::GlobalConfig::FormatAsOptions() const
     AddOption(options, "durable", durable);
     AddOption(options, "optimistic transaction", txn_optimistic);
     AddOption(options, "lmdb notls", lmdb_notls);
+    AddOption(options, "max open graphs", max_open_graphs);
     AddOption(options, "Backup log enable", enable_backup_log);
     AddOption(options, "Whether the token is unlimited", unlimited_token);
     AddOption(options, "reset admin password if you forget", reset_admin_password);
@@ -114,6 +115,8 @@ std::map<std::string, lgraph::FieldData> lgraph::GlobalConfig::ToFieldDataMap() 
     v["lmdb_notls"] = FieldData(lmdb_notls);
     v["lmdb_max_dbs"] = FieldData(lmdb_max_dbs);
     v["max_graphs"] = FieldData(max_graphs);
+    v["max_open_graphs"] = FieldData(max_open_graphs);
+    v["graph_idle_timeout_s"] = FieldData(graph_idle_timeout_s);
     v[lgraph::_detail::OPT_IP_CHECK_ENABLE] = FieldData(enable_ip_check);
     v[lgraph::_detail::OPT_AUDIT_LOG_ENABLE] = FieldData(enable_audit_log);
     v["enable_fulltext_index"] = FieldData(ft_index_options.enable_fulltext_index);
@@ -285,6 +288,16 @@ fma_common::Configuration lgraph::GlobalConfig::InitConfig
             " 1000 graphs: without it LMDB uses one pthread TLS key per environment"
             " and the process hits the fixed PTHREAD_KEYS_MAX (1024) limit, failing"
             " with EAGAIN. Set to false only to restore the previous behaviour.");
+    argparser.Add(max_open_graphs, "max_open_graphs", true)
+        .SetMin(1)
+        .Comment(
+            "Maximum number of graphs physically open at one time. Registered"
+            " graphs beyond this are opened lazily and evicted LRU.");
+    argparser.Add(graph_idle_timeout_s, "graph_idle_timeout_s", true)
+        .SetMin(0)
+        .Comment(
+            "Evict graphs idle longer than this many seconds (0 = only evict"
+            " when the open count exceeds max_open_graphs).");
     argparser.Add(max_graphs, "max_graphs", true)
         .SetMin(0)
         .Comment(

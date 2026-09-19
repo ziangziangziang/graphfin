@@ -121,6 +121,13 @@ struct BasicConfigs {
     // application-level limit; resource limits are then the natural bound.
     // Replaces the former hard-coded MAX_NUM_GRAPHS = 4096.
     int max_graphs = 0;
+    // Maximum number of graphs physically open (LMDB env + validator thread +
+    // ~3 fds each). Registered graphs beyond this are opened lazily on first
+    // access and evicted LRU. See docs/architecture/07-scalability-risks.md.
+    int max_open_graphs = 1000;
+    // Evict graphs idle longer than this many seconds (0 = only evict when the
+    // open count exceeds max_open_graphs).
+    int graph_idle_timeout_s = 900;
     BrowserOptions browser_options;
 };
 

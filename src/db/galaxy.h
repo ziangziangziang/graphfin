@@ -24,6 +24,7 @@
 
 #include "fma-common/thread_pool.h"
 #include "fma-common/rw_lock.h"
+#include "fma-common/timed_task.h"
 #include "fma-common/utils.h"
 
 #include "core/global_config.h"
@@ -70,6 +71,7 @@ class Galaxy {
     std::unique_ptr<AclManager> acl_;
     mutable KillableRWLock acl_lock_;
     std::unique_ptr<GraphManager> graphs_;
+    fma_common::TimedTaskScheduler::TaskPtr evict_task_;
     mutable KillableRWLock graphs_lock_;
     TokenManager token_manager_;
     std::unique_ptr<KvTable> db_info_table_;
@@ -88,6 +90,10 @@ class Galaxy {
 
     inline const Config& GetConfig() const { return config_; }
     inline const std::shared_ptr<GlobalConfig> GetGlobalConfigPtr() const { return global_config_; }
+    inline GraphManager* GetGraphManager() { return graphs_.get(); }
+    inline size_t RegisteredGraphCount() const { return graphs_->RegisteredGraphCount(); }
+    inline size_t OpenGraphCount() const { return graphs_->OpenGraphCount(); }
+    inline const GraphManager::Metrics& GetGraphMetrics() const { return graphs_->GetMetrics(); }
 
     std::string GetUserToken(const std::string& user, const std::string& password);
 
