@@ -121,3 +121,7 @@ deps/geax-front-end/.gitignore
 deps/geax-front-end/LEGAL.md
 deps/geax-front-end/README.md
 deps/geax-front-end/cpplint
+
+# Phase 0 build/benchmark logs and scratch artifacts
+phase0-logs/
+phase0-results/

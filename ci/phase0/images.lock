@@ -1,0 +1,147 @@
+# TuGraph Scaling Project - Phase 0 pinned container environment
+#
+# Every Phase 0 build, test and benchmark run must use the exact images below.
+# The image ID is the reproducibility anchor: `tugraph-compile-arm64:local` and
+# `tugraph-runtime-arm64:local` are local tags whose content can change, but the
+# IDs below cannot. See env/README.md for how to transfer this environment to
+# another machine byte-for-byte.
+#
+# Recorded: 2026-09-18
+# Baseline host: Apple Silicon (arm64), macOS, Docker 29.4.0, linux/aarch64 engine
+# Docker VM: ~7.8 GiB RAM, 10 CPUs available to the engine
+
+[compile]
+image      = tugraph-compile-arm64:local
+image_id   = sha256:08852abd955a1e6d73fd9539b5475f99d933a705807179537c0461b7f1d76080
+platform   = linux/arm64
+os         = CentOS Linux 7.9.2009 (AltArch)
+role       = base compile toolchain; NOT used directly by Phase 0 (kept pristine)
+
+[compile_phase0]
+# Derived image actually used for all Phase 0 builds and benchmarks.
+# = [compile] + `pip3 install cython==3.0.0`.
+# See env/Dockerfile.phase0 for why the Cython upgrade is required.
+image      = tugraph-compile-arm64:phase0
+image_id   = sha256:2350a9a1f998b6898b169d28015c60c49b488def8980b9553a657819763afedf
+platform   = linux/arm64
+os         = CentOS Linux 7.9.2009 (AltArch)
+based_on   = sha256:08852abd955a1e6d73fd9539b5475f99d933a705807179537c0461b7f1d76080
+build      = docker build -f ci/phase0/env/Dockerfile.phase0 -t tugraph-compile-arm64:phase0 .
+
+[runtime]
+image      = tugraph-runtime-arm64:local
+image_id   = sha256:4a3114b40dae6ae3f90700154d879e6e8189f3511a71b8133d19b3ba72366689
+platform   = linux/arm64
+os         = CentOS Linux 7.9.2009 (AltArch)
+
+# ---------------------------------------------------------------------------
+# Toolchain expected inside the compile image (verified 2026-09-18)
+# ---------------------------------------------------------------------------
+[compile.toolchain]
+gcc              = 8.4.0
+cmake            = 3.25.2
+make             = GNU make
+protoc           = libprotoc 3.6.0
+python           = 3.6.9
+cython           = 0.29.37 in [compile]; 3.0.0 in [compile_phase0].
+                   src/cython/lgraph_db_python.py uses Cython 3.0 pure-Python
+                   mode syntax, so 0.29.37 fails to compile it:
+                     Cannot take address of Python object attribute 'db'
+                   The repo's ci/images Dockerfile pins cython==3.0.0a11, an
+                   alpha that was never published to PyPI; 3.0.0 final installs
+                   and works on Python 3.6.9.
+java             = openjdk 1.8.0_412 is the default on PATH; java-11-openjdk
+                   (11.0.23) is installed at /usr/lib/jvm/java-11-openjdk with
+                   JNI headers present. JAVA_HOME is unset in a plain
+                   `docker run`, so JNI/fulltext builds need JAVA_HOME set.
+                   ENABLE_FULLTEXT_INDEX is OFF (the default) for Phase 0.
+antlr4_runtime   = 4.13.0
+nproc            = 10 (in-container; limited by the Docker VM)
+
+[compile.key_libraries]
+# Paths are in-container. Listed so a divergent image is detected early.
+brpc             = /usr/local/lib64/libbrpc.a
+braft            = /usr/local/lib/libbraft.{a,so}
+rocksdb          = /usr/lib64/librocksdb.{a,so,so.7,so.7.8.3}
+leveldb          = /usr/local/lib/libleveldb.{a,so,so.1}
+cpprest          = /usr/local/lib64/libcpprest.a
+antlr4-runtime   = /usr/local/lib/libantlr4-runtime.{a,so,so.4.13.0}
+gtest/gmock      = /usr/local/lib64/libgtest{,_main}.a, libgmock{,_main}.a
+boost            = 1.68.0 (/usr/local/include/boost)
+openssl          = 1.0.2k, SYSTEM package at /usr/lib64/libssl.{a,so.1.0.2k,so.10}
+                   (there is no /usr/local OpenSSL; CMake finds /usr/lib64)
+vsag             = 0.11.5 (/usr/local/include/vsag, /usr/local/lib*/libvsag*.a)
+arrow            = 13.0.0
+protobuf         = 3.6.0
+jemalloc         = present
+
+# ---------------------------------------------------------------------------
+# Build configuration used for the Phase 0 baseline
+# ---------------------------------------------------------------------------
+[build]
+command = ci/phase0/build.sh
+cmake_args =
+    -DOURSYSTEM=centos7
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo
+    -DBUILD_PROCEDURE=OFF
+    -DWITH_TESTS=ON
+    -DENABLE_BUILD_ON_AARCH64=ON   # added automatically by build.sh on arm64
+output_dir = build/output       # all binaries and libs are flat here
+parallelism = -j2               # required: -j4 OOM-kills cc1plus on this VM
+notes =
+    BUILD_PROCEDURE=OFF matches the upstream unit-test CI job
+    (ci/github_ci.sh). The `learn/` and `procedures/` trees are demo
+    procedures and are not required for Phase 0 measurements.
+
+    PARALLELISM: cypher/execution_plan/*.cpp TUs each need 1.5-2.5 GiB of
+    compiler RSS. With the baseline Docker VM at ~7.8 GiB RAM, `-j4` runs four
+    of them concurrently, exhausts RAM + swap, and the kernel OOM killer
+    terminates the compiler:
+        c++: fatal error: Killed signal terminated program cc1plus
+        make[2]: *** [.../execution_plan.cpp.o] Error 1
+    Measured effect: -j4 also swaps heavily and drops to ~0.6 TUs/min, versus
+    ~2 concurrent TUs with no swapping at -j2. build.sh therefore defaults to
+    -j2. Raise JOBS only after raising the container memory limit.
+
+    ARCHITECTURE: deps/geax-front-end/CMakeLists.txt:52-61 applies `-msse4.2`
+    (x86-only) unless ENABLE_BUILD_ON_AARCH64=ON. Without that flag a clean
+    arm64 build fails early with:
+        c++: 错误：unrecognized command line option '-msse4.2'
+    The flag exists upstream but defaults to OFF and is not documented in the
+    build instructions. build.sh detects aarch64 and sets it automatically.
+    This is the one build-affecting change Phase 0 requires on arm64.
+
+# ---------------------------------------------------------------------------
+# Required runtime limits for multi-graph runs (1000-4000 graphs)
+# ---------------------------------------------------------------------------
+# Each open graph holds ~3 file descriptors measured (2 LMDB files
+# data.mdb/lock.mdb plus one more), ~4.4 memory mappings and one validator
+# thread. The binding constraint turned out NOT to be any of these: graph
+# creation fails at 998 graphs because LMDB allocates one pthread TLS key per
+# environment and glibc caps keys at PTHREAD_KEYS_MAX = 1024. See
+# ../../../docs/architecture/07-scalability-risks.md R0.
+[limits]
+nofile            = 1048576   # container: --ulimit nofile=1048576:1048576
+vm.max_map_count  = 262144 in-container (Docker Desktop default; measured by
+                    ci/phase0/doctor.sh). Not the binding limit: only ~4.4k
+                    mappings are in use at the 998-graph failure point.
+nproc             = 10
+memory            = container runs unconstrained inside the ~7.8 GiB VM
+                    unless a benchmark run sets --memory explicitly.
+                    Not the binding limit: ~1.9 GiB RSS at 998 graphs.
+
+# ---------------------------------------------------------------------------
+# Provenance / caveat
+# ---------------------------------------------------------------------------
+# The local images were NOT built from this checkout. `docker history` shows
+# `COPY vendor/vsag_deps_patch.py` and `COPY vendor/vsag-deps`, but
+# `ci/images/vendor/` does not exist at commit 672e4b199 -- the image was built
+# from a different (newer) revision of ci/images/tugraph-compile-arm64v8-centos7-Dockerfile.
+#
+# Consequence: this checkout's Dockerfile is *not* a verified reproduction of the
+# pinned image. Phase 0 therefore pins by image ID and provides a transfer
+# recipe (env/README.md) instead of claiming a from-source rebuild. Rebuilding
+# the toolchain image from source is tracked as a Phase 0 residual risk.
+#
+# Verification command (must match image_id above):
+#   docker image inspect tugraph-compile-arm64:local --format '{{.Id}}'
