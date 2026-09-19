@@ -2,9 +2,11 @@ name: ci
 
 on:
   push:
+    branches:
+      - main
   pull_request:
     branches:
-      - '*'
+      - main
 
 env:
   TEST_TAG: tugraph/tugraph-ut:test
@@ -55,7 +57,7 @@ jobs:
             BUILD_TYPE=no_asan
             TEST_TYPE=ut
           secrets: |
-            "CODECOV_TOKEN=${{ secrets.CODECOV_TOKEN }}"
+            ${{ secrets.CODECOV_TOKEN && format('CODECOV_TOKEN={0}', secrets.CODECOV_TOKEN) || '' }}
       - name: Check disk space
         if: always()
         run: df -h
@@ -99,7 +101,7 @@ jobs:
             BUILD_TYPE=asan
             TEST_TYPE=ut
           secrets: |
-            "CODECOV_TOKEN=${{ secrets.CODECOV_TOKEN }}"
+            ${{ secrets.CODECOV_TOKEN && format('CODECOV_TOKEN={0}', secrets.CODECOV_TOKEN) || '' }}
       - name: Check disk space
         if: always()
         run: df -h
@@ -143,7 +145,7 @@ jobs:
             BUILD_TYPE=no_asan
             TEST_TYPE=it
           secrets: |
-            "CODECOV_TOKEN=${{ secrets.CODECOV_TOKEN }}"
+            ${{ secrets.CODECOV_TOKEN && format('CODECOV_TOKEN={0}', secrets.CODECOV_TOKEN) || '' }}
       - name: Check disk space
         if: always()
         run: df -h

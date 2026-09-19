@@ -14,9 +14,11 @@ name: phase0-baseline
 
 on:
   push:
-    branches: ['*']
+    branches:
+      - main
   pull_request:
-    branches: ['*']
+    branches:
+      - main
   workflow_dispatch:
   schedule:
     # Weekly full benchmark (1/100/1000/4000 graphs) on the default branch.
