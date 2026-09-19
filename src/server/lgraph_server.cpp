@@ -117,6 +117,14 @@ int LGraphServer::Start() {
     // assign AccessControllerDB enable_plugin
     AccessControlledDB::SetEnablePlugin(config_->enable_plugin);
     // adjust config
+    // Gap 1 prevention: Bolt with legacy HA requires Bolt HA to avoid
+    // silent replica divergence (docs/architecture/09-write-path-audit.md).
+    if (config_->bolt_port > 0 && config_->enable_ha && config_->bolt_raft_port == 0) {
+        LOG_ERROR() << "Bolt port requires --bolt_raft_port when running in HA mode. "
+                    << "Without Bolt Raft, Bolt writes are not replicated and "
+                    << "replica state silently diverges.";
+        return -1;
+    }
     if (config_->enable_ha && config_->ha_log_dir.empty()) {
 #if LGRAPH_SHARE_DIR
         LOG_ERROR() << "HA is enabled, but ha_log_dir is not specified.";

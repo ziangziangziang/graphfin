@@ -201,8 +201,10 @@ void lgraph::HaStateMachine::on_shutdown() { LOG_DEBUG() << "This node is down";
 }
 
 void lgraph::HaStateMachine::on_error(const ::braft::Error& e) {
-    // LeaveGroup();
     LOG_INFO() << "Met raft error " << e;
+    if (e.type() == ::braft::ERROR_TYPE_STATE_MACHINE) {
+        LeaveGroup();
+    }
 }
 
 void lgraph::HaStateMachine::on_configuration_committed(const ::braft::Configuration& conf) {
@@ -369,6 +371,7 @@ void lgraph::HaStateMachine::on_apply(braft::Iterator& iter) {
         if (should_apply) {
             ApplyRequestDirectly(req, resp);
             galaxy_->SetRaftLogIndexBeforeWrite(iter.index());
+            last_applied_index_.store(iter.index(), std::memory_order_release);
         } else {
             RespondBadInput(resp, fma_common::StringFormatter::Format(
                                       "Skipping old request. Request seq={}, current DB version={}",
@@ -633,6 +636,7 @@ void lgraph::HaStateMachine::SendHeartbeatToMasterLocked() {
 }
 
 void lgraph::HaStateMachine::LeaveGroup() {
+    std::lock_guard<std::mutex> l(hb_mutex_);
     if (node_) {
         // if i am the leader, transfer leadership
         if (node_->is_leader()) {
@@ -664,9 +668,25 @@ void lgraph::HaStateMachine::LeaveGroup() {
     }
 }
 
+lgraph::StateMachine::RaftMetrics lgraph::HaStateMachine::GetRaftMetrics() const {
+    RaftMetrics m;
+    m.current_term = leader_term_.load(std::memory_order_acquire);
+    m.is_leader = m.current_term > 0;
+    if (galaxy_) {
+        m.commit_index = galaxy_->GetRaftLogIndex();
+    }
+    m.applied_index = last_applied_index_.load(std::memory_order_acquire);
+    return m;
+}
+
 std::vector<lgraph::HaStateMachine::Peer> lgraph::HaStateMachine::ListPeers() const {
     std::vector<Peer> ret;
-    if (node_->is_leader()) {
+    bool is_leader;
+    {
+        std::lock_guard<std::mutex> l(hb_mutex_);
+        is_leader = node_ && node_->is_leader();
+    }
+    if (is_leader) {
         std::lock_guard<std::mutex> l(hb_mutex_);
         ret.reserve(heartbeat_states_.size() + 1);
         ret.emplace_back(my_rpc_addr_, my_rest_addr_, NodeState::JOINED_MASTER,

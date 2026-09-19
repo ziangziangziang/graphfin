@@ -65,6 +65,7 @@ std::map<std::string, std::string> lgraph::GlobalConfig::FormatAsOptions() const
     AddOption(options, "number of bolt io threads", bolt_io_thread_num);
     AddOption(options, "bolt raft port", bolt_raft_port);
     AddOption(options, "bolt raft node id", bolt_raft_node_id);
+    AddOption(options, "bolt raft logstore path", bolt_raft_logstore_path);
     return options;
 }
 
@@ -407,6 +408,8 @@ fma_common::Configuration lgraph::GlobalConfig::InitConfig
     argparser.Add(bolt_raft_election_tick, "bolt_raft_election_tick", true)
         .Comment("Bolt raft election tick.");
 
+    argparser.Add(bolt_raft_logstore_path, "bolt_raft_logstore_path", true)
+        .Comment("Bolt raft logstore path. Defaults to <db_dir>/raftlog if empty.");
     argparser.Add(bolt_raft_logstore_cache, "bolt_raft_logstore_cache", true)
         .Comment("Bolt raft logstore cache in MB.");
     argparser.Add(bolt_raft_logstore_threads, "bolt_raft_logstore_threads", true)

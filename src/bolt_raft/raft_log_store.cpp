@@ -31,6 +31,8 @@ const char raft_hardstate_key[] = "hardState";
 const char raft_applyindex_key[] = "applyIndex";
 const char raft_confstate_key[] = "confState";
 const char raft_nodeinfos_key[] = "nodeInfos";
+const char raft_snapshot_index_key[] = "snapIndex";
+const char raft_snapshot_term_key[] = "snapTerm";
 
 bool RaftLogStorage::Init() {
     std::string value;
@@ -73,10 +75,22 @@ bool RaftLogStorage::Init() {
     last_entry_index_ = get_last_log_entry().index();
     conf_state_ = std::move(confstate);
     hard_state_ = std::move(hardstate);
+
+    std::string snap_val;
+    auto snap_s = db_->Get(rocksdb::ReadOptions(), meta_cf_, raft_snapshot_index_key, &snap_val);
+    if (snap_s.ok()) {
+        snapshot_index_ = std::stoull(snap_val);
+    }
+    snap_s = db_->Get(rocksdb::ReadOptions(), meta_cf_, raft_snapshot_term_key, &snap_val);
+    if (snap_s.ok()) {
+        snapshot_term_ = std::stoull(snap_val);
+    }
+
     LOG_INFO() << FMA_FMT(
-        "read raft state from db, first_index:{}, last_index:{}, hardstate:[{}], confstate:[{}]",
-        first_entry_index_, last_entry_index_, hardstate.ShortDebugString(),
-        confstate.ShortDebugString());
+        "read raft state from db, first_index:{}, last_index:{}, "
+        "snap_index:{}, snap_term:{}, hardstate:[{}], confstate:[{}]",
+        first_entry_index_, last_entry_index_, snapshot_index_, snapshot_term_,
+        hardstate.ShortDebugString(), confstate.ShortDebugString());
     return last_entry_index_ > 0;
 }
 
@@ -299,8 +313,63 @@ std::pair<uint64_t, eraft::Error> RaftLogStorage::LastIndex() { return {lastInde
 
 std::pair<uint64_t, eraft::Error> RaftLogStorage::FirstIndex() { return {firstIndex(), nullptr}; }
 
+void RaftLogStorage::SetSnapshot(const raftpb::SnapshotMetadata& meta,
+                                 rocksdb::WriteBatch& batch) {
+    batch.Put(meta_cf_, raft_snapshot_index_key, std::to_string(meta.index()));
+    batch.Put(meta_cf_, raft_snapshot_term_key, std::to_string(meta.term()));
+    snapshot_index_ = meta.index();
+    snapshot_term_ = meta.term();
+    LOG_INFO() << FMA_FMT("set snapshot meta, index:{}, term:{}", snapshot_index_, snapshot_term_);
+}
+
+raftpb::SnapshotMetadata RaftLogStorage::GetSnapshotMeta() {
+    raftpb::SnapshotMetadata meta;
+    meta.set_index(snapshot_index_);
+    meta.set_term(snapshot_term_);
+    *meta.mutable_conf_state() = conf_state_;
+    return meta;
+}
+
+eraft::Error RaftLogStorage::ApplySnapshot(const raftpb::SnapshotMetadata& meta,
+                                           rocksdb::WriteBatch& batch) {
+    // Per etcd-raft's MemoryStorage::ApplySnapshot contract: reject an
+    // out-of-date snapshot and reset the stable log anchor to the snapshot.
+    if (snapshot_index_ >= meta.index()) {
+        LOG_WARN() << "ignore out-of-date snapshot, current_snap: " << snapshot_index_
+                   << ", incoming: " << meta.index();
+        return eraft::ErrSnapOutOfDate;
+    }
+    // Delete all log entries and re-anchor the dummy entry at the snapshot.
+    auto s = db_->DeleteRange({}, log_cf_, raft_log_key(0),
+                              raft_log_key(std::numeric_limits<uint64_t>::max()));
+    if (!s.ok()) {
+        return eraft::Error("failed to delete log range on snapshot apply: " + s.ToString());
+    }
+    raftpb::Entry anchor;
+    anchor.set_index(meta.index());
+    anchor.set_term(meta.term());
+    std::string value;
+    anchor.SerializeToString(&value);
+    batch.Put(log_cf_, raft_log_key(meta.index()), value);
+    first_entry_index_ = meta.index();
+    last_entry_index_ = meta.index();
+    SetSnapshot(meta, batch);
+    return nullptr;
+}
+
 std::pair<raftpb::Snapshot, eraft::Error> RaftLogStorage::Snapshot() {
-    // disable snapshot
-    return {raftpb::Snapshot{}, eraft::ErrSnapshotTemporarilyUnavailable};
+    if (snapshot_index_ == 0) {
+        // No snapshot has been taken yet. Report it so the Raft node will keep
+        // its normal log-replication path; a follower that needs a snapshot
+        // before one exists will have to wait for the periodic GC/snapshot
+        // cycle to produce one.
+        return {raftpb::Snapshot{}, eraft::ErrSnapshotTemporarilyUnavailable};
+    }
+    raftpb::Snapshot snap;
+    auto* meta = snap.mutable_metadata();
+    meta->set_index(snapshot_index_);
+    meta->set_term(snapshot_term_);
+    *meta->mutable_conf_state() = conf_state_;
+    return {std::move(snap), nullptr};
 }
 }  // namespace bolt_raft

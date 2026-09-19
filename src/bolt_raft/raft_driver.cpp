@@ -451,14 +451,36 @@ void RaftDriver::CheckAndCompactLog() {
     raft_service_.post([this]() mutable {
         auto first = storage_->FirstIndex().first;
         auto applied = rn_->raft_->raftLog_->applied_;
-        if (applied > first) {
-            if (applied - first >= store_config_.keep_logs + 100000) {
-                auto compacted = applied - store_config_.keep_logs;
-                storage_->Compact(compacted);
-                LOG_INFO() << FMA_FMT("compact raft log, compacted index:{}, applied index:{}",
-                                      compacted, applied);
-            }
+        if (applied <= first) {
+            return;
         }
+        if (applied - first < store_config_.keep_logs + 100000) {
+            return;
+        }
+        // Safe compaction: never drop log entries that a peer still needs.
+        // The leader tracks the acknowledged (match) index per peer in the
+        // ProgressTracker. If any peer (or learner) has not acknowledged the
+        // proposed compaction point, hold off. This prevents a slow or
+        // disconnected follower from being stranded beyond the compacted log
+        // prefix, which would otherwise require a snapshot to recover.
+        uint64_t min_match = applied;
+        if (rn_->raft_->state_ == eraft::StateLeader) {
+            rn_->raft_->trk_.Visit([&min_match](uint64_t, std::shared_ptr<tracker::Progress>& pr) {
+                min_match = std::min(min_match, pr->match_);
+            });
+        }
+        if (min_match == 0) {
+            // No peer has acknowledged anything yet; do not compact.
+            return;
+        }
+        auto compacted = std::min(applied - store_config_.keep_logs, min_match);
+        if (compacted <= first) {
+            return;
+        }
+        storage_->Compact(compacted);
+        LOG_INFO() << FMA_FMT("compact raft log, compacted index:{}, slowest peer match:{}, "
+                              "applied index:{}",
+                              compacted, min_match, applied);
     });
     compact_timer_.expires_at(compact_timer_.expires_at() + compact_interval_);
     compact_timer_.async_wait([this](const boost::system::error_code& ec) {
@@ -488,7 +510,11 @@ void RaftDriver::CheckReady() {
         storage_->SetHardState(ready.hardState_, batch);
     }
     if (!eraft::IsEmptySnap(ready.snapshot_)) {
-        LOG_FATAL() << "snapshot should be empty";
+        // A snapshot has been received from a peer (or was generated locally
+        // by log compaction). Persist it to stable log storage so the local
+        // log re-anchors at the snapshot index and the node can continue
+        // replicating from that point.
+        storage_->ApplySnapshot(ready.snapshot_.metadata(), batch);
     }
     storage_->WriteBatch(batch);
     {
@@ -515,7 +541,8 @@ void RaftDriver::CheckReady() {
         }
     }
     if (!eraft::IsEmptySnap(ready.snapshot_)) {
-        LOG_FATAL() << "snapshot should be empty";
+        LOG_WARN() << "snapshot was persisted in this ready cycle; "
+                   << "node is catching up from index " << ready.snapshot_.metadata().index();
     }
     if (!ready.committedEntries_.empty()) {
         bool has_confchange = false;

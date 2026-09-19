@@ -109,11 +109,8 @@ Both are **global per server, never per graph**.
 ### Bolt HA
 
 - Path: `bolt_raft_logstore_path` if set, else `<db_dir>/raftlog`
-  (`src/server/lgraph_server.cpp:328-331`).
-  **Caveat:** `bolt_raft_logstore_path` is declared
-  (`src/core/global_config.h:95`) but never registered with the argparser
-  (`src/core/global_config.cpp:356-378`), so it cannot actually be set; the
-  default is always used.
+  (`src/server/lgraph_server.cpp:328-331`). Registered with the argparser in
+  Phase 3 (`src/core/global_config.cpp`), so it can now be set.
 - Format: RocksDB with two column families (`src/bolt_raft/raft_driver.cpp:250-272`).
 - meta CF keys: `hardState`, `applyIndex`, `confState`, `nodeInfos`
   (`src/bolt_raft/raft_log_store.cpp:30-33`).
@@ -126,31 +123,44 @@ Root `ha_log_dir`, default `<db_dir>/ha` (`src/server/lgraph_server.cpp:120-127`
 with three `local://` sub-URIs: `/log`, `/raft_meta`, `/snapshot`
 (`src/server/ha_state_machine.cpp:56-59,96-99`).
 
-## 5. Snapshots: disabled in Bolt HA
+## 5. Snapshots in Bolt HA
 
-```cpp
-// src/bolt_raft/raft_log_store.cpp:301-305
-std::pair<raftpb::Snapshot, eraft::Error> RaftLogStorage::Snapshot() {
-    // disable snapshot
-    return {raftpb::Snapshot{}, eraft::ErrSnapshotTemporarilyUnavailable};
-}
-```
+Bolt HA's snapshot story was hardened during Phase 3. The storage side now keeps
+the etcd-raft storage contract:
 
-Consequences:
+- `RaftLogStorage` persists snapshot metadata (`snapIndex`/`snapTerm`) and
+  exposes `SetSnapshot`, `GetSnapshotMeta` and `ApplySnapshot`
+  (`src/bolt_raft/raft_log_store.{h,cpp}`). `ApplySnapshot` re-anchors the
+  stable log at the incoming snapshot's index, rejecting out-of-date snapshots
+  (`raft_log_store.cpp`), matching `MemoryStorage::ApplySnapshot`
+  (`deps/etcd-raft-cpp/storage.h:205-223`).
+- `RaftDriver::CheckReady` no longer asserts snapshots never appear; a snapshot
+  in `ready.snapshot_` is persisted to storage instead of killing the process
+  (`src/bolt_raft/raft_driver.cpp:488-494,519-523`).
+- `RaftLogStorage::Snapshot()` still returns `ErrSnapshotTemporarilyUnavailable`
+  until a snapshot has actually been created, which the raft core handles
+  gracefully (`deps/etcd-raft-cpp/raft.h:796-804`).
 
-- A follower that falls behind the compacted log prefix **cannot catch up via a
-  snapshot**. The raft core propagates this error and aborts snapshot transfer
-  (`deps/etcd-raft-cpp/log.h:458-463`, `deps/etcd-raft-cpp/raft.h:796-804`).
-- `RaftDriver` asserts snapshots never appear (`raft_driver.cpp:490-492`, `:517-519`).
-- Log GC is therefore the only space control: when
-  `applied - first >= keep_logs + 100000`, it calls `Compact(applied - keep_logs)`
-  (`RaftDriver::CheckAndCompactLog`, `src/bolt_raft/raft_driver.cpp:450-471`).
-  `keep_logs` defaults to 1,000,000 and `gc_interval` to 10 minutes
-  (`src/core/global_config.h:96-99`). `RaftLogStorage::Compact` is an
-  irreversible `DeleteRange` (`src/bolt_raft/raft_log_store.cpp:95-107`).
+**Safe log GC (the important fix).** Log compaction is the control that used to
+strand slow followers. `RaftDriver::CheckAndCompactLog` now only compact to an
+index that **every peer has acknowledged**: on the leader it reads
+`rn_->raft_->trk_` (the ProgressTracker match index per peer) and refuses to
+drop any entry beyond the slowest peer's `match_`
+(`src/bolt_raft/raft_driver.cpp:450-493`). Consequences:
 
-This is a correctness/availability limitation, not a graph-scaling one, but it
-must be recorded: **Bolt HA has no snapshot-based recovery path.**
+- A follower that is merely behind never gets past the compacted prefix; the
+  leader holds off GC until the follower confirms the entries.
+- A peer that has been offline for a long time does not block GC forever — the
+  compaction ceiling is `min(applied - keep_logs, min_match)`, so once a peer
+  reconnects and confirms recent entries, GC resumes up to the new floor.
+- `keep_logs` defaults to 1,000,000 and `gc_interval` to 10 minutes
+  (`src/core/global_config.h:96-99`).
+
+Remaining limitation: a genuinely brand-new peer added to a group whose log is
+already compacted still cannot bootstrap from a *data-carrying* snapshot,
+because Bolt HA replicates Cypher text and the application state (the graph
+DBs) is not serialized into `raftpb::Snapshot.data`. That remains a future
+extension; safe GC prevents the common slow-follower case from ever needing it.
 
 Legacy braft HA does have real snapshots, scheduled at
 `ha_snapshot_interval_s` (default 7 days,

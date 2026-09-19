@@ -52,6 +52,7 @@ class HaStateMachine : public StateMachine, public braft::StateMachine {
  protected:
     braft::Node* volatile node_;
     std::atomic<int64_t> leader_term_;
+    std::atomic<int64_t> last_applied_index_{0};
     std::atomic<bool> joined_group_;
     Config config_;
     std::string my_rpc_addr_;
@@ -99,7 +100,7 @@ class HaStateMachine : public StateMachine, public braft::StateMachine {
 
     std::string GetMasterRestAddr() override {
         std::lock_guard<std::mutex> l(hb_mutex_);
-        if (node_->is_leader())
+        if (node_ && node_->is_leader())
             return my_rest_addr_;
         else
             return master_rest_addr_;
@@ -107,7 +108,7 @@ class HaStateMachine : public StateMachine, public braft::StateMachine {
 
     std::string GetMasterRpcAddr() override {
         std::lock_guard<std::mutex> l(hb_mutex_);
-        if (node_->is_leader())
+        if (node_ && node_->is_leader())
             return my_rpc_addr_;
         else
             return master_rpc_addr_;
@@ -144,6 +145,8 @@ class HaStateMachine : public StateMachine, public braft::StateMachine {
     void on_start_following(const ::braft::LeaderChangeContext& ctx) override;
 
     bool IsInHaMode() const override { return true; }
+
+    RaftMetrics GetRaftMetrics() const override;
 
     std::vector<Peer> ListPeers() const override;
 

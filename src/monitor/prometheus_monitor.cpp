@@ -56,6 +56,18 @@ ResourceMonitor::ResourceMonitor(const std::string& host)
     write_request = &gf.Add({{"resouces_type", "request"}, {"type", "write"}});
     write_request->SetToCurrentTime();
 
+    prometheus::Family<prometheus::Gauge>& gf3 =
+        prometheus::BuildGauge()
+            .Name("tugraph_raft")
+            .Help("TuGraph Raft consensus metrics (Phase 3 HA)")
+            .Register(*registry);
+    raft_current_term = &gf3.Add({{"metric", "current_term"}});
+    raft_commit_index = &gf3.Add({{"metric", "commit_index"}});
+    raft_applied_index = &gf3.Add({{"metric", "applied_index"}});
+    raft_leader = &gf3.Add({{"metric", "is_leader"}});
+    raft_last_log_index = &gf3.Add({{"metric", "last_log_index"}});
+    raft_replication_lag = &gf3.Add({{"metric", "replication_lag"}});
+
     prometheus::Family<prometheus::Gauge>& gf2 =
         prometheus::BuildGauge()
             .Name("tugraph_graph_cache")
@@ -103,6 +115,17 @@ void ResourceMonitor::report_graph_metrics(int64_t registered_graphs, int64_t op
     graph_cache_misses->Set(static_cast<double>(cache_misses));
     graph_evictions->Set(static_cast<double>(evictions));
     graph_evict_skipped_refs->Set(static_cast<double>(evict_skipped_refs));
+}
+
+void ResourceMonitor::report_raft_metrics(int64_t current_term, int64_t commit_index,
+                                          int64_t applied_index, bool is_leader,
+                                          int64_t last_log_index, int64_t replication_lag) {
+    raft_current_term->Set(static_cast<double>(current_term));
+    raft_commit_index->Set(static_cast<double>(commit_index));
+    raft_applied_index->Set(static_cast<double>(applied_index));
+    raft_leader->Set(is_leader ? 1.0 : 0.0);
+    raft_last_log_index->Set(static_cast<double>(last_log_index));
+    raft_replication_lag->Set(static_cast<double>(replication_lag));
 }
 
 }  // end of namespace monitor

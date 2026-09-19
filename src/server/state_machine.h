@@ -246,6 +246,15 @@ class StateMachine {
      */
     virtual std::vector<Peer> ListPeers() const { return {}; }
 
+    // Raft metrics for Prometheus observability. Non-HA mode returns zeros.
+    struct RaftMetrics {
+        int64_t current_term = 0;
+        int64_t commit_index = 0;
+        int64_t applied_index = 0;
+        bool is_leader = false;
+    };
+    virtual RaftMetrics GetRaftMetrics() const { return {}; }
+
     // list current backup log files
     std::vector<std::string> ListBackupLogFiles();
 

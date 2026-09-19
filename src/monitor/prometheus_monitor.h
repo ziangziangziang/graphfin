@@ -62,6 +62,18 @@ class ResourceMonitor {
     prometheus::Gauge *graph_cache_misses;
     prometheus::Gauge *graph_evictions;
     prometheus::Gauge *graph_evict_skipped_refs;
+
+    prometheus::Gauge *raft_current_term;
+    prometheus::Gauge *raft_commit_index;
+    prometheus::Gauge *raft_applied_index;
+    prometheus::Gauge *raft_leader;
+    prometheus::Gauge *raft_last_log_index;
+    prometheus::Gauge *raft_replication_lag;
+
+public:
+    void report_raft_metrics(int64_t current_term, int64_t commit_index,
+                             int64_t applied_index, bool is_leader,
+                             int64_t last_log_index, int64_t replication_lag);
 };
 
 }  // end of namespace monitor

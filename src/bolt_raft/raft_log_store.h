@@ -37,6 +37,9 @@ struct RaftLogStorage : private boost::noncopyable, eraft::Storage {
     bool Init();
     void Close();
     void Compact(uint64_t index);
+    void SetSnapshot(const raftpb::SnapshotMetadata& meta, rocksdb::WriteBatch& batch);
+    raftpb::SnapshotMetadata GetSnapshotMeta();
+    eraft::Error ApplySnapshot(const raftpb::SnapshotMetadata& meta, rocksdb::WriteBatch& batch);
     eraft::Error SetHardState(const raftpb::HardState& hs, rocksdb::WriteBatch& batch);
     eraft::Error SetConfState(const raftpb::ConfState& hs, rocksdb::WriteBatch& batch);
     eraft::Error SetNodeInfos(const std::string& info, rocksdb::WriteBatch& batch);
@@ -59,5 +62,7 @@ struct RaftLogStorage : private boost::noncopyable, eraft::Storage {
     uint64_t last_entry_index_ = 0;
     raftpb::HardState hard_state_;
     raftpb::ConfState conf_state_;
+    uint64_t snapshot_index_ = 0;
+    uint64_t snapshot_term_ = 0;
 };
 }  // namespace bolt_raft

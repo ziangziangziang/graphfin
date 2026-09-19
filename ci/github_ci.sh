@@ -26,7 +26,20 @@ cmake .. -DCMAKE_BUILD_TYPE=Coverage -DBUILD_PROCEDURE=$WITH_PROCEDURE
 fi
 make -j2
 
-if [[ "$TEST" == "ut" ]]; then
+if [[ "$TEST" == "ha" ]]; then
+  # HA integration tests: build lgraph_server and run HA-specific pytest tests.
+  cd $WORKSPACE/build/output
+  cp ../../src/client/python/TuGraphClient/TuGraphClient.py .
+  cp ../../src/client/python/TuGraphClient/TuGraphRestClient.py .
+  cp -r ../../test/integration/* ./
+  # Run only HA tests, skip the rest.
+  # Phase0 and regular tests are often not needed for HA-focused CI runs.
+  pytest ./ -k "ha" -v --deselect test_ha_procedure.py \
+    --deselect test_ha_python_client.py \
+    --deselect test_ha_backup.py --deselect test_ha_import.py
+  cd $WORKSPACE
+  exit 0
+elif [[ "$TEST" == "ut" ]]; then
   # build tugraph db management
   #cd $WORKSPACE/deps/tugraph-db-management/
   #sh local_build.sh

@@ -3432,9 +3432,12 @@ void BuiltinProcedure::DbmsHaClusterInfo(RTContext *ctx, const Record *record,
     if (!ctx->sm_->IsInHaMode())
         THROW_CODE(InputError, "The service should be started as a high availability cluster .");
     auto peers = ctx->sm_->ListPeers();
+    auto raft = ctx->sm_->GetRaftMetrics();
     Record r;
     r.AddConstant(lgraph::FieldData(lgraph::ValueToJson(peers).serialize()));
     r.AddConstant(lgraph::FieldData(ctx->sm_->IsCurrentMaster()));
+    r.AddConstant(lgraph::FieldData(raft.current_term));
+    r.AddConstant(lgraph::FieldData(raft.commit_index));
     records->emplace_back(r.Snapshot());
     FillProcedureYieldItem("dbms.ha.clusterInfo", yield_items, records);
 }

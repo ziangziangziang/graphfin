@@ -49,6 +49,11 @@ lgraph::StateMachine::StateMachine(const Config& config,
                     static_cast<int64_t>(g->OpenGraphCount()),
                     m.cold_opens.load(), m.cache_hits.load(), m.cache_misses.load(),
                     m.evictions.load(), m.evict_skipped_refs.load());
+                // Raft consensus metrics (Phase 3 HA). Non-HA returns zeros.
+                auto raft = GetRaftMetrics();
+                monitor_->report_raft_metrics(
+                    raft.current_term, raft.commit_index, raft.applied_index,
+                    raft.is_leader, 0, 0);
             });
         LOG_INFO() << "Prometheus metrics endpoint enabled on "
                    << global_config_->monitor_host;

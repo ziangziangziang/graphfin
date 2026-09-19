@@ -1204,7 +1204,9 @@ static std::vector<Procedure> global_procedures = {
 
     Procedure("dbms.ha.clusterInfo", BuiltinProcedure::DbmsHaClusterInfo, Procedure::SIG_SPEC{},
               Procedure::SIG_SPEC{{"cluster_info", {0, lgraph_api::LGraphType::LIST}},
-                                  {"is_master", {1, lgraph_api::LGraphType::BOOLEAN}}
+                                  {"is_master", {1, lgraph_api::LGraphType::BOOLEAN}},
+                                  {"raft_term", {2, lgraph_api::LGraphType::INTEGER}},
+                                  {"raft_commit_index", {3, lgraph_api::LGraphType::INTEGER}}
               }, true, true),
 
     Procedure("db.bolt.listRaftNodes", BuiltinProcedure::DbBoltListRaftNodes, Procedure::SIG_SPEC{},
