@@ -1,0 +1,17 @@
+# Phase 0 benchmark harness dependencies.
+#
+# Intentionally NONE.
+#
+# The harness uses only the Python 3.6 standard library that ships inside the
+# pinned container image (see ci/phase0/images.lock):
+#
+#   * /proc sampling instead of psutil
+#   * http.client instead of requests
+#   * json / statistics / threading / subprocess from the stdlib
+#
+# The container has no reliable package index access, and a benchmark harness
+# that cannot be installed is a benchmark harness that cannot be reproduced.
+#
+# If you ever add a dependency here, also pin it in ci/phase0/images.lock and
+# record the resulting image ID, because changing it invalidates baseline
+# comparability.
