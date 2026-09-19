@@ -58,6 +58,7 @@ add_library(${TARGET_SERVER_LIB} STATIC
         http/import_manager.cpp
         http/import_task.cpp
         http/algo_task.cpp
+        monitor/prometheus_monitor.cpp
         ${PROTO_SRCS})
 
 if (OURSYSTEM STREQUAL "centos9")
@@ -100,6 +101,8 @@ if (NOT (CMAKE_SYSTEM_NAME STREQUAL "Darwin"))
             -Wl,-Bdynamic
             dl
             c
+            libprometheus-cpp-pull.a
+            libprometheus-cpp-core.a
             )
 else ()
     target_link_libraries(${TARGET_SERVER_LIB}
@@ -129,6 +132,8 @@ else ()
             OpenSSL::ssl
             OpenSSL::crypto
             z
+            libprometheus-cpp-pull.a
+            libprometheus-cpp-core.a
             )
 endif ()
 

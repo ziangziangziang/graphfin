@@ -128,6 +128,11 @@ struct BasicConfigs {
     // Evict graphs idle longer than this many seconds (0 = only evict when the
     // open count exceeds max_open_graphs).
     int graph_idle_timeout_s = 900;
+    // Prometheus scrape endpoint for lifecycle metrics, e.g. "0.0.0.0:8080" or
+    // ":8080". Empty (default) disables the endpoint. When set, the server
+    // exposes /metrics with the existing resource gauges plus
+    // tugraph_graph_cache_* lifecycle counters.
+    std::string monitor_host;
     BrowserOptions browser_options;
 };
 

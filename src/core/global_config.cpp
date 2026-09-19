@@ -45,6 +45,7 @@ std::map<std::string, std::string> lgraph::GlobalConfig::FormatAsOptions() const
     AddOption(options, "optimistic transaction", txn_optimistic);
     AddOption(options, "lmdb notls", lmdb_notls);
     AddOption(options, "max open graphs", max_open_graphs);
+    AddOption(options, "monitor host", monitor_host);
     AddOption(options, "Backup log enable", enable_backup_log);
     AddOption(options, "Whether the token is unlimited", unlimited_token);
     AddOption(options, "reset admin password if you forget", reset_admin_password);
@@ -298,6 +299,11 @@ fma_common::Configuration lgraph::GlobalConfig::InitConfig
         .Comment(
             "Evict graphs idle longer than this many seconds (0 = only evict"
             " when the open count exceeds max_open_graphs).");
+    argparser.Add(monitor_host, "monitor_host", true)
+        .Comment(
+            "Prometheus scrape endpoint (host:port, e.g. 0.0.0.0:8080). Empty"
+            " disables it. When set, exposes /metrics with resource gauges plus"
+            " tugraph_graph_cache_* lifecycle counters.");
     argparser.Add(max_graphs, "max_graphs", true)
         .SetMin(0)
         .Comment(

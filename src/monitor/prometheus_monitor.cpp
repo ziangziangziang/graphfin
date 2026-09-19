@@ -55,6 +55,20 @@ ResourceMonitor::ResourceMonitor(const std::string& host)
     total_request->SetToCurrentTime();
     write_request = &gf.Add({{"resouces_type", "request"}, {"type", "write"}});
     write_request->SetToCurrentTime();
+
+    prometheus::Family<prometheus::Gauge>& gf2 =
+        prometheus::BuildGauge()
+            .Name("tugraph_graph_cache")
+            .Help("TuGraph graph lifecycle cache metrics (Phase 2 lazy loading)")
+            .Register(*registry);
+    graph_registered = &gf2.Add({{"metric", "registered_graphs"}});
+    graph_open = &gf2.Add({{"metric", "open_graphs"}});
+    graph_cold_opens = &gf2.Add({{"metric", "cold_opens"}});
+    graph_cache_hits = &gf2.Add({{"metric", "cache_hits"}});
+    graph_cache_misses = &gf2.Add({{"metric", "cache_misses"}});
+    graph_evictions = &gf2.Add({{"metric", "evictions"}});
+    graph_evict_skipped_refs = &gf2.Add({{"metric", "evict_skipped_refs"}});
+
     exposer.RegisterCollectable(registry);
 }
 
@@ -76,6 +90,19 @@ void ResourceMonitor::report_tugraph_info(const std::string& info) {
     nlohmann::json value = nlohmann::json::parse(info);
     total_request->Set(value["request"]["requests/second"]);
     write_request->Set(value["request"]["writes/second"]);
+}
+
+void ResourceMonitor::report_graph_metrics(int64_t registered_graphs, int64_t open_graphs,
+                                          int64_t cold_opens, int64_t cache_hits,
+                                          int64_t cache_misses, int64_t evictions,
+                                          int64_t evict_skipped_refs) {
+    graph_registered->Set(static_cast<double>(registered_graphs));
+    graph_open->Set(static_cast<double>(open_graphs));
+    graph_cold_opens->Set(static_cast<double>(cold_opens));
+    graph_cache_hits->Set(static_cast<double>(cache_hits));
+    graph_cache_misses->Set(static_cast<double>(cache_misses));
+    graph_evictions->Set(static_cast<double>(evictions));
+    graph_evict_skipped_refs->Set(static_cast<double>(evict_skipped_refs));
 }
 
 }  // end of namespace monitor

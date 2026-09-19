@@ -28,6 +28,13 @@ class ResourceMonitor {
 
     void report_tugraph_info(const std::string& info);
 
+    // Graph lifecycle cache metrics (Phase 2 lazy loading).
+    // See docs/architecture/10-graph-lifecycle-v2.md.
+    void report_graph_metrics(int64_t registered_graphs, int64_t open_graphs,
+                              int64_t cold_opens, int64_t cache_hits,
+                              int64_t cache_misses, int64_t evictions,
+                              int64_t evict_skipped_refs);
+
  private:
     prometheus::Exposer exposer;
     std::shared_ptr<prometheus::Registry> registry;
@@ -47,6 +54,14 @@ class ResourceMonitor {
 
     prometheus::Gauge *total_request;
     prometheus::Gauge *write_request;
+
+    prometheus::Gauge *graph_registered;
+    prometheus::Gauge *graph_open;
+    prometheus::Gauge *graph_cold_opens;
+    prometheus::Gauge *graph_cache_hits;
+    prometheus::Gauge *graph_cache_misses;
+    prometheus::Gauge *graph_evictions;
+    prometheus::Gauge *graph_evict_skipped_refs;
 };
 
 }  // end of namespace monitor

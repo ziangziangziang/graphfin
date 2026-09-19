@@ -32,6 +32,12 @@
 #include "core/global_config.h"
 #include "core/task_tracker.h"
 #include "lgraph/lgraph.h"
+
+namespace lgraph {
+namespace monitor {
+class ResourceMonitor;
+}  // namespace monitor
+}  // namespace lgraph
 #include "plugin/plugin_manager.h"
 #include "protobuf/ha.pb.h"
 #include "server/proto_convert.h"
@@ -151,6 +157,11 @@ class StateMachine {
     double start_time_ = fma_common::GetTime();
 
     std::unique_ptr<BackupLog> backup_log_;
+    // Prometheus scrape endpoint. Null unless global_config_->monitor_host is
+    // set. Lives for the server lifetime (unlike the Galaxy-owned eviction
+    // task) so the HTTP exposer is not torn down and re-bound on reload.
+    std::unique_ptr<lgraph::monitor::ResourceMonitor> monitor_;
+    fma_common::TimedTaskScheduler::TaskPtr metrics_task_;
 
  public:
     StateMachine(const Config& config, std::shared_ptr<GlobalConfig> global_config);
