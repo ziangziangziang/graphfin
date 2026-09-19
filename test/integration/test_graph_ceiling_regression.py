@@ -105,8 +105,10 @@ class TestGraphCeilingRegression:
     def test_reopen_more_than_998_graphs_on_restart(self, srv, client):
         """The open path hit the same limit: reopening ~1000 graphs also failed.
 
-        A restart re-opens every graph through GraphManager::ReloadFromDisk, so
-        this exercises the fix on the open path, not just the create path.
+        After the Phase 2 lazy-loading change a restart only loads the catalog;
+        graphs are re-opened lazily on first access. This still confirms the
+        registered count survives a restart. The reopen path under load is
+        exercised at larger scale by test_graph_lifecycle_restart.py.
         """
         before = len(list_graphs(client))
         assert before > 998, "expected more than 998 graphs, found %d" % before
