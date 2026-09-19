@@ -239,6 +239,11 @@ class GraphManager {
     // closes all open graphs before destroy
     void CloseAllGraphs();
 
+    /** Evict a single open graph from the cache if it has no outstanding
+     *  references. Used by Backup to keep at most one graph physically open at
+     *  a time instead of letting the open set grow to max_open_graphs. */
+    void CloseGraph(const std::string& name);
+
     /** Starts (or restarts) the idle-eviction task. Called by Galaxy after
      *  (re)creating the manager; Galaxy owns the returned task and cancels it
      *  before destroying this manager, so the callback can never fire on a

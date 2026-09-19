@@ -270,18 +270,39 @@ std::vector<std::string> lgraph::GraphManager::Backup(const std::string& backup_
     for (auto& kv : catalog_->ListConfigs()) {
         const std::string& name = kv.first;
         LOG_INFO() << "Backup subgraph " << name;
-        auto g = GetOrOpenGraphRef(name);
-        std::string sub_dir = fma_common::FilePath(g->GetConfig().dir).Name();
-        std::string graph_dir = GetGraphActualDir(backup_parent_dir, sub_dir);
-        ret.push_back(graph_dir + "/data.mdb");
-        if (!fma_common::file_system::MkDir(graph_dir)) {
-            LOG_WARN() << "Error backing up graph " << name << ": cannot create dir " << graph_dir;
-            throw std::runtime_error("Error backing up graph [" + name + "]: cannot create dir " +
-                                     graph_dir);
+        std::string graph_dir;
+        {
+            // Scope the ScopedRef so the graph's reference is released as soon as
+            // the backup completes; then CloseGraph evicts it from the open set.
+            // This keeps at most one graph physically open during a backup of N
+            // graphs, instead of letting the open set grow to max_open_graphs.
+            auto g = GetOrOpenGraphRef(name);
+            std::string sub_dir = fma_common::FilePath(g->GetConfig().dir).Name();
+            graph_dir = GetGraphActualDir(backup_parent_dir, sub_dir);
+            ret.push_back(graph_dir + "/data.mdb");
+            if (!fma_common::file_system::MkDir(graph_dir)) {
+                LOG_WARN() << "Error backing up graph " << name << ": cannot create dir "
+                           << graph_dir;
+                throw std::runtime_error("Error backing up graph [" + name +
+                                         "]: cannot create dir " + graph_dir);
+            }
+            g->Backup(graph_dir);
         }
-        g->Backup(graph_dir);
+        CloseGraph(name);
     }
     return ret;
+}
+
+void lgraph::GraphManager::CloseGraph(const std::string& name) {
+    AutoWriteLock l(lock_, GetMyThreadId());
+    auto it = open_graphs_.find(name);
+    if (it == open_graphs_.end()) return;
+    if (it->second.graph.HasOutstandingRefs()) {
+        LOG_WARN() << "CloseGraph: graph " << name
+                   << " still has outstanding references, skipping";
+        return;
+    }
+    open_graphs_.erase(it);
 }
 
 void lgraph::GraphManager::CloseAllGraphs() {
