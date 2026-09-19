@@ -43,6 +43,7 @@ std::map<std::string, std::string> lgraph::GlobalConfig::FormatAsOptions() const
     }
     AddOption(options, "durable", durable);
     AddOption(options, "optimistic transaction", txn_optimistic);
+    AddOption(options, "lmdb notls", lmdb_notls);
     AddOption(options, "Backup log enable", enable_backup_log);
     AddOption(options, "Whether the token is unlimited", unlimited_token);
     AddOption(options, "reset admin password if you forget", reset_admin_password);
@@ -110,6 +111,9 @@ std::map<std::string, lgraph::FieldData> lgraph::GlobalConfig::ToFieldDataMap() 
     v["enable_backup_log"] = FieldData(enable_backup_log);
     v[lgraph::_detail::OPT_DB_DURABLE] = FieldData(durable);
     v[lgraph::_detail::OPT_TXN_OPTIMISTIC] = FieldData(txn_optimistic);
+    v["lmdb_notls"] = FieldData(lmdb_notls);
+    v["lmdb_max_dbs"] = FieldData(lmdb_max_dbs);
+    v["max_graphs"] = FieldData(max_graphs);
     v[lgraph::_detail::OPT_IP_CHECK_ENABLE] = FieldData(enable_ip_check);
     v[lgraph::_detail::OPT_AUDIT_LOG_ENABLE] = FieldData(enable_audit_log);
     v["enable_fulltext_index"] = FieldData(ft_index_options.enable_fulltext_index);
@@ -275,6 +279,23 @@ fma_common::Configuration lgraph::GlobalConfig::InitConfig
         .Comment("Whether to use pthread mode in brpc, default is bthread.");
     argparser.Add(txn_optimistic, lgraph::_detail::OPT_TXN_OPTIMISTIC, true)
         .Comment("Enable optimistic multi-writer transaction for Cypher.");
+    argparser.Add(lmdb_notls, "lmdb_notls", true)
+        .Comment(
+            "Open LMDB environments with MDB_NOTLS. Required to open more than about"
+            " 1000 graphs: without it LMDB uses one pthread TLS key per environment"
+            " and the process hits the fixed PTHREAD_KEYS_MAX (1024) limit, failing"
+            " with EAGAIN. Set to false only to restore the previous behaviour.");
+    argparser.Add(max_graphs, "max_graphs", true)
+        .SetMin(0)
+        .Comment(
+            "Maximum number of graphs this instance will host. 0 means no"
+            " application-level limit. Replaces the former hard-coded 4096.");
+    argparser.Add(lmdb_max_dbs, "lmdb_max_dbs", true)
+        .Comment(
+            "Max named tables per LMDB environment. LMDB reserves per-env structures"
+            " sized by this number, so it drives the per-graph memory cost of hosting"
+            " many graphs. Reduce it (e.g. 1024) when hosting many graphs with small"
+            " schemas.");
     argparser.Add(http_disable_auth, "disable_auth", true)
         .Comment("Disable authentication for REST.");
     argparser.Add(enable_ip_check, lgraph::_detail::OPT_IP_CHECK_ENABLE, true)

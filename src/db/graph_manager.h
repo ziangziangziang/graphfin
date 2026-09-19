@@ -41,6 +41,8 @@ class GraphManager {
         int plugin_subprocess_max_idle_seconds = 600;
         FullTextIndexOptions ft_index_options;
         bool enable_realtime_count = true;
+        // 0 means no application-level limit.
+        size_t max_graphs = 0;
 
         Config() {}
         explicit Config(const GlobalConfig& gc)
@@ -48,7 +50,8 @@ class GraphManager {
               load_plugins(true),
               plugin_subprocess_max_idle_seconds(gc.subprocess_max_idle_seconds),
               ft_index_options(gc.ft_index_options),
-              enable_realtime_count(gc.enable_realtime_count) {}
+              enable_realtime_count(gc.enable_realtime_count),
+              max_graphs(static_cast<size_t>(gc.max_graphs < 0 ? 0 : gc.max_graphs)) {}
     };
 
     struct ModGraphActions {

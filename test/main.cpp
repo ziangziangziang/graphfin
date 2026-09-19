@@ -22,6 +22,7 @@
 #include "./ut_utils.h"
 #include "./ut_types.h"
 #include "./graph_factory.h"
+#include "core/lmdb_store.h"
 #include "tools/lgraph_log.h"
 
 int _ut_argc;
@@ -61,13 +62,25 @@ int main(int argc, char** argv) {
 
     fma_common::Configuration config;
     unsigned int verbose = 1;
+    // Test-only control for the R0 storage policy. Lets the suite be run with
+    // MDB_NOTLS on and off against the same binary, so the two can be compared
+    // without rebuilding. See docs/architecture/07-scalability-risks.md R0.
+    bool ut_lmdb_notls = true;
     config.Add(verbose, "verbose", true).Comment("Verbose level");
+    config.Add(ut_lmdb_notls, "lmdb_notls", true)
+        .Comment("Open LMDB environments with MDB_NOTLS (default true).");
+    int ut_lmdb_max_dbs = 10000;
+    config.Add(ut_lmdb_max_dbs, "lmdb_max_dbs", true)
+        .Comment("Max named tables per LMDB environment (default 10000).");
     config.Add(_ut_buffer_log, "buffer_log", true)
         .Comment("Buffer log in memory and print only on failure.");
     config.Add(_ut_run_benchmarks, "run_benchmarks", true)
         .Comment("Run benchmarks.");
     config.ParseAndRemove(&argc, &argv);
     config.Finalize();
+
+    lgraph::LMDBKvStore::SetUseNotls(ut_lmdb_notls);
+    lgraph::LMDBKvStore::SetMaxDbs(ut_lmdb_max_dbs);
 
     auto severity_level = lgraph_log::severity_level::ERROR;
     if (verbose == 0) {

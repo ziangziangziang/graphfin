@@ -140,7 +140,6 @@ static const int VER_PATCH = LGRAPH_VERSION_PATCH;
 
 // limits
 static const size_t MAX_NUM_USERS = 65536;
-static const size_t MAX_NUM_GRAPHS = 4096;
 static const size_t MAX_NUM_FIELDS = 1024;  // max number of fields in vertex/edge property
 static const size_t MAX_NUM_LABELS = 4096;  // max number of vertex and edge labels in one graph
 
@@ -244,10 +243,15 @@ inline void CheckValidRoleNum(const size_t n) {
     }
 }
 
-inline void CheckValidGraphNum(const size_t n) {
-    if (n > _detail::MAX_NUM_GRAPHS) {
-        std::string err_msg = FMA_FMT("Invalid Graph: number cannot exceed {}, given [{}].",
-                                      _detail::MAX_NUM_GRAPHS, n);
+// The authoritative graph-count check. `max_graphs` comes from configuration
+// (GlobalConfig::max_graphs); a value of 0 means no application-level limit, in
+// which case resource limits (memory, file descriptors) are the natural bound.
+// There is no hard-coded graph-count constant anywhere else in production code.
+inline void CheckValidGraphNum(const size_t n, const size_t max_graphs) {
+    if (max_graphs != 0 && n > max_graphs) {
+        std::string err_msg = FMA_FMT("Invalid Graph: number cannot exceed the configured"
+                                      " max_graphs [{}], given [{}].",
+                                      max_graphs, n);
         throw std::runtime_error(err_msg);
     }
 }

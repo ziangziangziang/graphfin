@@ -96,7 +96,7 @@ bool lgraph::GraphManager::CreateGraph(KvTransaction& txn, const std::string& na
     auto it = graphs_.find(name);
     if (it != graphs_.end()) return false;
     std::string err_msg;
-    lgraph::CheckValidGraphNum(graphs_.size());
+    lgraph::CheckValidGraphNum(graphs_.size() + 1, config_.max_graphs);
     DBConfig real_config = config;
     UpdateDBConfigWithGMConfig(real_config, config_);
     real_config.name = name;
@@ -119,7 +119,7 @@ bool lgraph::GraphManager::CreateGraphWithData(KvTransaction& txn, const std::st
                                        const DBConfig& config, const std::string& data_file_path) {
     auto it = graphs_.find(name);
     if (it == graphs_.end()) {
-        CheckValidGraphNum(graphs_.size() + 1);
+        CheckValidGraphNum(graphs_.size() + 1, config_.max_graphs);
     }
     DBConfig real_config = config;
     UpdateDBConfigWithGMConfig(real_config, config_);

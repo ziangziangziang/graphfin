@@ -69,9 +69,38 @@ class LMDBKvStore final : public KvStore {
     // written to the store.
     static std::atomic<int64_t> last_op_id_;
 
+    // Whether to open environments with MDB_NOTLS. Process-wide because it is
+    // an engine policy, not per-graph state. Without MDB_NOTLS each environment
+    // consumes a pthread TLS key and the process is capped at ~1000 graphs by
+    // PTHREAD_KEYS_MAX. See docs/architecture/07-scalability-risks.md R0.
+    static std::atomic<bool> use_notls_;
+
+    // Maximum number of named tables (DBIs) per environment. LMDB reserves
+    // several per-environment structures sized by this number, but measured
+    // impact is small (~50 KiB per graph between 10000 and 1024) because the
+    // calloc'd tables are only touched for tables actually opened. Kept
+    // configurable so operators can trade table capacity against footprint.
+    static std::atomic<int> max_dbs_;
+
  public:
     DISABLE_COPY(LMDBKvStore);
     DISABLE_MOVE(LMDBKvStore);
+
+    /** Set whether new LMDB environments use MDB_NOTLS. Affects only
+     *  environments opened afterwards. */
+    static void SetUseNotls(bool v) { use_notls_.store(v, std::memory_order_relaxed); }
+
+    /** Whether new LMDB environments use MDB_NOTLS. */
+    static bool UseNotls() { return use_notls_.load(std::memory_order_relaxed); }
+
+    /** Set the max named tables per new LMDB environment. Affects only
+     *  environments opened afterwards. Must be >= the number of tables the
+     *  graph will use (base tables + per-index tables + detached property
+     *  tables + plugin catalogs). */
+    static void SetMaxDbs(int v) { max_dbs_.store(v, std::memory_order_relaxed); }
+
+    /** Max named tables per new LMDB environment. */
+    static int MaxDbs() { return max_dbs_.load(std::memory_order_relaxed); }
 
     /**
      * Constructor

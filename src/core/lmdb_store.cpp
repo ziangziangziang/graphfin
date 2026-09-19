@@ -24,6 +24,15 @@ namespace lgraph {
 
 static const std::string DATA_FILE_NAME = "data.mdb";  // NOLINT
 std::atomic<int64_t> LMDBKvStore::last_op_id_(-1);
+// Default true: without MDB_NOTLS the process cannot open more than ~1000
+// graphs, because each environment consumes a pthread TLS key and glibc caps
+// process-wide keys at PTHREAD_KEYS_MAX (1024). See R0.
+std::atomic<bool> LMDBKvStore::use_notls_(true);
+// Default 10000, the historical value. LMDB reserves per-environment structures
+// sized by this number, but they are calloc'd and only touched for tables that
+// are actually opened, so the measured RSS impact is small (~50 KiB per graph
+// between 10000 and 1024). Configurable for operators who want the trade-off.
+std::atomic<int> LMDBKvStore::max_dbs_(10000);
 
 static auto IsDir = [](const std::string& p) {
     std::error_code ec;
@@ -55,12 +64,17 @@ void LMDBKvStore::Open(bool create_if_not_exist) {
     }
     THROW_ON_ERR(mdb_env_create(&env_));
     THROW_ON_ERR(mdb_env_set_mapsize(env_, db_size_));
-    THROW_ON_ERR(mdb_env_set_maxdbs(env_, 10000));  // HENG: former value is 255
+    THROW_ON_ERR(mdb_env_set_maxdbs(env_, max_dbs_.load(std::memory_order_relaxed)));
     THROW_ON_ERR(mdb_env_set_maxreaders(env_, 1200));
 #if LGRAPH_SHARE_DIR
+    // Share-dir mode has always used MDB_NOTLS.
     unsigned int flags = MDB_NOMEMINIT | MDB_NORDAHEAD | MDB_NOTLS | MDB_NOSYNC;
 #else
     unsigned int flags = MDB_NOMEMINIT | MDB_NORDAHEAD | MDB_NOSYNC;
+    // MDB_NOTLS is what allows more than ~1000 graphs to be open: without it
+    // each environment consumes a pthread TLS key and the process hits the
+    // fixed PTHREAD_KEYS_MAX (1024) limit. See R0.
+    if (use_notls_.load(std::memory_order_relaxed)) flags |= MDB_NOTLS;
 #endif
     THROW_ON_ERR(mdb_env_open(env_, path_.c_str(), flags, 0664));
     // update last op id of all stores with the value stored in this one

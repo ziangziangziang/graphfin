@@ -551,6 +551,15 @@ void lgraph::Galaxy::ReloadFromDisk(bool create_if_not_exist) {
     acl_.reset();
     store_.reset();
     LMDBKvStore::SetLastOpIdOfAllStores(-1);
+    // Engine-wide storage policy, applied here because this is the single place
+    // where the meta store and every graph environment are (re)opened, and
+    // global_config_ is never null (it falls back to dummy_global_config_).
+    // MDB_NOTLS is what allows more than ~1000 graphs to be opened: without it
+    // each environment consumes a pthread TLS key and the process hits the
+    // fixed PTHREAD_KEYS_MAX (1024) limit.
+    // See docs/architecture/07-scalability-risks.md R0.
+    LMDBKvStore::SetUseNotls(global_config_->lmdb_notls);
+    LMDBKvStore::SetMaxDbs(global_config_->lmdb_max_dbs);
     store_.reset(new LMDBKvStore(GetMetaStoreDir(config_.dir), (size_t)1 << 30, config_.durable,
                              create_if_not_exist));
     auto txn = store_->CreateWriteTxn(false);
