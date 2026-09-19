@@ -234,6 +234,9 @@ class BuiltinProcedure {
     static void DbmsGraphDeleteGraph(RTContext *ctx, const Record *record, const VEC_EXPR &args,
                                      const VEC_STR &yield_items, std::vector<Record> *records);
 
+    static void DbmsGraphCacheStats(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                                    const VEC_STR &yield_items, std::vector<Record> *records);
+
     static void DbmsGraphListGraphs(RTContext *ctx, const Record *record, const VEC_EXPR &args,
                                     const VEC_STR &yield_items, std::vector<Record> *records);
 
@@ -838,6 +841,16 @@ static std::vector<Procedure> global_procedures = {
               Procedure::SIG_SPEC{{"graph_name", {0, lgraph_api::LGraphType::STRING}},
                                   {"config", {1, lgraph_api::LGraphType::MAP}}},
               Procedure::SIG_SPEC{{"", {0, lgraph_api::LGraphType::NUL}}}, false, true),
+
+    Procedure("dbms.graph.cacheStats", BuiltinProcedure::DbmsGraphCacheStats, Procedure::SIG_SPEC{},
+              Procedure::SIG_SPEC{{"registered_graphs", {0, lgraph_api::LGraphType::INTEGER}},
+                                  {"open_graphs", {1, lgraph_api::LGraphType::INTEGER}},
+                                  {"cold_opens", {2, lgraph_api::LGraphType::INTEGER}},
+                                  {"cache_hits", {3, lgraph_api::LGraphType::INTEGER}},
+                                  {"cache_misses", {4, lgraph_api::LGraphType::INTEGER}},
+                                  {"evictions", {5, lgraph_api::LGraphType::INTEGER}},
+                                  {"evict_skipped_refs", {6, lgraph_api::LGraphType::INTEGER}}},
+              true, true),
 
     Procedure("dbms.graph.listGraphs", BuiltinProcedure::DbmsGraphListGraphs, Procedure::SIG_SPEC{},
               Procedure::SIG_SPEC{{"graph_name", {0, lgraph_api::LGraphType::STRING}},

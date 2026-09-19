@@ -2120,6 +2120,28 @@ void BuiltinProcedure::DbmsGraphDeleteGraph(RTContext *ctx, const cypher::Record
     FillProcedureYieldItem("dbms.graph.deleteGraph", yield_items, records);
 }
 
+void BuiltinProcedure::DbmsGraphCacheStats(RTContext *ctx, const cypher::Record *record,
+                                           const cypher::VEC_EXPR &args,
+                                           const cypher::VEC_STR &yield_items,
+                                           std::vector<cypher::Record> *records) {
+    if (ctx->txn_) ctx->txn_->Abort();
+    CYPHER_ARG_CHECK(args.empty(), FMA_FMT("Function requires 0 arguments, but {} are "
+                                           "given. Usage: dbms.graph.cacheStats()",
+                                           args.size()))
+    CheckProcedureYieldItem("dbms.graph.cacheStats", yield_items);
+    auto& m = ctx->galaxy_->GetGraphMetrics();
+    Record r;
+    r.AddConstant(lgraph::FieldData(static_cast<int64_t>(ctx->galaxy_->RegisteredGraphCount())));
+    r.AddConstant(lgraph::FieldData(static_cast<int64_t>(ctx->galaxy_->OpenGraphCount())));
+    r.AddConstant(lgraph::FieldData(m.cold_opens.load()));
+    r.AddConstant(lgraph::FieldData(m.cache_hits.load()));
+    r.AddConstant(lgraph::FieldData(m.cache_misses.load()));
+    r.AddConstant(lgraph::FieldData(m.evictions.load()));
+    r.AddConstant(lgraph::FieldData(m.evict_skipped_refs.load()));
+    records->emplace_back(r.Snapshot());
+    FillProcedureYieldItem("dbms.graph.cacheStats", yield_items, records);
+}
+
 void BuiltinProcedure::DbmsGraphListGraphs(RTContext *ctx, const cypher::Record *record,
                                            const cypher::VEC_EXPR &args,
                                            const cypher::VEC_STR &yield_items,
