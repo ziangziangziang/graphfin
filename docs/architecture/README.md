@@ -22,6 +22,7 @@ something is a scaling limit, it is called out explicitly as such.
 | 07 | [07-scalability-risks.md](07-scalability-risks.md) | Bottlenecks at 10k/100k graphs, risk register, components likely to need modification |
 | 08 | [08-correctness-findings.md](08-correctness-findings.md) | Correctness defects found while building the Phase 0 harness (not fixed in Phase 0) |
 | 09 | [09-test-baseline.md](09-test-baseline.md) | Build, upstream unit-test and integration-test baseline, with the pass/fail record |
+| 10 | [10-graph-lifecycle-v2.md](10-graph-lifecycle-v2.md) | Phase 2 migration notes: lazy loading, eviction, new config knobs, behaviour changes |
 
 > **Two correctness defects found during Phase 0 require attention before any
 > scaling work:** `UNWIND ... CREATE` under-inserts in the default Cypher v2

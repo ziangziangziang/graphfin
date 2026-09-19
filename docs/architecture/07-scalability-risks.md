@@ -289,7 +289,7 @@ BLOCKER; R1-R14 are the structural risks that remain relevant once R0 is solved.
   optimistic transactions (`src/core/lmdb_store.cpp:231-372`), so a pool is
   viable.
 
-### R2 — Sequential eager open of every graph at startup (severity: critical)
+### R2 — Sequential eager open of every graph at startup (severity: critical) — **FIXED by Phase 2 lazy loading**
 
 - **Evidence:** `GraphManager::ReloadFromDisk` is a single-threaded loop that
   constructs a `LightningGraph` per config row
@@ -306,7 +306,7 @@ BLOCKER; R1-R14 are the structural risks that remain relevant once R0 is solved.
   parallel open. This implies changing what `GraphManager` owns — currently it
   holds a live `LightningGraph` for every graph.
 
-### R3 — Graph lifecycle operations are O(N) under a global exclusive lock (severity: critical)
+### R3 — Graph lifecycle operations are O(N) under a global exclusive lock (severity: critical) — **BOUNDED by Phase 2**
 
 - **Evidence:** `Galaxy::CreateGraph` and `DeleteGraph` copy-construct the entire
   `GraphManager` **and** `AclManager` while holding `acl_lock_` and `graphs_lock_`
@@ -321,7 +321,7 @@ BLOCKER; R1-R14 are the structural risks that remain relevant once R0 is solved.
   fine-grained locking, a persistent/immutable registry, or sharded registries.
   This is arguably the single most impactful change for graph-count scaling.
 
-### R4 — Per-graph virtual address reservation (severity: high)
+### R4 — Per-graph virtual address reservation (severity: high) — **BOUNDED by Phase 2 lazy loading**
 
 - **Evidence:** `db_size` defaults to 4 TiB (`DEFAULT_GRAPH_SIZE = 1<<42`,
   `src/core/defs.h:154`) and is applied when a caller passes 0
