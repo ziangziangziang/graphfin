@@ -24,7 +24,8 @@ the Phase 0/1 baseline.
 | `max_open_graphs` | 1000 | Maximum number of graphs physically open at one time. When exceeded, the least-recently-accessed graph with no outstanding references is evicted. |
 | `graph_idle_timeout_s` | 900 | Evict graphs idle longer than this many seconds. 0 disables idle eviction (only evict when the open count exceeds `max_open_graphs`). |
 | `lmdb_notls` | true | Open LMDB environments with `MDB_NOTLS`. Required for more than ~1,000 graphs. |
-| `lmdb_max_dbsk` | 10000 | Max named tables per LMDB environment. Reducing this (e.g. 1024) reduces per-graph memory. |
+| `lmdb_max_dbs` | 10000 | Max named tables per LMDB environment. Reducing this (e.g. 1024) reduces per-graph memory. |
+| `monitor_host` | "" (disabled) | Prometheus scrape endpoint (`host:port`, e.g. `0.0.0.0:8080`). When set, the server exposes `/metrics` with the existing resource gauges plus `tugraph_graph_cache_*` lifecycle counters (see below). |
 
 ## New metrics
 
@@ -39,6 +40,27 @@ the Phase 0/1 baseline.
 | `cache_misses` | Number of GetGraphRef calls that triggered a cold open |
 | `evictions` | Number of graphs evicted (closed + removed from the open set) |
 | `evict_skipped_refs` | Number of eviction attempts skipped because the graph had outstanding references |
+
+### Prometheus endpoint
+
+When `monitor_host` is configured (e.g. `monitor_host=0.0.0.0:8080`), the
+server exposes a Prometheus `/metrics` scrape endpoint. In addition to the
+existing `resources_report_*` resource gauges, it publishes the
+`tugraph_graph_cache` family (one time series per counter, carried in the
+`metric` label):
+
+```
+tugraph_graph_cache{metric="registered_graphs"}
+tugraph_graph_cache{metric="open_graphs"}
+tugraph_graph_cache{metric="cold_opens"}
+tugraph_graph_cache{metric="cache_hits"}
+tugraph_graph_cache{metric="cache_misses"}
+tugraph_graph_cache{metric="evictions"}
+tugraph_graph_cache{metric="evict_skipped_refs"}
+```
+
+These are the same counters returned by `dbms.graph.cacheStats()`, scraped
+live (refreshed every 5 s). The endpoint is disabled by default.
 
 ## Behavior changes
 
@@ -78,8 +100,14 @@ memory and file descriptors.
 
 `Galaxy::Backup`, `Galaxy::SaveSnapshot` and HA snapshot/restore now iterate
 the graph catalog and open→backup→close each graph **sequentially**, rather
-than opening all graphs at once. This bounds the resource usage but means the
-backup of a very large graph population takes proportionally longer.
+than opening all graphs at once. `GraphManager::Backup` keeps **at most one
+graph physically open** at a time (it closes each graph via `CloseGraph`
+immediately after backing it up), so a backup of N graphs no longer grows the
+open set to `max_open_graphs`. `Galaxy::Backup` relies on the LRU eviction to
+stay bounded at `max_open_graphs` during its pass.
+
+This bounds resource usage, but means the backup of a very large graph
+population takes proportionally longer.
 
 ### 5. HA raft-apply latency
 
