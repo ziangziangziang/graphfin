@@ -115,13 +115,28 @@ class ClusterMetaStore {
     ConfigVersion Version() const;
     bool SetVersion(KvTransaction& txn, ConfigVersion v);
 
+    // ---- Staged publication ---------------------------------------------
+    //
+    // Mutators above change ONLY the durable tables and record a pending
+    // change; the in-memory index is updated by CommitStaged() (call after
+    // txn->Commit()) and discarded by RollbackStaged() (call on abort or
+    // commit failure). This guarantees readers never observe an uncommitted
+    // placement and that a failed/aborted transaction cannot leave the index
+    // inconsistent with storage.
+    bool CommitStaged();
+    void RollbackStaged();
+    bool HasStaged() const;
+    size_t StagedCount() const;
+
     /** Approximate resident bytes of the in-memory index (tests/metrics). */
     size_t MemoryFootprint() const;
 
  private:
     void Reload(KvTransaction& txn);
-    bool BumpVersion(KvTransaction& txn);
     void AdjustShardCount(ShardId shard, int delta);
+    void ApplyPutGraph(const std::string& name, const GraphPlacement& placement);
+    void ApplyDeleteGraph(const std::string& name, ConfigVersion version);
+    void WriteVersion(KvTransaction& txn);
 
     // Compact name index ---------------------------------------------------
     void IndexInsert(GraphId id, const char* data, size_t len);
@@ -152,6 +167,30 @@ class ClusterMetaStore {
     std::unordered_map<ShardId, ShardInfo> shards_;
 
     ConfigVersion version_ = 0;
+
+    // Staged (durable-written, not-yet-published) mutations.
+    enum class PendingType : uint8_t {
+        PUT_GRAPH = 0,
+        DELETE_GRAPH = 1,
+        REGISTER_SHARD = 2,
+        REMOVE_SHARD = 3,
+        SHARD_STATE = 4,
+        SET_VERSION = 5,
+    };
+    struct Pending {
+        PendingType type;
+        std::string name;                    // PUT_GRAPH / DELETE_GRAPH
+        GraphPlacement placement;            // PUT_GRAPH
+        ShardInfo shard;                     // REGISTER_SHARD
+        ShardId shard_id = INVALID_SHARD_ID; // REMOVE_SHARD / SHARD_STATE
+        ShardState shard_state = ShardState::OFFLINE;  // SHARD_STATE
+        ConfigVersion version = 0;           // DELETE_GRAPH / SET_VERSION
+    };
+    std::vector<Pending> pending_;
+    // Version that WOULD be current if the staged batch commits. Mutators
+    // assign per-mutation versions from this so they are monotonic even before
+    // publication.
+    ConfigVersion staged_version_ = 0;
 };
 
 }  // namespace cluster

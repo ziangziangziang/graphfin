@@ -91,6 +91,7 @@ TEST_F(TestRouter, ResolveUnknownAndActive) {
         f.mgr->RegisterShard(*txn, MakeShard(0));
         f.ms->PutGraphPlacement(*txn, "g1", 0, PlacementState::ACTIVE);
         txn->Commit();
+            f.ms->CommitStaged();
     }
     EXPECT_EQ(f.router->Resolve("g1", f.now, &t), RouteStatus::OK);
     EXPECT_EQ(t.shard_id, 0u);
@@ -102,6 +103,7 @@ TEST_F(TestRouter, ResolveUnknownAndActive) {
         auto txn = f.store->CreateWriteTxn(false);
         f.ms->PutGraphPlacement(*txn, "g2", 0, PlacementState::CREATING);
         txn->Commit();
+            f.ms->CommitStaged();
     }
     EXPECT_EQ(f.router->Resolve("g2", f.now, &t), RouteStatus::PLACEMENT_NOT_ACTIVE);
 }
@@ -115,6 +117,7 @@ TEST_F(TestRouter, CacheHitAndTtl) {
         f.mgr->RegisterShard(*txn, MakeShard(0));
         f.ms->PutGraphPlacement(*txn, "g1", 0, PlacementState::ACTIVE);
         txn->Commit();
+            f.ms->CommitStaged();
     }
     RouteTarget t;
     EXPECT_EQ(f.router->Resolve("g1", f.now, &t), RouteStatus::OK);
@@ -138,6 +141,7 @@ TEST_F(TestRouter, ValidateDetectsStalePlacement) {
         f.mgr->RegisterShard(*txn, MakeShard(1));
         f.ms->PutGraphPlacement(*txn, "g1", 0, PlacementState::ACTIVE, &v0);
         txn->Commit();
+            f.ms->CommitStaged();
     }
     RouteTarget t;
     // Caller at the current version is fine.
@@ -149,6 +153,7 @@ TEST_F(TestRouter, ValidateDetectsStalePlacement) {
         auto txn = f.store->CreateWriteTxn(false);
         f.ms->PutGraphPlacement(*txn, "g1", 1, PlacementState::ACTIVE);
         txn->Commit();
+            f.ms->CommitStaged();
     }
     EXPECT_EQ(f.router->Validate("g1", v0, f.now, &t), RouteStatus::STALE_PLACEMENT);
     EXPECT_EQ(t.shard_id, 1u);
@@ -168,6 +173,7 @@ TEST_F(TestRouter, UnhealthyShardNotRouted) {
         f.mgr->RegisterShard(*txn, MakeShard(0));
         f.ms->PutGraphPlacement(*txn, "g1", 0, PlacementState::ACTIVE);
         txn->Commit();
+            f.ms->CommitStaged();
     }
     RouteTarget t;
     EXPECT_EQ(f.router->Resolve("g1", f.now, &t), RouteStatus::OK);
@@ -186,6 +192,7 @@ TEST_F(TestRouter, EndpointFallbackWhenLocatorEmpty) {
         f.mgr->RegisterShard(*txn, MakeShard(3, "127.0.0.1:29093"));
         f.ms->PutGraphPlacement(*txn, "g1", 3, PlacementState::ACTIVE);
         txn->Commit();
+            f.ms->CommitStaged();
     }
     RouteTarget t;
     EXPECT_EQ(f.router->Resolve("g1", f.now, &t), RouteStatus::OK);
@@ -203,6 +210,7 @@ TEST_F(TestRouter, CacheIsBounded) {
             f.ms->PutGraphPlacement(*txn, "g" + std::to_string(i), 0, PlacementState::ACTIVE);
         }
         txn->Commit();
+            f.ms->CommitStaged();
     }
     RouteTarget t;
     for (int i = 0; i < 5; i++) {

@@ -35,8 +35,7 @@ Router::Router(ClusterMetaStore* store, ShardManager* shards, ShardLocator* loca
                Config config)
     : store_(store), shards_(shards), locator_(locator), config_(config) {}
 
-RouteStatus Router::ResolveLocked(const std::string& graph, int64_t now_ms,
-                                  RouteTarget* out) {
+RouteStatus Router::Resolve(const std::string& graph, int64_t now_ms, RouteTarget* out) {
     GraphPlacement placement;
     GraphId gid = 0;
     if (!store_->GetGraphPlacement(graph, &placement, &gid)) {
@@ -52,15 +51,10 @@ RouteStatus Router::ResolveLocked(const std::string& graph, int64_t now_ms,
         return RouteStatus::PLACEMENT_NOT_ACTIVE;
     }
 
-    // Cache hit: still valid version and not expired.
-    auto it = cache_.find(gid);
-    if (it != cache_.end() && it->second.version == placement.placement_version &&
-        now_ms < it->second.expires_ms) {
-        out->endpoint = it->second.endpoint;
-        return RouteStatus::OK;
-    }
-
-    // The shard must exist and be healthy to route.
+    // Shard health/existence is checked on EVERY resolve, including cache hits,
+    // so marking a shard OFFLINE (or changing its endpoints, detected via the
+    // shard config version) takes effect immediately rather than waiting for
+    // the cache TTL. ShardManager health is an in-memory check.
     ShardInfo shard;
     if (!store_->GetShard(placement.shard_id, &shard)) {
         return RouteStatus::NO_HEALTHY_SHARD;
@@ -69,7 +63,20 @@ RouteStatus Router::ResolveLocked(const std::string& graph, int64_t now_ms,
         return RouteStatus::NO_HEALTHY_SHARD;
     }
 
-    // Resolve the leader endpoint; fall back to the first endpoint.
+    // Cache hit: same placement version, same shard config version, not expired.
+    {
+        std::lock_guard<std::mutex> l(mtx_);
+        auto it = cache_.find(gid);
+        if (it != cache_.end() && it->second.version == placement.placement_version &&
+            it->second.shard_config_version == shard.config_version &&
+            now_ms < it->second.expires_ms && !it->second.endpoint.empty()) {
+            out->endpoint = it->second.endpoint;
+            return RouteStatus::OK;
+        }
+    }
+
+    // Leader discovery may become a network call, so it runs WITHOUT the router
+    // mutex held (a slow lookup must not block unrelated cache reads).
     std::string endpoint;
     if (locator_) endpoint = locator_->LocateLeader(placement.shard_id);
     if (endpoint.empty() && !shard.endpoints.empty()) endpoint = shard.endpoints.front();
@@ -78,26 +85,23 @@ RouteStatus Router::ResolveLocked(const std::string& graph, int64_t now_ms,
     }
     out->endpoint = endpoint;
 
-    // (Re)fill the cache, dropping it wholesale if it is at the cap.
-    if (cache_.size() >= config_.max_cache_entries) cache_.clear();
-    CacheEntry e;
-    e.shard_id = placement.shard_id;
-    e.version = placement.placement_version;
-    e.expires_ms = now_ms + config_.cache_ttl_ms;
-    e.endpoint = endpoint;
-    cache_[gid] = std::move(e);
+    {
+        std::lock_guard<std::mutex> l(mtx_);
+        if (cache_.size() >= config_.max_cache_entries) cache_.clear();
+        CacheEntry e;
+        e.shard_id = placement.shard_id;
+        e.version = placement.placement_version;
+        e.shard_config_version = shard.config_version;
+        e.expires_ms = now_ms + config_.cache_ttl_ms;
+        e.endpoint = endpoint;
+        cache_[gid] = std::move(e);
+    }
     return RouteStatus::OK;
-}
-
-RouteStatus Router::Resolve(const std::string& graph, int64_t now_ms, RouteTarget* out) {
-    std::lock_guard<std::mutex> l(mtx_);
-    return ResolveLocked(graph, now_ms, out);
 }
 
 RouteStatus Router::Validate(const std::string& graph, PlacementVersion seen, int64_t now_ms,
                              RouteTarget* out) {
-    std::lock_guard<std::mutex> l(mtx_);
-    RouteStatus st = ResolveLocked(graph, now_ms, out);
+    RouteStatus st = Resolve(graph, now_ms, out);
     if (st != RouteStatus::OK) return st;
     if (out->version != seen) return RouteStatus::STALE_PLACEMENT;
     return RouteStatus::OK;

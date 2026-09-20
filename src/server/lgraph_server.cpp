@@ -126,6 +126,16 @@ int LGraphServer::Start() {
                     << "replica state silently diverges.";
         return -1;
     }
+    // Mutation-ordering contract: a deployment must select exactly ONE write
+    // replication path. Enabling legacy HA and Bolt HA together gives two
+    // independent logs with no defined relative order across conflicting
+    // writes (see docs/architecture/09-write-path-audit.md §6).
+    if (config_->enable_ha && config_->bolt_raft_port > 0) {
+        LOG_WARN() << "Both legacy HA (--enable_ha) and Bolt HA (--bolt_raft_port) are "
+                   << "enabled. Each write surface must feed exactly one authoritative "
+                   << "mutation order per shard; mixed write paths can apply conflicting "
+                   << "operations inconsistently. See docs/architecture/09-write-path-audit.md.";
+    }
     if (config_->enable_ha && config_->ha_log_dir.empty()) {
 #if LGRAPH_SHARE_DIR
         LOG_ERROR() << "HA is enabled, but ha_log_dir is not specified.";

@@ -110,6 +110,11 @@ class GraphManager {
         // Evict graphs idle longer than this many seconds (0 = only evict when
         // the open count exceeds max_open_graphs).
         int graph_idle_timeout_s = 900;
+        // Admission policy when max_open_graphs is reached and every open graph
+        // has outstanding references: wait up to this many seconds for a lease
+        // to be released, then fail the open with a retryable error instead of
+        // exceeding the configured bound. 0 = fail immediately.
+        double open_graph_admission_timeout_s = 30.0;
 
         Config() {}
         explicit Config(const GlobalConfig& gc)
@@ -121,7 +126,10 @@ class GraphManager {
               max_graphs(static_cast<size_t>(gc.max_graphs < 0 ? 0 : gc.max_graphs)),
               max_open_graphs(static_cast<size_t>(
                   gc.max_open_graphs < 0 ? 1 : gc.max_open_graphs)),
-              graph_idle_timeout_s(gc.graph_idle_timeout_s) {}
+              graph_idle_timeout_s(gc.graph_idle_timeout_s),
+              open_graph_admission_timeout_s(
+                  gc.graph_open_admission_timeout_s < 0 ? 0.0
+                                                        : gc.graph_open_admission_timeout_s) {}
     };
 
     struct ModGraphActions {
@@ -168,6 +176,10 @@ class GraphManager {
      *  into the open set. Caller holds graphs_lock_ write. Evicts LRU graphs
      *  with no outstanding references while over max_open_graphs. */
     void OpenGraphInternal(const std::string& name, const DBConfig& config);
+
+    /** Evict one evictable graph if at capacity. Returns true when there is
+     *  room to open another graph (<= max_open_graphs). Caller holds lock_. */
+    bool EnsureRoomLocked();
 
     /** Closes and removes open graphs until open_graphs_.size() < limit.
      *  Skips graphs with outstanding references. Caller holds graphs_lock_

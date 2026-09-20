@@ -5,15 +5,31 @@
 #   PHASE0_TEST_MODE   ut | it | all
 #   PHASE0_TEST_FILES  optional space-separated pytest file list (it mode)
 #
-# Upstream test failures are recorded, not fixed (Phase 0 policy). This script
-# exits 0 as long as it ran; inspect phase0-results/summary.json for outcomes.
+# Failures PROPAGATE to CI by default: the script exits non-zero if any test
+# suite fails. Set PHASE0_TEST_DIAGNOSTIC=1 to keep the historical
+# "record-but-don't-fail" behaviour (useful when capturing a known-flaky
+# baseline); in that mode results from successive runs are kept, otherwise each
+# run starts from a clean results directory so outcomes are never mixed across
+# runs.
 
 set -uo pipefail
 
 REPO="${PHASE0_WORKDIR:-/workspace}"
 OUT="${REPO}/phase0-results"
 MODE="${PHASE0_TEST_MODE:-all}"
+DIAGNOSTIC="${PHASE0_TEST_DIAGNOSTIC:-0}"
 mkdir -p "$OUT"
+
+# Isolate results by run: wipe the machine-readable outputs unless explicitly
+# asked to keep history. Without this a stale unit_test.xml/ut.log from a
+# previous run leaks into an unrelated mode's summary (observed: an `it` run
+# reporting a unit_test exit code).
+if [ "$DIAGNOSTIC" != "1" ]; then
+    rm -f "$OUT"/ut.log "$OUT"/it.log "$OUT"/unit_test.xml "$OUT"/summary.json
+fi
+
+FAILURES=0
+mark_fail() { FAILURES=1; }
 
 cd "${REPO}/build/output" || exit 3
 if [ ! -e data ] && [ -d ../../test/integration/data ]; then
@@ -23,10 +39,12 @@ export LD_LIBRARY_PATH="/usr/local/lib64/lgraph:/usr/local/lib64:/usr/local/lib:
 export OMP_NUM_THREADS=2
 
 run_ut() {
+    local fail=0
     echo "=== fma_unit_test (upstream) ===" | tee "$OUT/ut.log"
     ./fma_unit_test -t all >>"$OUT/ut.log" 2>&1
     local rc=$?
     echo "fma_unit_test exit=$rc" | tee -a "$OUT/ut.log"
+    [ "$rc" -ne 0 ] && fail=1
 
     echo "=== unit_test (upstream, gtest) ===" | tee -a "$OUT/ut.log"
     rm -rf testdb* .import_tmp 2>/dev/null
@@ -34,6 +52,8 @@ run_ut() {
     rc=$?
     echo "unit_test exit=$rc" | tee -a "$OUT/ut.log"
     rm -rf testdb* .import_tmp 2>/dev/null
+    [ "$rc" -ne 0 ] && fail=1
+    return "$fail"
 }
 
 run_it() {
@@ -67,21 +87,29 @@ run_it() {
     else
         python3 -m pytest -v -p no:cacheprovider >>"$OUT/it.log" 2>&1
     fi
-    echo "pytest exit=$?" | tee -a "$OUT/it.log"
+    local rc=$?
+    echo "pytest exit=$rc" | tee -a "$OUT/it.log"
+    return "$rc"
 }
 
 case "$MODE" in
-    ut)  run_ut ;;
-    it)  run_it ;;
-    all) run_ut; run_it ;;
+    ut)  run_ut || mark_fail ;;
+    it)  run_it || mark_fail ;;
+    all) run_ut || mark_fail; run_it || mark_fail ;;
     *)   echo "unknown PHASE0_TEST_MODE=$MODE" >&2; exit 2 ;;
 esac
 
 # --- machine-readable summary ---------------------------------------------
 python3 - "$OUT" <<'PY'
-import json, os, re, sys
+import json, os, re, sys, time
 out = sys.argv[1]
-summary = {"mode": os.environ.get("PHASE0_TEST_MODE", "?")}
+summary = {
+    "mode": os.environ.get("PHASE0_TEST_MODE", "?"),
+    "run_id": os.environ.get("PHASE0_RUN_ID", ""),
+    "git_commit": os.environ.get("PHASE0_GIT_COMMIT", ""),
+    "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    "diagnostic": os.environ.get("PHASE0_TEST_DIAGNOSTIC", "0") == "1",
+}
 
 gx = os.path.join(out, "unit_test.xml")
 if os.path.isfile(gx):
@@ -120,4 +148,13 @@ print(json.dumps(summary, indent=2, sort_keys=True))
 PY
 
 echo "phase0: test results in $OUT"
+
+if [ "$DIAGNOSTIC" = "1" ]; then
+    echo "phase0: DIAGNOSTIC mode - recording outcomes without failing the build"
+    exit 0
+fi
+if [ "$FAILURES" -ne 0 ]; then
+    echo "phase0: TEST SUITES FAILED (see ${OUT}/summary.json)" >&2
+    exit 1
+fi
 exit 0

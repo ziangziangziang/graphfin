@@ -19,6 +19,7 @@
 #include "fma-common/binary_buffer.h"
 #include "fma-common/binary_read_write_helper.h"
 #include "fma-common/encrypt.h"
+#include "fma-common/utils.h"  // GetTime / SleepUs for admission waiting
 
 #include "db/graph_manager.h"
 
@@ -188,15 +189,33 @@ lgraph::ScopedRef<lgraph::LightningGraph> lgraph::GraphManager::GetGraphRef(
         }
         metrics_->cache_misses++;
     }
-    AutoWriteLock l(lock_, GetMyThreadId());
-    auto it = open_graphs_.find(graph);
-    if (it == open_graphs_.end()) {
-        OpenGraphInternal(graph, config);
-        metrics_->cold_opens++;
-    } else {
-        it->second.last_access_s = NowSeconds();
+    // Bounded admission: if the open set is at max_open_graphs and every graph
+    // is pinned by an outstanding lease, wait up to the configured timeout for
+    // a lease to be released, then fail with a retryable error rather than
+    // silently exceeding the configured bound.
+    const double deadline = fma_common::GetTime() + config_.open_graph_admission_timeout_s;
+    while (true) {
+        {
+            AutoWriteLock l(lock_, GetMyThreadId());
+            auto it = open_graphs_.find(graph);
+            if (it != open_graphs_.end()) {
+                it->second.last_access_s = NowSeconds();
+                return it->second.graph.GetScopedRef();
+            }
+            if (EnsureRoomLocked()) {
+                OpenGraphInternal(graph, config);
+                metrics_->cold_opens++;
+                return open_graphs_[graph].graph.GetScopedRef();
+            }
+        }
+        if (fma_common::GetTime() >= deadline) {
+            THROW_CODE(Timeout,
+                       "Open-graph capacity reached and all {} open graphs are in use; "
+                       "retry later or raise max_open_graphs",
+                       config_.max_open_graphs);
+        }
+        fma_common::SleepUs(1000);
     }
-    return open_graphs_[graph].graph.GetScopedRef();
 }
 
 lgraph::ScopedRef<lgraph::LightningGraph> lgraph::GraphManager::GetOrOpenGraphRef(
@@ -204,8 +223,15 @@ lgraph::ScopedRef<lgraph::LightningGraph> lgraph::GraphManager::GetOrOpenGraphRe
     DBConfig config;
     if (!catalog_->GetConfig(graph, config))
         THROW_CODE(InputError, "No such graph: {}", graph);
+    AutoWriteLock l(lock_, GetMyThreadId());
     auto it = open_graphs_.find(graph);
     if (it == open_graphs_.end()) {
+        if (!EnsureRoomLocked()) {
+            THROW_CODE(Timeout,
+                       "Open-graph capacity reached and all {} open graphs are in use; "
+                       "retry later or raise max_open_graphs",
+                       config_.max_open_graphs);
+        }
         OpenGraphInternal(graph, config);
         metrics_->cold_opens++;
     } else {
@@ -323,7 +349,11 @@ void lgraph::GraphManager::CloseAllGraphs() {
     open_graphs_.clear();
 }
 
-void lgraph::GraphManager::OpenGraphInternal(const std::string& name, const DBConfig& config) {
+bool lgraph::GraphManager::EnsureRoomLocked() {
+    // Evict at most one LRU graph that has no outstanding lease. Returns true
+    // if there is room to open another graph after any eviction. Never evicts a
+    // graph with outstanding references, so active transactions are preserved;
+    // the caller decides how long to wait when no graph can be evicted.
     while (open_graphs_.size() >= config_.max_open_graphs) {
         auto best = open_graphs_.end();
         for (auto it = open_graphs_.begin(); it != open_graphs_.end(); ++it) {
@@ -336,15 +366,16 @@ void lgraph::GraphManager::OpenGraphInternal(const std::string& name, const DBCo
                 best = it;
             }
         }
-        if (best == open_graphs_.end()) {
-            LOG_WARN() << "All " << open_graphs_.size()
-                       << " open graphs have outstanding references;"
-                       << " temporarily exceeding max_open_graphs";
-            break;
-        }
+        if (best == open_graphs_.end()) return false;  // all pinned
         open_graphs_.erase(best);
         metrics_->evictions++;
+        return true;
     }
+    return true;
+}
+
+void lgraph::GraphManager::OpenGraphInternal(const std::string& name, const DBConfig& config) {
+    // Caller guarantees room via EnsureRoomLocked().
     // config.dir may be relative (from CreateGraph) or absolute (from
     // ReloadFromDisk). Always derive the full path from parent_dir_ and the
     // basename, which is also the db secret.

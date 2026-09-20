@@ -107,13 +107,10 @@ class Router {
     struct CacheEntry {
         ShardId shard_id = INVALID_SHARD_ID;
         PlacementVersion version = 0;
+        uint64_t shard_config_version = 0;  // detects endpoint/state changes
         int64_t expires_ms = 0;
         std::string endpoint;
     };
-
-    // Resolves placement + endpoint, using the cache when valid. Fills the
-    // cache on miss. Caller must hold mtx_.
-    RouteStatus ResolveLocked(const std::string& graph, int64_t now_ms, RouteTarget* out);
 
     ClusterMetaStore* store_;
     ShardManager* shards_;

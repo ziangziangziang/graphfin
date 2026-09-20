@@ -36,6 +36,7 @@ std::unique_ptr<ClusterMetaStore> OpenStore(LMDBKvStore* store) {
     auto txn = store->CreateWriteTxn(false);
     ms->Init(store, *txn, true);
     txn->Commit();
+            ms->CommitStaged();
     return ms;
 }
 
@@ -65,6 +66,7 @@ TEST_F(TestClusterMetaStore, BasicCrud) {
             EXPECT_TRUE(ms->RegisterShard(*txn, MakeShard(0)));
             EXPECT_TRUE(ms->RegisterShard(*txn, MakeShard(1)));
             txn->Commit();
+            ms->CommitStaged();
         }
         EXPECT_EQ(ms->ShardCount(), 2u);
         ShardInfo got;
@@ -81,6 +83,7 @@ TEST_F(TestClusterMetaStore, BasicCrud) {
             EXPECT_TRUE(ms->PutGraphPlacement(*txn, "g1", 0, PlacementState::ACTIVE, &pv));
             EXPECT_TRUE(ms->PutGraphPlacement(*txn, "g2", 1, PlacementState::ACTIVE));
             txn->Commit();
+            ms->CommitStaged();
         }
         EXPECT_EQ(ms->GraphCount(), 2u);
         EXPECT_GT(pv, 0u);
@@ -104,6 +107,7 @@ TEST_F(TestClusterMetaStore, BasicCrud) {
             PlacementVersion pv2 = 0;
             EXPECT_TRUE(ms->PutGraphPlacement(*txn, "g1", 1, PlacementState::MOVING, &pv2));
             txn->Commit();
+            ms->CommitStaged();
             EXPECT_GT(pv2, pv);
         }
         EXPECT_EQ(ms->GraphCount(), 2u);
@@ -118,12 +122,14 @@ TEST_F(TestClusterMetaStore, BasicCrud) {
             auto txn = store->CreateWriteTxn(false);
             EXPECT_FALSE(ms->RemoveShard(*txn, 1));
             txn->Commit();
+            ms->CommitStaged();
         }
         // Delete g2; g1 is still on shard 1, so removal is still refused.
         {
             auto txn = store->CreateWriteTxn(false);
             EXPECT_TRUE(ms->DeleteGraphPlacement(*txn, "g2"));
             txn->Commit();
+            ms->CommitStaged();
         }
         EXPECT_FALSE(ms->HasGraph("g2"));
         EXPECT_EQ(ms->GraphCount(), 1u);
@@ -131,17 +137,20 @@ TEST_F(TestClusterMetaStore, BasicCrud) {
             auto txn = store->CreateWriteTxn(false);
             EXPECT_FALSE(ms->RemoveShard(*txn, 1));
             txn->Commit();
+            ms->CommitStaged();
         }
         // Move g1 back to shard 0; now shard 1 is empty and removable.
         {
             auto txn = store->CreateWriteTxn(false);
             EXPECT_TRUE(ms->PutGraphPlacement(*txn, "g1", 0, PlacementState::ACTIVE));
             txn->Commit();
+            ms->CommitStaged();
         }
         {
             auto txn = store->CreateWriteTxn(false);
             EXPECT_TRUE(ms->RemoveShard(*txn, 1));
             txn->Commit();
+            ms->CommitStaged();
         }
         EXPECT_EQ(ms->ShardCount(), 1u);
     }
@@ -164,6 +173,7 @@ TEST_F(TestClusterMetaStore, BasicCrud) {
         auto txn = store->CreateWriteTxn(false);
         EXPECT_TRUE(ms->PutGraphPlacement(*txn, "g3", 0, PlacementState::ACTIVE));
         txn->Commit();
+            ms->CommitStaged();
         EXPECT_EQ(ms->GraphCount(), 2u);
         EXPECT_TRUE(ms->GetGraphPlacement("g3", &p, &id));
         EXPECT_EQ(id, 1u);
@@ -179,19 +189,77 @@ TEST_F(TestClusterMetaStore, VersionMonotonic) {
     auto txn = store->CreateWriteTxn(false);
     EXPECT_TRUE(ms->RegisterShard(*txn, MakeShard(0)));
     txn->Commit();
+            ms->CommitStaged();
     EXPECT_GT(ms->Version(), v);
     v = ms->Version();
 
     txn = store->CreateWriteTxn(false);
     EXPECT_TRUE(ms->PutGraphPlacement(*txn, "a", 0, PlacementState::ACTIVE));
     txn->Commit();
+            ms->CommitStaged();
     EXPECT_GT(ms->Version(), v);
 
     // Explicit set is honoured and persists.
     txn = store->CreateWriteTxn(false);
     EXPECT_TRUE(ms->SetVersion(*txn, 12345));
     txn->Commit();
+            ms->CommitStaged();
     EXPECT_EQ(ms->Version(), 12345u);
+}
+
+TEST_F(TestClusterMetaStore, StagingIsolationAndRollback) {
+    AutoCleanDir cleaner("./test_cluster_meta_stage");
+    auto store = std::make_unique<LMDBKvStore>("./test_cluster_meta_stage");
+    auto ms = OpenStore(store.get());
+
+    // A staged, uncommitted placement must NOT be visible to readers.
+    {
+        auto txn = store->CreateWriteTxn(false);
+        PlacementVersion pv = 0;
+        EXPECT_TRUE(ms->PutGraphPlacement(*txn, "g1", 0, PlacementState::ACTIVE, &pv));
+        EXPECT_TRUE(ms->HasStaged());
+        EXPECT_EQ(ms->StagedCount(), 1u);
+        GraphPlacement p;
+        GraphId id = 0;
+        EXPECT_FALSE(ms->GetGraphPlacement("g1", &p, &id));  // not published
+        EXPECT_FALSE(ms->HasGraph("g1"));
+        EXPECT_EQ(ms->GraphCount(), 0u);
+        // Abort and roll back: no divergence between memory and storage.
+        txn->Abort();
+        ms->RollbackStaged();
+        EXPECT_FALSE(ms->HasStaged());
+    }
+    EXPECT_FALSE(ms->HasGraph("g1"));
+    EXPECT_EQ(ms->GraphCount(), 0u);
+
+    // Commit + publish makes the placement visible.
+    {
+        auto txn = store->CreateWriteTxn(false);
+        EXPECT_TRUE(ms->PutGraphPlacement(*txn, "g1", 0, PlacementState::ACTIVE));
+        txn->Commit();
+        ms->CommitStaged();
+    }
+    GraphPlacement p;
+    GraphId id = 0;
+    EXPECT_TRUE(ms->GetGraphPlacement("g1", &p, &id));
+    EXPECT_EQ(ms->GraphCount(), 1u);
+
+    // A batch publishes atomically: neither graph is visible until CommitStaged.
+    {
+        auto txn = store->CreateWriteTxn(false);
+        EXPECT_TRUE(ms->PutGraphPlacement(*txn, "g2", 0, PlacementState::ACTIVE));
+        EXPECT_TRUE(ms->PutGraphPlacement(*txn, "g3", 0, PlacementState::ACTIVE));
+        EXPECT_EQ(ms->StagedCount(), 2u);
+        EXPECT_FALSE(ms->HasGraph("g2"));
+        EXPECT_FALSE(ms->HasGraph("g3"));
+        EXPECT_EQ(ms->GraphCount(), 1u);
+        txn->Commit();
+        ms->CommitStaged();
+    }
+    EXPECT_TRUE(ms->HasGraph("g2"));
+    EXPECT_TRUE(ms->HasGraph("g3"));
+    EXPECT_EQ(ms->GraphCount(), 3u);
+    EXPECT_FALSE(ms->HasStaged());
 }
 
 TEST_F(TestClusterMetaStore, MemoryFootprintIsCompact) {
@@ -208,6 +276,7 @@ TEST_F(TestClusterMetaStore, MemoryFootprintIsCompact) {
                                           PlacementState::ACTIVE));
     }
     txn->Commit();
+            ms->CommitStaged();
 
     EXPECT_EQ(ms->GraphCount(), N);
     size_t fp = ms->MemoryFootprint();

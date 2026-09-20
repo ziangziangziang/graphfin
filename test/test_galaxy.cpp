@@ -773,3 +773,29 @@ TEST_F(TestGalaxy, Galaxy) {
         }
     }
 }
+
+// Review finding 4: max_open_graphs must be enforced even when every open graph
+// is pinned by an outstanding lease. With a bounded admission timeout of 0, an
+// open beyond capacity must fail with a retryable error rather than silently
+// exceeding the configured bound; once a lease is released, the open succeeds.
+TEST_F(TestGalaxy, OpenGraphAdmissionBound) {
+    const std::string dir = "./testdb_admit";
+    fma_common::FileSystem::GetFileSystem(dir).RemoveDir(dir);
+    lgraph::Galaxy::Config conf;
+    conf.dir = dir;
+    auto global_config = std::make_shared<lgraph::GlobalConfig>();
+    global_config->max_open_graphs = 1;
+    global_config->graph_open_admission_timeout_s = 0;  // fail immediately
+    lgraph::Galaxy galaxy(conf, true, global_config);
+    lgraph::DBConfig db_conf;
+    db_conf.db_size = 1 << 30;
+    UT_EXPECT_TRUE(galaxy.CreateGraph("admin", "g1", db_conf));
+    UT_EXPECT_TRUE(galaxy.CreateGraph("admin", "g2", db_conf));
+    {
+        auto db1 = galaxy.OpenGraph("admin", "g1");  // pins g1 (holds a lease)
+        UT_EXPECT_ANY_THROW(galaxy.OpenGraph("admin", "g2"));
+    }
+    // Lease released: g2 can now be opened (evicting g1).
+    UT_EXPECT_NO_THROW(galaxy.OpenGraph("admin", "g2"));
+    fma_common::FileSystem::GetFileSystem(dir).RemoveDir(dir);
+}

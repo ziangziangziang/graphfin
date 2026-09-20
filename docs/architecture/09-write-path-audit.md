@@ -121,16 +121,52 @@ if (config_->bolt_port > 0 && config_->enable_ha && config_->bolt_raft_port == 0
 }
 ```
 
-## 6. Recommendations
+## 6. Mutation-ordering contract (decision)
+
+**Decision: one authoritative mutation order per shard, and only one supported
+replication path may be *enabled for writes* on a given deployment.**
+
+Rationale (review finding): enabling legacy HA (RPC/REST writes) and Bolt HA
+(`Run` writes) at the same time gives two independent Raft logs. A schema change
+through RPC and a dependent write through Bolt can then enter different logs
+with **no defined relative order**, so replicas can apply them inconsistently.
+The startup guard (Gap 1) prevents the one clearly-unsafe combination, but does
+not establish a common order when both are enabled.
+
+Rules until the paths are unified:
+
+1. A given shard/deployment selects exactly one write replication path:
+   legacy HA **or** Bolt HA, never both for writes.
+2. Every supported write surface on that deployment feeds the selected path:
+   - legacy HA: all `LGraphRequest` writes (RPC, REST, import, admin, Bolt via
+     `HaStateMachine::DoRequest`).
+   - Bolt HA: the Bolt `Run` path **and** the RPC/REST/admin surfaces that
+     mutate the same graphs (currently a gap — see §4 Gap 2/3).
+3. A deployment that cannot route every write surface through its chosen path
+   must not enable HA.
+
+The startup validation should be extended from "Bolt requires Bolt HA" to
+"exactly one write-replication path is enabled, and all write surfaces are
+covered by it", rejecting mixed configurations.
+
+Consequence for Phase 4: because a shard is the unit of replication, this
+contract is enforced **per shard**, so whole-graph sharding is built on a
+single-order-per-shard foundation rather than on the unsettled two-path
+configuration. Unifying the two subsystems (one path for all surfaces) remains
+the long-term goal and must not be deferred past Phase 6.
+
+## 7. Recommendations
 
 | Priority | Action | Phase |
 |---|---|---|
-| P0 | Add startup validation preventing Bolt without Bolt HA in HA mode | Phase 3 |
-| P1 | Document that Bolt HA and legacy HA must both be enabled for full coverage | Phase 3 |
-| P2 | Consider unifying the two Raft subsystems or clearly deprecating one | Phase 7 |
+| P0 | Enforce "exactly one write-replication path, all surfaces covered" at startup | Phase 3/4 |
+| P0 | Define and document the per-shard mutation order and ambiguous-write/retry semantics | Phase 3/4 |
+| P1 | Make Bolt HA cover non-`Run` surfaces, or route Bolt writes through the state machine | Phase 4 |
+| P2 | Unify the two Raft subsystems into one authoritative mutation order | Phase 6 (was Phase 7) |
 
-## 7. Document History
+## 8. Document History
 
 | Date | Author | Change |
 |---|---|---|
 | 2026-09-20 | Phase 3 | Initial write-path audit |
+| 2026-09-20 | Phase 3/4 review | Mutation-ordering decision; single-path-per-shard contract |

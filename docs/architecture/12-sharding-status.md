@@ -25,17 +25,23 @@ router memory is bounded independently of graph count.
 | 1 | ≥ 3 independent shards operate simultaneously | ⚪ Not deployed | Logic ready; needs ≥ 9 processes (3 shards × 3 replicas) — see §4 |
 | 2 | Each shard is a replicated group | ✅ Provided by Phase 3 | `HaStateMachine` per shard |
 | 3 | ≥ 30,000 graphs distributed across the cluster | 🟡 Logic ready | `PickShard` + catalog proven at 20k in unit test; live distribution pending a larger host |
-| 4 | Clients access graphs by logical identifier | ✅ | `Router::Resolve(graph_name, …)` |
-| 5 | Clients do not need shard addresses | ✅ | Router returns the endpoint |
-| 6 | Reads/writes routed to the correct shard | 🟡 Decision done, forwarding pending | `Router::Resolve`; forwarding is 4C.2 |
-| 7 | Graph creation automatically chooses a shard | ✅ | `ShardManager::PickShard` |
+| 4 | Clients access graphs by logical identifier | 🟡 internal primitive only | `Router::Resolve(name, …)` exists, but no public endpoint routes by logical name; not demonstrated |
+| 5 | Clients do not need shard addresses | 🟡 internal primitive only | Router returns an endpoint, but clients still connect to a shard directly |
+| 6 | Reads/writes routed to the correct shard | 🟡 decision only, forwarding pending | `Router::Resolve`; forwarding is 4C.2 |
+| 7 | Graph creation automatically chooses a shard | 🟡 internal primitive only | `ShardManager::PickShard` is not wired to `dbms.graph.createGraph` |
 | 8 | Placement metadata survives restart | ✅ | `ClusterMetaStore` reload test |
-| 9 | Stale routing metadata detected safely | ✅ | `Router::Validate` (placement version) |
+| 9 | Stale routing metadata detected safely | 🟡 router-side only | `Router::Validate` rejects a stale caller, but the receiving shard does not fence writes (see §4.0) |
 | 10 | Router failure does not affect persistent graph state | ✅ by construction | Router is stateless and moves no bytes |
 | 11 | Shard-level failover remains functional | ✅ Provided by Phase 3 | Phase 3 replica group |
 | 12 | No cross-shard query execution required | ✅ by model | A graph maps to exactly one shard; enforced by `GraphPlacement` |
 
-Legend: ✅ done & tested · 🟡 component done, integration pending · ⚪ not yet deployed.
+Legend: ✅ done & tested · 🟡 component/primitive only, not demonstrated end-to-end · ⚪ not yet deployed.
+
+**Correction (review):** an earlier version of this table marked criteria 4, 5 and 7
+as complete based on internal primitives. They are useful primitives but do not
+demonstrate the client-facing capability; they are now 🟡. Router-side version
+comparison alone also cannot stop an obsolete destination from accepting writes —
+fencing must be enforced at the receiving shard (see §4.0).
 
 ## 3. Honest summary
 
@@ -47,6 +53,15 @@ multi-shard cluster. Those require server/RPC integration and a host with more
 than the current 2 vCPU / 2 GiB (a 9-process deployment does not fit).
 
 ## 4. Remaining Phase 4 work
+
+0. **Receiver-side placement fencing (required before routing is safe).**
+   A router that compares placement versions protects only its own decisions.
+   An obsolete destination can still accept a write if a client/router reaches
+   it directly (or with a stale cache). Each shard must therefore fence at its
+   own write boundary: carry the graph's expected `placement_version` (or a
+   monotonic placement epoch) on forwarded writes and reject a write whose
+   version is behind the shard's authoritative placement for that graph file.
+   Until this exists, "stale routing detected safely" is only partly met.
 
 1. **4C.2 — Router integration (highest priority)**
    - Real `ShardLocator`: query a shard's `dbms.ha.clusterInfo()` for its leader
