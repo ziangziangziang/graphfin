@@ -12,11 +12,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
 
+#include <set>
+
 #include "fma-common/string_formatter.h"
 
 #include "core/vertex_index.h"
 #include "core/edge_index.h"
 #include "core/schema.h"
+#include "core/series_types.h"
 #include "import/import_config_parser.h"
 #include "core/vector_index.h"
 
@@ -952,11 +955,76 @@ void Schema::SetFixedSizeValue(Value& record, const Value& data,
     }
 }
 
+namespace {
+/**
+ * A series field is an optional BLOB with the series modifier: the record keeps
+ * no bytes for it and every point lives in the series table. That contract is
+ * checked here, on every path that builds or edits a schema, because a schema
+ * violating it cannot be made to work at write time.
+ *
+ * Indexes are the exception that cannot be checked here: an index is attached
+ * to a field after the schema is built, and index creation already rejects BLOB
+ * fields, which a series field always is. `ModFields` and `AddFields` do keep
+ * existing extractors, so an index that is already attached is still caught.
+ */
+void CheckSeriesFieldSpec(const _detail::FieldExtractorBase& f,
+                          const std::string& primary_field) {
+    const FieldSpec& spec = f.GetFieldSpec();
+    const std::string& name = spec.name;
+    if (!spec.series) {
+        // Measures without the modifier would be silently ignored, which is a
+        // DDL mistake rather than a schema to store.
+        if (!spec.series_spec.measures.empty()) {
+            THROW_CODE(InputError,
+                       "Field [{}] declares series measures but is not a series field", name);
+        }
+        return;
+    }
+    auto reject = [&name](const std::string& why) {
+        THROW_CODE(InputError, "Invalid series field [{}]: {}", name, why);
+    };
+    if (spec.type != FieldType::BLOB) reject("must be of type BLOB");
+    if (!spec.optional) reject("must be optional");
+    if (spec.set_default_value) reject("must not have a default value");
+    if (f.GetVertexIndex() || f.GetEdgeIndex() || f.FullTextIndexed() || f.GetVectorIndex()) {
+        reject("must not be indexed");
+    }
+    if (!primary_field.empty() && name == primary_field) reject("must not be the primary field");
+    if (spec.series_spec.measures.empty()) reject("must declare at least one measure");
+    if (spec.series_spec.measures.size() > _detail::MAX_SERIES_MEASURES) {
+        reject("declares more measures than the limit of " +
+               std::to_string(_detail::MAX_SERIES_MEASURES));
+    }
+    if (spec.series_spec.bucket_max_points == 0) reject("bucket_max_points must be positive");
+    if (spec.series_spec.bucket_max_bytes == 0) reject("bucket_max_bytes must be positive");
+    std::set<std::string> seen;
+    for (const auto& m : spec.series_spec.measures) {
+        if (m.name.empty()) reject("measure names must not be empty");
+        series::MeasureType ignored = series::MeasureType::DOUBLE;
+        if (!series::ToMeasureType(m.type, &ignored)) {
+            reject("measure [" + m.name + "] must be DOUBLE or INT64, not " +
+                   lgraph_api::to_string(m.type));
+        }
+        if (!seen.insert(m.name).second) reject("duplicate measure [" + m.name + "]");
+    }
+}
+
+/** Runs the series checks over every live field of a schema. */
+void CheckSeriesFields(const std::vector<std::shared_ptr<_detail::FieldExtractorBase>>& fields,
+                       const std::string& primary_field) {
+    for (const auto& f : fields) {
+        if (f->IsDeleted()) continue;
+        CheckSeriesFieldSpec(*f, primary_field);
+    }
+}
+}  // namespace
+
 void Schema::RefreshLayout() {
     if (fast_alter_schema) {
         RefreshLayoutForFastSchema();
         return;
     }
+    CheckSeriesFields(fields_, primary_field_);
     // check field types
     // check if there is any blob
     blob_fields_.clear();
@@ -1030,6 +1098,7 @@ void Schema::RefreshLayout() {
 
 void Schema::RefreshLayoutForFastSchema() {
     FMA_ASSERT(fast_alter_schema);
+    CheckSeriesFields(fields_, primary_field_);
     blob_fields_.clear();
     name_to_idx_.clear();
     for (size_t i = 0; i < fields_.size(); i++) {

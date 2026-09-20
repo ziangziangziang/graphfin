@@ -202,3 +202,174 @@ TEST_P(TestSchema, DumpRecord) {
 }
 
 INSTANTIATE_TEST_SUITE_P(TestSchemaTest, TestSchema, testing::Values(true, false));
+
+namespace {
+
+// A series field: an optional BLOB carrying the series modifier.
+FieldSpec MakeSeriesField(const std::string& name = "prices") {
+    FieldSpec f(name, FieldType::BLOB, true);
+    f.series = true;
+    f.series_spec.measures = {SeriesMeasureSpec{"open", FieldType::DOUBLE},
+                              SeriesMeasureSpec{"close", FieldType::DOUBLE},
+                              SeriesMeasureSpec{"volume", FieldType::INT64}};
+    f.series_spec.bucket_max_points = 500;
+    f.series_spec.bucket_max_span_us = 2 * 86400ULL * 1000000ULL;
+    f.series_spec.bucket_max_bytes = 4096;
+    return f;
+}
+
+Schema MakeSchemaWith(bool fast_alter, const FieldSpec& series_field,
+                      const std::string& primary = "id") {
+    Schema s;
+    s.SetFastAlterSchema(fast_alter);
+    s.SetSchema(true,
+                std::vector<FieldSpec>({FieldSpec("id", FieldType::INT32, false), series_field,
+                                        FieldSpec("name", FieldType::STRING, true)}),
+                primary, "", {}, {});
+    return s;
+}
+
+}  // namespace
+
+TEST_P(TestSchema, SeriesFieldRoundTripsThroughSchema) {
+    Schema s = MakeSchemaWith(GetParam(), MakeSeriesField());
+    Value v = s.StoreSchema();
+    Schema s2;
+    s2.LoadSchema(v);
+    UT_EXPECT_TRUE(s.GetFieldSpecsAsMap() == s2.GetFieldSpecsAsMap());
+
+    // GetFieldSpecsAsMap() returns a map by value, so keep it alive.
+    const std::map<std::string, FieldSpec> specs = s2.GetFieldSpecsAsMap();
+    const FieldSpec& in = specs.at("prices");
+    UT_EXPECT_TRUE(in.series);
+    UT_EXPECT_EQ(in.type, FieldType::BLOB);
+    UT_EXPECT_TRUE(in.optional);
+    UT_EXPECT_EQ(in.series_spec.measures.size(), 3);
+    UT_EXPECT_EQ(in.series_spec.measures[0].name, "open");
+    UT_EXPECT_EQ(in.series_spec.measures[0].type, FieldType::DOUBLE);
+    UT_EXPECT_EQ(in.series_spec.measures[2].name, "volume");
+    UT_EXPECT_EQ(in.series_spec.measures[2].type, FieldType::INT64);
+    UT_EXPECT_EQ(in.series_spec.bucket_max_points, 500);
+    UT_EXPECT_EQ(in.series_spec.bucket_max_span_us, 2 * 86400ULL * 1000000ULL);
+    UT_EXPECT_EQ(in.series_spec.bucket_max_bytes, 4096);
+
+    // Fields without the modifier are untouched by the extension.
+    UT_EXPECT_FALSE(specs.at("id").series);
+    UT_EXPECT_EQ(specs.at("id").series_spec.measures.size(), 0);
+    UT_EXPECT_FALSE(specs.at("name").series);
+}
+
+TEST_P(TestSchema, SeriesInfoIsOnlyWrittenWhenASeriesExists) {
+    // This is what keeps existing databases readable: the series block is
+    // appended only when a field actually has one, so a schema without any
+    // serializes to exactly the bytes it did before series fields existed, and
+    // a dump that simply ends after the V2 block still loads.
+    Schema plain = MakeSchemaWith(GetParam(), FieldSpec("prices", FieldType::BLOB, true));
+    Schema with_series = MakeSchemaWith(GetParam(), MakeSeriesField());
+    const size_t plain_size = plain.StoreSchema().Size();
+    const size_t with_size = with_series.StoreSchema().Size();
+    UT_EXPECT_TRUE(with_size > plain_size);
+    UT_EXPECT_TRUE(plain_size > 0);
+
+    Schema reloaded;
+    reloaded.LoadSchema(plain.StoreSchema());
+    UT_EXPECT_TRUE(reloaded.GetFieldSpecsAsMap() == plain.GetFieldSpecsAsMap());
+    Schema reloaded_series;
+    reloaded_series.LoadSchema(with_series.StoreSchema());
+    UT_EXPECT_TRUE(reloaded_series.GetFieldSpecsAsMap() == with_series.GetFieldSpecsAsMap());
+}
+
+TEST_P(TestSchema, RejectsInvalidSeriesFields) {
+    auto rejects = [this](const FieldSpec& f, const std::string& primary = "id") {
+        UT_EXPECT_THROW_CODE(MakeSchemaWith(GetParam(), f, primary), InputError);
+    };
+
+    // A series field must be an optional BLOB with no default value...
+    FieldSpec not_optional = MakeSeriesField();
+    not_optional.optional = false;
+    rejects(not_optional);
+
+    FieldSpec wrong_type = MakeSeriesField();
+    wrong_type.type = FieldType::STRING;
+    rejects(wrong_type);
+
+    FieldSpec with_default = MakeSeriesField();
+    with_default.set_default_value = true;
+    rejects(with_default);
+
+    // ... it cannot be the primary field ...
+    rejects(MakeSeriesField("id"));
+
+    // ... and it must declare usable measures.
+    FieldSpec no_measures = MakeSeriesField();
+    no_measures.series_spec.measures.clear();
+    rejects(no_measures);
+
+    FieldSpec duplicate = MakeSeriesField();
+    duplicate.series_spec.measures = {SeriesMeasureSpec{"open", FieldType::DOUBLE},
+                                      SeriesMeasureSpec{"open", FieldType::INT64}};
+    rejects(duplicate);
+
+    FieldSpec bad_measure_type = MakeSeriesField();
+    bad_measure_type.series_spec.measures = {SeriesMeasureSpec{"open", FieldType::STRING}};
+    rejects(bad_measure_type);
+
+    FieldSpec empty_measure_name = MakeSeriesField();
+    empty_measure_name.series_spec.measures = {SeriesMeasureSpec{"", FieldType::DOUBLE}};
+    rejects(empty_measure_name);
+
+    FieldSpec too_many = MakeSeriesField();
+    too_many.series_spec.measures.clear();
+    for (size_t i = 0; i <= _detail::MAX_SERIES_MEASURES; ++i) {
+        too_many.series_spec.measures.push_back(
+            SeriesMeasureSpec{"m" + std::to_string(i), FieldType::DOUBLE});
+    }
+    rejects(too_many);
+
+    FieldSpec no_point_cap = MakeSeriesField();
+    no_point_cap.series_spec.bucket_max_points = 0;
+    rejects(no_point_cap);
+
+    FieldSpec no_byte_cap = MakeSeriesField();
+    no_byte_cap.series_spec.bucket_max_bytes = 0;
+    rejects(no_byte_cap);
+
+    // Measures without the modifier are a DDL mistake, not a schema to store.
+    FieldSpec unflagged = MakeSeriesField();
+    unflagged.series = false;
+    rejects(unflagged);
+
+    // The same declaration without the modifier is perfectly fine.
+    UT_EXPECT_NO_THROW(MakeSchemaWith(GetParam(), FieldSpec("prices", FieldType::BLOB, true)));
+}
+
+TEST_P(TestSchema, RejectsAnIndexOnASeriesField) {
+    // Indexes are attached after a schema is built, so this checks the path
+    // that keeps existing extractors: here the field already carries an index
+    // when the layout is refreshed. An index created on a live label goes
+    // through the existing "BLOB cannot be indexed" rule instead, since a
+    // series field is always a BLOB.
+    Schema s = MakeSchemaWith(GetParam(), MakeSeriesField());
+    s.GetFieldExtractor("prices")->SetFullTextIndex(true);
+    std::vector<FieldSpec> added{FieldSpec("extra", FieldType::INT32, true)};
+    UT_EXPECT_THROW_CODE(s.AddFields(added), InputError);
+    // The rejected call left the schema alone.
+    UT_EXPECT_TRUE(s.TryGetFieldExtractor("extra") == nullptr);
+}
+
+TEST_P(TestSchema, SeriesModifierIsInvisibleToTheRecord) {
+    // The whole point of declaring a series as a modified BLOB is that the
+    // record keeps nothing for it: the same schema with and without the
+    // modifier must lay out identical records, and an empty record must leave
+    // the field unset rather than reserving bytes for points.
+    Schema plain = MakeSchemaWith(GetParam(), FieldSpec("prices", FieldType::BLOB, true));
+    Schema series = MakeSchemaWith(GetParam(), MakeSeriesField());
+    UT_EXPECT_EQ(plain.CreateEmptyRecord().Size(), series.CreateEmptyRecord().Size());
+    UT_EXPECT_EQ(plain.GetNumFields(), series.GetNumFields());
+
+    Value record = series.CreateEmptyRecord();
+    // An empty record leaves the series field unset, which is the only state it
+    // can be in: the record has nowhere to keep a point.
+    UT_EXPECT_TRUE(series.GetFieldExtractor("prices")->GetIsNull(record));
+    UT_EXPECT_TRUE(plain.GetFieldExtractor("prices")->GetIsNull(plain.CreateEmptyRecord()));
+}

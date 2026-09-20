@@ -179,28 +179,6 @@ void SplitBucket(const Bucket& src, size_t mid, Bucket* left, Bucket* right) {
 
 }  // namespace
 
-bool ToMeasureType(FieldType t, MeasureType* out) {
-    if (t == FieldType::DOUBLE) {
-        *out = MeasureType::DOUBLE;
-        return true;
-    }
-    if (t == FieldType::INT64) {
-        *out = MeasureType::INT64;
-        return true;
-    }
-    return false;
-}
-
-const char* MeasureTypeName(MeasureType t) {
-    switch (t) {
-    case MeasureType::DOUBLE:
-        return "DOUBLE";
-    case MeasureType::INT64:
-        return "INT64";
-    }
-    return "UNKNOWN";
-}
-
 std::string ElementKey::ToString() const {
     const std::string kind = is_vertex ? "vertex" : "edge";
     std::string s = kind + "(" + std::to_string(uid.src);

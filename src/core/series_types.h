@@ -32,8 +32,23 @@ namespace series {
  */
 enum class MeasureType : uint8_t { DOUBLE = 0, INT64 = 1 };
 
-bool ToMeasureType(FieldType t, MeasureType* out);
-const char* MeasureTypeName(MeasureType t);
+/** The single place a FieldType is turned into a measure type; anything else is
+ *  rejected at DDL time, so the store only ever sees these two. */
+inline bool ToMeasureType(FieldType t, MeasureType* out) {
+    if (t == FieldType::DOUBLE) {
+        *out = MeasureType::DOUBLE;
+        return true;
+    }
+    if (t == FieldType::INT64) {
+        *out = MeasureType::INT64;
+        return true;
+    }
+    return false;
+}
+
+inline const char* MeasureTypeName(MeasureType t) {
+    return t == MeasureType::DOUBLE ? "DOUBLE" : "INT64";
+}
 
 struct MeasureColumn {
     MeasureType type = MeasureType::DOUBLE;
