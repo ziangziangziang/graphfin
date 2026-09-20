@@ -132,30 +132,62 @@ on every placement create/move/delete, so `GraphCountOnShard` and least-loaded
 placement are O(1)/O(#shards). `MemoryFootprint()` is unaffected in practice
 (a handful of shards).
 
-## 7. Files
+## 7. Routing (Phase 4C)
+
+`Router` (`src/cluster/router.h/.cpp`) turns the catalog into routing
+decisions:
+
+- `Resolve(graph, now)` → `RouteTarget { graph_id, shard_id, endpoint,
+  placement_version }`, or a `RouteStatus`: `GRAPH_NOT_FOUND`,
+  `PLACEMENT_NOT_ACTIVE` (CREATING/MOVING/DELETING), `NO_HEALTHY_SHARD`,
+  `STALE_PLACEMENT`.
+- `Validate(graph, seen_version, now)` rejects a request whose caller saw an
+  older placement version, while still returning the current target so the
+  caller can retry there — the guard against a stale router writing to an
+  obsolete location.
+- **Versioned, bounded cache**: keyed by `GraphId`, entries carry the
+  `placement_version` and a TTL. A catalog version bump invalidates an entry on
+  next access. The cache is hard-capped (`max_cache_entries`, default 64k) and
+  dropped wholesale at the cap, so router memory stays bounded regardless of
+  graph count. It holds only *hot* graphs; the catalog is the source of truth.
+- **Leader location** is abstracted behind `ShardLocator` so the routing logic
+  is unit-testable and the production implementation (query the shard's
+  `dbms.ha.clusterInfo`) can be added without touching the router. When the
+  locator is unknown the router falls back to the shard's first registered
+  endpoint.
+
+The router is deliberately stateless about bytes: it returns an endpoint and
+lets the caller forward. A router loss therefore cannot affect persistent graph
+state, satisfying that Phase 4 criterion by construction.
+
+## 8. Files
 
 | File | Contents |
 |---|---|
 | `src/cluster/cluster_types.h` | POD types, enums, `ShardInfo` serialization |
 | `src/cluster/cluster_meta_store.h/.cpp` | the catalog (durable + compact index) |
 | `src/cluster/shard_manager.h/.cpp` | shard registration, health, placement |
+| `src/cluster/router.h/.cpp` | graph→shard→leader routing, versioned cache |
 | `test/test_cluster_meta_store.cpp` | CRUD, reload, version, footprint tests |
 | `test/test_shard_manager.cpp` | registration, health, placement, dereg tests |
+| `test/test_router.cpp` | resolve, cache/TTL, stale detection, health, bounds |
 | `src/BuildLGraphApi.cmake` | adds `LGRAPH_CLUSTER_SRC` to `liblgraph` |
 | `test/CMakeLists.txt` | registers the unit tests |
 
-## 8. Next steps
+## 9. Next steps
 
+- **4C.2** — a real `ShardLocator` (query a shard's `dbms.ha.clusterInfo` for
+  its leader) and a `Forwarder` that sends the `LGraphRequest` to the resolved
+  endpoint, then wire the router in front of the server's request path.
 - **4B.2** — promote the catalog behind a replicated control-plane Raft group so
   the mapping is consistent cluster-wide (the store API is backend-agnostic).
-- **4C** — the router: resolve graph→shard→leader, cache keyed by
-  `placement_version`, refresh on mismatch, forward via the existing RPC.
 - **4D–4G** — richer placement strategies (disk/utilization weights), admin
   procedures, client transparency, multi-shard test harness and metrics.
 
-## 9. Document history
+## 10. Document history
 
 | Date | Author | Change |
 |---|---|---|
 | 2026-09-20 | Phase 4A | Initial cluster metadata model and store |
 | 2026-09-20 | Phase 4B | Shard lifecycle: registration, health, placement |
+| 2026-09-20 | Phase 4C | Router: resolve/validate, versioned bounded cache |
