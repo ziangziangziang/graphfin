@@ -22,6 +22,7 @@
 #include "core/kv_store.h"
 #include "core/managed_object.h"
 #include "core/schema_manager.h"
+#include "core/series_store.h"
 #include "core/type_convert.h"
 #include "core/value.h"
 
@@ -78,6 +79,7 @@ class Transaction {
 
     IndexManager* index_manager_ = nullptr;
     BlobManager* blob_manager_ = nullptr;
+    series::SeriesStore* series_store_ = nullptr;
     std::vector<IteratorBase*> iterators_;
     FullTextIndex* fulltext_index_;
     std::vector<FTIndexEntry> fulltext_buffers_;
@@ -1049,6 +1051,41 @@ class Transaction {
 
     KvTransaction& GetTxn() { return *txn_; }
 
+    //------------------------ time series ------------------------
+
+    /**
+     * Writes one point of a vertex's series field: appends it, or overwrites
+     * the point that already sits at `ts` (an idempotent correction).
+     *
+     * `values[i]` is the value of the field's i-th declared measure and may be
+     * null; `ts` is microseconds since the epoch, the same domain as DATETIME.
+     * These are the entry points the series procedures use; a series field
+     * cannot be written through the ordinary property API, because its points
+     * are not in the record.
+     *
+     * Returns false if the label has no such field, if it is not a series
+     * field, or if a point cannot be made to fit the field's bucket byte cap.
+     */
+    bool SetVertexSeriesPoint(VertexId id, const std::string& field, int64_t ts,
+                              const std::vector<series::MeasureValue>& values);
+
+    /** Reads the points of a vertex's series with t0 <= ts <= t1, oldest first.
+     *  kMinTs/kMaxTs are valid bounds. */
+    bool GetVertexSeriesRange(VertexId id, const std::string& field, int64_t t0, int64_t t1,
+                              std::vector<series::Point>* points);
+
+    /** Number of points of a vertex's series in [t0, t1]. */
+    bool GetVertexSeriesCount(VertexId id, const std::string& field, int64_t t0, int64_t t1,
+                              size_t* count);
+
+    /** Newest / oldest point of a vertex's series; `point` keeps no values when
+     *  the series is empty. */
+    bool GetVertexSeriesLatest(VertexId id, const std::string& field, series::Point* point);
+    bool GetVertexSeriesEarliest(VertexId id, const std::string& field, series::Point* point);
+
+    /** Drops every point of a vertex's series field. */
+    bool ClearVertexSeries(VertexId id, const std::string& field);
+
     /**
      * Registers a new iterator.
      * Each transaction keep a list of all the iterators created inside it.
@@ -1123,6 +1160,15 @@ class Transaction {
 
     CompositeIndex* GetVertexCompositeIndex(const size_t& label,
                                             const std::vector<size_t>& field_ids);
+
+    /**
+     * Resolves a vertex's series field into what the store needs: the field id,
+     * the measure columns in declared order and the bucket policy. Returns
+     * false when the label has no such field or it is not a series field.
+     */
+    bool ResolveVertexSeries(const graph::VertexIterator& it, const std::string& field,
+                             uint16_t* field_id, std::vector<series::MeasureColumn>* columns,
+                             series::BucketPolicy* policy);
 
     void EnterTxn();
     void LeaveTxn();

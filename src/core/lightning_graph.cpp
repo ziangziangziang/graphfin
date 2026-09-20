@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Copyright 2022 AntGroup CO., Ltd.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +30,10 @@ void LightningGraph::Close() {
     _HoldWriteLock(meta_lock_);
     fulltext_index_.reset();
     index_manager_.reset();
+    // The series store holds a table handle tied to the env that store_ owns,
+    // so it goes before store_ does. (blob_manager_ is left dangling here today;
+    // this one is not, so that nothing can outlive Close.)
+    series_store_.reset();
     graph_.reset();
     store_.reset();
 }
@@ -3069,6 +3073,9 @@ void LightningGraph::Open() {
     // blob manager
     auto b_tbl = BlobManager::OpenTable(*txn, *store_, _detail::BLOB_TABLE);
     blob_manager_.reset(new BlobManager(*txn, std::move(b_tbl)));
+    // time-series buckets
+    auto s_tbl = series::SeriesStore::OpenTable(*txn, *store_, _detail::SERIES_TABLE);
+    series_store_.reset(new series::SeriesStore(*txn, std::move(s_tbl)));
     txn->Commit();
     if (config_.load_plugins) {
         plugin_manager_.reset(new PluginManager(
