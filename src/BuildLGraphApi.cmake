@@ -68,7 +68,8 @@ set(LGRAPH_DB_SRC
 set(LGRAPH_CLUSTER_SRC
         cluster/cluster_meta_store.cpp
         cluster/shard_manager.cpp
-        cluster/router.cpp)
+        cluster/router.cpp
+        cluster/cluster_control.cpp)
 
 set(LGRAPH_API_SRC
         lgraph_api/c.cpp

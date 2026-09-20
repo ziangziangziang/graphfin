@@ -168,26 +168,49 @@ state, satisfying that Phase 4 criterion by construction.
 | `src/cluster/cluster_meta_store.h/.cpp` | the catalog (durable + compact index) |
 | `src/cluster/shard_manager.h/.cpp` | shard registration, health, placement |
 | `src/cluster/router.h/.cpp` | graph→shard→leader routing, versioned cache |
+| `src/cluster/cluster_control.h/.cpp` | control-plane facade: create+auto-place, resolve, **receiver-side fence** |
 | `test/test_cluster_meta_store.cpp` | CRUD, reload, version, footprint tests |
 | `test/test_shard_manager.cpp` | registration, health, placement, dereg tests |
 | `test/test_router.cpp` | resolve, cache/TTL, stale detection, health, bounds |
 | `src/BuildLGraphApi.cmake` | adds `LGRAPH_CLUSTER_SRC` to `liblgraph` |
 | `test/CMakeLists.txt` | registers the unit tests |
 
-## 9. Next steps
+## 9. Control facade and receiver-side fencing (Phase 4C.1)
+
+`ClusterControl` (`src/cluster/cluster_control.h/.cpp`) composes the store,
+`ShardManager` and `Router` into the operations a server or admin procedure
+needs: register/remove/list shards, create a graph on a healthy shard chosen by
+the placement strategy, delete, inspect placement, and resolve by logical name.
+
+It also provides the **receiver-side placement fence** the review requires:
+
+```cpp
+bool Fence(name, expected_version, *current);   // false if expected < current
+```
+
+Router-side version comparison protects a router's own decisions but cannot stop
+an obsolete destination from accepting a write reached directly or with a stale
+cache. A shard must therefore call `Fence()` at its write boundary and reject an
+operation whose `expected` placement version is behind the shard's authoritative
+placement. *Wiring `Fence()` into the per-shard write path is the remaining
+integration step.*
+
+## 10. Next steps
 
 - **4C.2** — a real `ShardLocator` (query a shard's `dbms.ha.clusterInfo` for
   its leader) and a `Forwarder` that sends the `LGraphRequest` to the resolved
-  endpoint, then wire the router in front of the server's request path.
+  endpoint, then wire the router in front of the server's request path, and call
+  `ClusterControl::Fence()` at the receiving shard's write boundary.
 - **4B.2** — promote the catalog behind a replicated control-plane Raft group so
   the mapping is consistent cluster-wide (the store API is backend-agnostic).
 - **4D–4G** — richer placement strategies (disk/utilization weights), admin
   procedures, client transparency, multi-shard test harness and metrics.
 
-## 10. Document history
+## 11. Document history
 
 | Date | Author | Change |
 |---|---|---|
 | 2026-09-20 | Phase 4A | Initial cluster metadata model and store |
 | 2026-09-20 | Phase 4B | Shard lifecycle: registration, health, placement |
 | 2026-09-20 | Phase 4C | Router: resolve/validate, versioned bounded cache |
+| 2026-09-20 | Phase 4C.1 | ClusterControl facade + receiver-side placement fence |
