@@ -155,6 +155,28 @@ class Record {
      */
     void Insert(const std::string &fname, const std::map<std::string, FieldData> &map);
 
+    /**
+     * @brief   Insert a list whose elements may themselves be lists or maps.
+     *
+     * The overloads above can only carry scalars, because FieldData holds no
+     * container, so a list of maps - a series of timestamped points, say - could
+     * not be represented and callers used to flatten it into a string. These
+     * take the result model's own json form, which is what Record stores for a
+     * LIST/MAP column anyway.
+     *
+     * @param   fname   one of title name you defined earlier.
+     * @param   list    LIST OF json.
+     */
+    void Insert(const std::string &fname, const std::vector<nlohmann::json> &list);
+
+    /**
+     * @brief   Insert a map whose values may themselves be lists or maps.
+     *
+     * @param   fname   one of title name you defined earlier.
+     * @param   map     MAP OF &lt;string, json&gt;
+     */
+    void Insert(const std::string &fname, const std::map<std::string, nlohmann::json> &map);
+
 #ifndef _WIN32
     /**
      * @brief   insert value into result table. You can insert a value by the function,

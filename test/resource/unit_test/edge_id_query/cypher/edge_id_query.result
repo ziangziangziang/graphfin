@@ -13,12 +13,12 @@ MATCH ()-[e]->(n) where id(n)=4 return euid(e);
 MATCH (n)-[e]-() where id(n)=4 return euid(e);
 [{"euid(e)":"4_5_1_0_0"},{"euid(e)":"4_17_5_0_0"},{"euid(e)":"5_4_1_0_0"}]
 MATCH ()-[e]->() where euid(e)="0_2_0_0_0" return e,labels(e),properties(e);
-[{"e":{"dst":2,"forward":false,"identity":0,"label":"HAS_CHILD","label_id":0,"src":0,"temporal_id":0},"labels(e)":"[HAS_CHILD]","properties(e)":{"_EID_":"0_2_0_0_0","_LABEL_":"HAS_CHILD"}}]
+[{"e":{"dst":2,"forward":false,"identity":0,"label":"HAS_CHILD","label_id":0,"src":0,"temporal_id":0},"labels(e)":["HAS_CHILD"],"properties(e)":{"_EID_":"0_2_0_0_0","_LABEL_":"HAS_CHILD"}}]
 MATCH ()-[e]->() where euid(e)="4_17_5_0_0" return properties(e);
 [{"properties(e)":{"_EID_":"4_17_5_0_0","_LABEL_":"ACTED_IN","charactername":"Henri Ducard"}}]
 MATCH ()-[e]->() where euid(e)="4_17_5_0_0" return e.charactername;
 [{"e.charactername":"Henri Ducard"}]
 MATCH ()-[e]->() where euid(e)="8_13_2_0_0" set e.weight=1223 return e,labels(e),properties(e);
-[{"e":{"dst":13,"forward":false,"identity":0,"label":"BORN_IN","label_id":2,"properties":{"reg_time":"2023-05-01 14:00:00","weight":1223.0},"src":8,"temporal_id":0},"labels(e)":"[BORN_IN]","properties(e)":"{\"_LABEL_\":\"BORN_IN\",\"_EID_\":\"8_13_2_0_0\",\"reg_time\":2023-05-01 14:00:00,\"weight\":1223.000000}"}]
+[{"e":{"dst":13,"forward":false,"identity":0,"label":"BORN_IN","label_id":2,"properties":{"reg_time":"2023-05-01 14:00:00","weight":1223.0},"src":8,"temporal_id":0},"labels(e)":["BORN_IN"],"properties(e)":"{\"_LABEL_\":\"BORN_IN\",\"_EID_\":\"8_13_2_0_0\",\"reg_time\":2023-05-01 14:00:00,\"weight\":1223.000000}"}]
 MATCH ()-[e]->() where euid(e)="4_17_5_0_0" delete e;
 [{"<SUMMARY>":"deleted 0 vertices, deleted 1 edges."}]

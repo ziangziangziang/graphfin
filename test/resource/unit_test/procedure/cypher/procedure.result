@@ -163,7 +163,7 @@ MATCH (n1 {name:'Corin Redgrave'}),(n2 {name:'London'}) CALL algo.allShortestPat
 MATCH (n1 {name:'Corin Redgrave'}),(n2 {name:'Liam Neeson'}) CALL algo.allShortestPaths(n1,n2) YIELD nodeIds,cost RETURN nodeIds,cost /* 4 */;
 [{"cost":4.0,"nodeIds":[3,0,2,5,4]},{"cost":4.0,"nodeIds":[3,0,2,5,4]},{"cost":4.0,"nodeIds":[3,1,2,5,4]},{"cost":4.0,"nodeIds":[3,1,2,5,4]}]
 MATCH (n1 {name:'Corin Redgrave'}),(n2 {name:'Liam Neeson'}) CALL algo.allShortestPaths(n1,n2) YIELD nodeIds,relationshipIds,cost RETURN nodeIds,relationshipIds,cost /* 4 */;
-[{"cost":4.0,"nodeIds":[3,0,2,5,4],"relationshipIds":"[0_3_0_0_0,0_2_0_0_0,2_5_0_0_0,5_4_1_0_0]"},{"cost":4.0,"nodeIds":[3,0,2,5,4],"relationshipIds":"[0_3_0_0_0,0_2_0_0_0,2_5_0_0_0,4_5_1_0_0]"},{"cost":4.0,"nodeIds":[3,1,2,5,4],"relationshipIds":"[1_3_0_0_0,1_2_0_0_0,2_5_0_0_0,5_4_1_0_0]"},{"cost":4.0,"nodeIds":[3,1,2,5,4],"relationshipIds":"[1_3_0_0_0,1_2_0_0_0,2_5_0_0_0,4_5_1_0_0]"}]
+[{"cost":4.0,"nodeIds":[3,0,2,5,4],"relationshipIds":["0_3_0_0_0","0_2_0_0_0","2_5_0_0_0","5_4_1_0_0"]},{"cost":4.0,"nodeIds":[3,0,2,5,4],"relationshipIds":["0_3_0_0_0","0_2_0_0_0","2_5_0_0_0","4_5_1_0_0"]},{"cost":4.0,"nodeIds":[3,1,2,5,4],"relationshipIds":["1_3_0_0_0","1_2_0_0_0","2_5_0_0_0","5_4_1_0_0"]},{"cost":4.0,"nodeIds":[3,1,2,5,4],"relationshipIds":["1_3_0_0_0","1_2_0_0_0","2_5_0_0_0","4_5_1_0_0"]}]
 CALL algo.pagerank(10) YIELD node, pr RETURN node, pr ORDER by pr desc LIMIT 1 /* V[9], 0.0187 */;
 [{"node":{"identity":9,"label":"Person","properties":{"birthyear":1965,"name":"Jemma Redgrave"}},"pr":0.018702394545433147}]
 CALL algo.pagerank(10) YIELD node, pr RETURN node.name, pr LIMIT 1 /* Rachel Kempson0.010590751202103139 */;

@@ -39,7 +39,7 @@ RETURN 1+2.0+3+4.0;
 RETURN 1+'a';
 [{"1+'a'":"1a"}]
 RETURN ['a']+'a';
-[{"['a']+'a'":"[a,a]"}]
+[{"['a']+'a'":["a","a"]}]
 RETURN 1+[1];
 [{"1+[1]":[1,1]}]
 RETURN TRUE+[1.0];
@@ -71,7 +71,7 @@ RETURN null^3.0;
 RETURN 0^null;
 [{"0^null":null}]
 RETURN (2.0+1)*3-2/1.5+'a'+[1];
-[{"(2.0+1)*3-2/1.5+'a'+[1]":"[7.666667a,1]"}]
+[{"(2.0+1)*3-2/1.5+'a'+[1]":["7.666667a",1]}]
 RETURN null^2*3/4+5-6;
 [{"null^2*3/4+5-6":null}]
 MATCH (n) WHERE n.name STARTS WITH 'Li' RETURN n,n.name;
@@ -211,7 +211,7 @@ RETURN [1,2,3,4,5]+[6,7] AS myList;
 WITH [1,2,3,4,5] AS l1, [6,7] AS l2 RETURN l1+l2 AS myList;
 [{"myList":[1,2,3,4,5,6,7]}]
 MATCH (n:City) RETURN collect(n.name)+['Wuhan'] AS cNames;
-[{"cNames":"[Houston,London,New York,Wuhan]"}]
+[{"cNames":["Houston","London","New York","Wuhan"]}]
 UNWIND [2, 3, 4, 5] AS number WITH number WHERE number IN [2, 3, 8] RETURN number;
 [{"number":2},{"number":3}]
 RETURN date('2017-05-03');
@@ -263,7 +263,7 @@ RETURN trim("  TuGraph  ");
 RETURN replace("Hello TuGraph", "TuGraph", "World");
 [{"replace(\"Hello TuGraph\", \"TuGraph\", \"World\")":"Hello World"}]
 RETURN split("TuGraph,Graph,Database", ",");
-[{"split(\"TuGraph,Graph,Database\", \",\")":"[TuGraph,Graph,Database]"}]
+[{"split(\"TuGraph,Graph,Database\", \",\")":["TuGraph","Graph","Database"]}]
 RETURN left("TuGraph", 3);
 [{"left(\"TuGraph\", 3)":"TuG"}]
 RETURN right("TuGraph", 2);

@@ -323,10 +323,14 @@ json ResultElement::ToJson() {
     if (LGraphTypeIsField(type_) || LGraphTypeIsAny(type_)) {
         result = lgraph_rfc::FieldDataToJson(*v.fieldData);
     } else if (type_ == LGraphType::LIST) {
+        // Start from an empty array: a default-constructed json is null, and an
+        // empty list would then serialize as null instead of [].
+        result = json::array();
         for (auto &l : *v.list) {
             result.push_back(l);
         }
     } else if (type_ == LGraphType::MAP) {
+        result = json::object();
         for (auto &m : *v.map) {
             result[m.first] = m.second;
         }
@@ -346,7 +350,7 @@ std::any ResultElement::ToBolt(int64_t* v_eid) {
     if (LGraphTypeIsField(type_) || LGraphTypeIsAny(type_)) {
         return v.fieldData->ToBolt();
     } else if (type_ == LGraphType::LIST) {
-        json result;
+        json result = json::array();  // an empty list must not become null
         for (auto &l : *v.list) {
             result.push_back(l);
         }
@@ -370,7 +374,7 @@ std::any ResultElement::ToBolt(int64_t* v_eid) {
         }
         return ret;*/
     } else if (type_ == LGraphType::MAP) {
-        json result;
+        json result = json::object();  // an empty map must not become null
         for (auto &m : *v.map) {
             result[m.first] = m.second;
         }
