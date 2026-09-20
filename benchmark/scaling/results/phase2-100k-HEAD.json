@@ -1,0 +1,384 @@
+{
+  "config": {
+    "binary": "/workspace/build/output/lgraph_server",
+    "config_file": "/workspace/build/output/lgraph_standalone.json",
+    "graphs": [
+      100000
+    ],
+    "max_size_gb": 1,
+    "phases": [
+      "start",
+      "create",
+      "metrics",
+      "query",
+      "throughput",
+      "snapshot",
+      "restart",
+      "restore",
+      "delete",
+      "stop"
+    ],
+    "repeated_queries": 1000,
+    "sample_interval": 0.5,
+    "server_extra_args": [],
+    "settle_seconds": 3.0,
+    "throughput_seconds": 10.0,
+    "throughput_threads": 4
+  },
+  "env": {
+    "captured_at_utc": "2026-09-20T06:47:18Z",
+    "container": {
+      "cgroup": "0::/",
+      "image_id": "sha256:2350a9a1f998b6898b169d28015c60c49b488def8980b9553a657819763afedf"
+    },
+    "cpu": {
+      "affinity": 10,
+      "count": 10,
+      "model": "ARM (implementer=0x61, part=0x000, architecture=8, variant=0x0)"
+    },
+    "host": {
+      "arch": "aarch64",
+      "hostname": "906d125bae93",
+      "kernel": "7.0.14-orbstack-00380-ga7e0a2dc9535",
+      "os_id": "centos",
+      "os_release": "CentOS Linux 7 (AltArch)",
+      "platform": "Linux-7.0.14-orbstack-00380-ga7e0a2dc9535-aarch64-with-centos-7.9.2009-AltArch"
+    },
+    "lib_version": "1.0.0",
+    "limits": {
+      "cgroup_cpu_max": "400000 100000",
+      "cgroup_pids_max": "max",
+      "max_map_count": "262144",
+      "nofile_hard": 1048576,
+      "nofile_soft": 1048576,
+      "threads_max": "64275"
+    },
+    "memory": {
+      "cgroup_limit_bytes": "6442450944",
+      "mem_available_kb": "3381936 kB",
+      "mem_total_kb": "8196572 kB",
+      "swap_total_kb": "9245140 kB"
+    },
+    "python": {
+      "executable": "/usr/local/bin/python3",
+      "version": "3.6.9"
+    },
+    "source": {
+      "git_commit": "fd7e996b8a2305f2b6b61360b038545813cb1d3d",
+      "git_describe": "v4.3.1-162-gfd7e996-dirty"
+    },
+    "storage": {
+      "data_dir": "/data",
+      "data_dir_fstype": "btrfs",
+      "data_dir_mountpoint": "/data"
+    }
+  },
+  "finished_at_utc": "2026-09-20T07:21:29Z",
+  "phase0_bench_version": "1.0.0",
+  "runs": {
+    "100000": {
+      "create": {
+        "buckets": {
+          "1-9": {
+            "max_ms": 3.237,
+            "mean_ms": 1.798,
+            "min_ms": 0.988,
+            "n": 9,
+            "p50_ms": 1.531,
+            "p95_ms": 2.854,
+            "p99_ms": 3.161,
+            "sum_seconds": 0.016
+          },
+          "10-99": {
+            "max_ms": 5.377,
+            "mean_ms": 1.166,
+            "min_ms": 0.672,
+            "n": 90,
+            "p50_ms": 1.01,
+            "p95_ms": 1.983,
+            "p99_ms": 4.329,
+            "sum_seconds": 0.105
+          },
+          "100-999": {
+            "max_ms": 5.322,
+            "mean_ms": 1.203,
+            "min_ms": 0.628,
+            "n": 900,
+            "p50_ms": 1.082,
+            "p95_ms": 2.11,
+            "p99_ms": 2.978,
+            "sum_seconds": 1.083
+          },
+          "1000-9999": {
+            "max_ms": 63.322,
+            "mean_ms": 2.293,
+            "min_ms": 0.877,
+            "n": 9000,
+            "p50_ms": 2.231,
+            "p95_ms": 3.303,
+            "p99_ms": 4.585,
+            "sum_seconds": 20.635
+          },
+          "10000-100000": {
+            "max_ms": 235.765,
+            "mean_ms": 12.193,
+            "min_ms": 2.473,
+            "n": 90000,
+            "p50_ms": 11.869,
+            "p95_ms": 22.083,
+            "p99_ms": 32.579,
+            "sum_seconds": 1097.337
+          }
+        },
+        "created": 99999,
+        "error": null,
+        "latency": {
+          "max_ms": 235.765,
+          "mean_ms": 11.192,
+          "min_ms": 0.628,
+          "n": 99999,
+          "p50_ms": 11.287,
+          "p95_ms": 21.446,
+          "p99_ms": 31.64,
+          "sum_seconds": 1119.175
+        },
+        "requested": 99999,
+        "seconds": null,
+        "total_seconds": 1120.026,
+        "wall_seconds": 1120.208
+      },
+      "delete": {
+        "buckets": {
+          "1-9": {
+            "max_ms": 1.163,
+            "mean_ms": 0.64,
+            "min_ms": 0.482,
+            "n": 8,
+            "p50_ms": 0.541,
+            "p95_ms": 1.008,
+            "p99_ms": 1.132,
+            "sum_seconds": 0.005
+          },
+          "10-99": {
+            "max_ms": 1.243,
+            "mean_ms": 0.563,
+            "min_ms": 0.459,
+            "n": 90,
+            "p50_ms": 0.528,
+            "p95_ms": 0.763,
+            "p99_ms": 0.932,
+            "sum_seconds": 0.051
+          },
+          "100-999": {
+            "max_ms": 1.425,
+            "mean_ms": 0.67,
+            "min_ms": 0.491,
+            "n": 900,
+            "p50_ms": 0.65,
+            "p95_ms": 0.887,
+            "p99_ms": 1.228,
+            "sum_seconds": 0.603
+          },
+          "1000-9999": {
+            "max_ms": 15.113,
+            "mean_ms": 1.336,
+            "min_ms": 0.601,
+            "n": 9000,
+            "p50_ms": 1.236,
+            "p95_ms": 1.95,
+            "p99_ms": 2.427,
+            "sum_seconds": 12.026
+          },
+          "10000-100000": {
+            "max_ms": 530.56,
+            "mean_ms": 8.485,
+            "min_ms": 1.727,
+            "n": 90001,
+            "p50_ms": 8.518,
+            "p95_ms": 15.299,
+            "p99_ms": 19.548,
+            "sum_seconds": 763.63
+          }
+        },
+        "deleted": 99999,
+        "error": null,
+        "latency": {
+          "max_ms": 530.56,
+          "mean_ms": 7.763,
+          "min_ms": 0.459,
+          "n": 99999,
+          "p50_ms": 7.836,
+          "p95_ms": 15.068,
+          "p99_ms": 19.153,
+          "sum_seconds": 776.315
+        },
+        "requested": 99999,
+        "seconds": null,
+        "total_seconds": 776.676,
+        "wall_seconds": 776.864
+      },
+      "final_peaks": {
+        "startup": {
+          "fds": 3,
+          "maps": 62,
+          "rss_kb": 15260,
+          "threads": 1,
+          "vmpeak_kb": 81544,
+          "vmsize_kb": 81544
+        },
+        "steady": {
+          "fds": 23,
+          "maps": 242,
+          "rss_kb": 990624,
+          "threads": 73,
+          "vmpeak_kb": 3539248,
+          "vmsize_kb": 3539184
+        }
+      },
+      "final_shutdown": {
+        "error": null,
+        "seconds": 0.5685,
+        "wall_seconds": 0.57
+      },
+      "first_query": {
+        "default_seconds": 0.039646,
+        "error": null,
+        "last_graph": "g99999",
+        "last_graph_seconds": 0.001127,
+        "seconds": null,
+        "wall_seconds": 0.047
+      },
+      "graphs_target": 100000,
+      "repeated_query": {
+        "error": null,
+        "graphs_spread_over": 1000,
+        "latency": {
+          "max_ms": 9.849,
+          "mean_ms": 1.268,
+          "min_ms": 0.305,
+          "n": 1000,
+          "p50_ms": 1.262,
+          "p95_ms": 1.795,
+          "p99_ms": 2.497,
+          "sum_seconds": 1.268
+        },
+        "qps": 788.9,
+        "queries": 1000,
+        "seconds": null,
+        "wall_seconds": 1.28
+      },
+      "restart": {
+        "bolt_port": 39755,
+        "error": null,
+        "http_port": 44599,
+        "rpc_port": 32811,
+        "seconds": 0.2812,
+        "wall_seconds": 0.284
+      },
+      "restore": {
+        "copy_seconds": 23.947,
+        "error": null,
+        "graphs_found": 100000,
+        "seconds": null,
+        "startup_seconds": 0.396,
+        "total_seconds": 24.343,
+        "verified": true,
+        "wall_seconds": 25.153
+      },
+      "shutdown": {
+        "error": null,
+        "seconds": 0.7921,
+        "wall_seconds": 0.798
+      },
+      "snapshot": {
+        "bytes": 1664417792,
+        "error": null,
+        "files": 100001,
+        "latest": "/data/db_100000/snapshot/2026-09-20_07.06.15.102131",
+        "seconds": 99.543,
+        "snapshot_root": "/data/db_100000/snapshot",
+        "snapshots": [
+          "2026-09-20_07.06.15.102131"
+        ],
+        "wall_seconds": 102.715
+      },
+      "startup": {
+        "bolt_port": 45633,
+        "error": null,
+        "http_port": 33605,
+        "rpc_port": 41537,
+        "seconds": 0.2668,
+        "wall_seconds": 0.278
+      },
+      "startup_metrics": {
+        "error": null,
+        "peaks": {
+          "fds": 3,
+          "maps": 62,
+          "rss_kb": 15260,
+          "threads": 1,
+          "vmpeak_kb": 81544,
+          "vmsize_kb": 81544
+        },
+        "sample": {
+          "fds": 22,
+          "maps": 233,
+          "rss_kb": 65108,
+          "t": 2302727.649079713,
+          "threads": 73,
+          "vmpeak_kb": 2176752,
+          "vmsize_kb": 2176752
+        },
+        "seconds": null,
+        "wall_seconds": 0.001
+      },
+      "steady_metrics": {
+        "error": null,
+        "fds": 22,
+        "fds_peak": 23,
+        "maps": 242,
+        "maps_peak": 242,
+        "peaks_during_run": {
+          "fds": 23,
+          "maps": 242,
+          "rss_kb": 990624,
+          "threads": 73,
+          "vmpeak_kb": 3539248,
+          "vmsize_kb": 3539184
+        },
+        "rss_kb": 974200,
+        "rss_peak_kb": 990624,
+        "seconds": null,
+        "threads": 73,
+        "threads_peak": 73,
+        "vmsize_kb": 3539184,
+        "vmsize_peak_kb": 3539184,
+        "wall_seconds": 3.016
+      },
+      "storage": {
+        "dir_bytes": 24464576,
+        "error": null,
+        "files": 2,
+        "graph_bytes": 0,
+        "graph_dirs": 0,
+        "meta_bytes": 24464576,
+        "per_graph_bytes": null,
+        "seconds": null,
+        "wall_seconds": 0.0
+      },
+      "throughput": {
+        "error": null,
+        "errors": 0,
+        "read_threads": 4,
+        "read_tps": 496.5,
+        "reads": 4965,
+        "seconds": 10.0,
+        "wall_seconds": 10.016,
+        "write_threads": 2,
+        "write_tps": 1314.2,
+        "writes": 13142
+      }
+    }
+  },
+  "started_at_utc": "2026-09-20T06:47:18Z"
+}
