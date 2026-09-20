@@ -47,6 +47,7 @@ set(LGRAPH_CORE_SRC
         core/lightning_graph.cpp
         core/schema.cpp
         core/series_encoding.cpp
+        core/series_store.cpp
         core/sync_file.cpp
         core/thread_id.cpp
         core/transaction.cpp

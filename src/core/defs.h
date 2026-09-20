@@ -86,6 +86,7 @@ static const char* const DEFAULT_GRAPH_DB_NAME = "default";
 // table names used in core
 static const char* const META_TABLE = "_meta_";                  // stores version numbers
 static const char* const BLOB_TABLE = "_blob_";                  // stores the blobs
+static const char* const SERIES_TABLE = "_tseries_";              // time-series buckets
 static const char* const IP_WHITELIST_TABLE = "_ip_whitelist_";  // ip whitelist table
 static const char* const GRAPH_TABLE = "_graph_";                // vid -> edge1, edge2, ...
 static const char* const V_SCHEMA_TABLE = "_v_schema_";          // label -> schema
