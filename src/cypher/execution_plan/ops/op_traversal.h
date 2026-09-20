@@ -226,6 +226,13 @@ class Traversal : public OpBase {
                 break;
             }
         }
+        // count() over an empty set must return 0 in a single row. When there
+        // is a group-by key (noneagg_property_ non-empty), an empty map means
+        // "no groups", which correctly produces no rows.
+        if (map_.lock_table().empty() && noneagg_property_.empty()) {
+            result_buffer_.emplace_back(lgraph::FieldData(static_cast<int64_t>(0)));
+            return true;
+        }
         for (auto &num : map_.lock_table()) {
             if (noneagg_property_.empty()) {
                 result_buffer_.emplace_back(lgraph::FieldData(num.second));
