@@ -24,6 +24,10 @@ ParallelVector<size_t> FindVertices(GraphDB &db, Transaction &txn,
     GraphDB &db_ = db;
     Transaction &txn_ = txn;
     size_t num_vertices_ = txn.GetNumVertices();
+    // An empty graph has no vertices: ParallelVector rejects a 0 capacity
+    // ("capacity cannot be 0"), and both loops below would iterate zero rows
+    // anyway, so return an empty result directly.
+    if (num_vertices_ == 0) return ParallelVector<size_t>();
     ParallelVector<size_t> frontier(num_vertices_);
     if (parallel && txn.IsReadOnly()) {
         auto worker = Worker::SharedWorker();
