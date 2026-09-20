@@ -65,6 +65,9 @@ set(LGRAPH_DB_SRC
         db/graph_manager.cpp
         db/token_manager.cpp)
 
+set(LGRAPH_CLUSTER_SRC
+        cluster/cluster_meta_store.cpp)
+
 set(LGRAPH_API_SRC
         lgraph_api/c.cpp
         lgraph_api/lgraph_db.cpp
@@ -89,6 +92,7 @@ add_library(${TARGET_LGRAPH} SHARED
         ${LGRAPH_API_SRC}
         ${LGRAPH_CORE_SRC}
         ${LGRAPH_DB_SRC}
+        ${LGRAPH_CLUSTER_SRC}
         ${LGRAPH_ALGO_SRC}
 
         plugin/cpp_plugin.cpp

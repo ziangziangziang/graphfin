@@ -28,6 +28,7 @@ add_executable(unit_test
         test_cache_aligned_vector.cpp
         test_concurrent_gettime.cpp
         test_core_exception.cpp
+        test_cluster_meta_store.cpp
         test_cpp_procedure.cpp
         test_cppresetsdk_json.cpp
         test_cypher_v2.cpp
