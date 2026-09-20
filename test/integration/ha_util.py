@@ -57,6 +57,23 @@ def server_binary():
     raise RuntimeError("lgraph_server not found. Build first.")
 
 
+def server_config():
+    """Locate the HA server config shipped next to lgraph_server.
+
+    lgraph_server requires -c <config>; it defaults to
+    /usr/local/etc/lgraph.json which is not present in the test tree.
+    """
+    server_dir = os.path.dirname(server_binary())
+    for candidate in (
+        os.path.join(server_dir, "lgraph_ha.json"),
+        os.path.join(BUILD_OUTPUT, "lgraph_ha.json"),
+        "./lgraph_ha.json",
+    ):
+        if os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    raise RuntimeError("lgraph_ha.json not found next to lgraph_server.")
+
+
 class HANodeHandle(object):
     """Owns one lgraph_server process in a 3-node HA cluster."""
 
@@ -71,27 +88,49 @@ class HANodeHandle(object):
         self._logf = None
         self.http_port = http_port
         self.rpc_port = rpc_port
+        # First start bootstraps the group (role 1 for the seed, role 2 for
+        # joiners). Every later start rejoins the existing group in
+        # config-based mode (role 0) using --ha_conf.
+        self.started_once = False
 
     def cmd(self):
         c = [
             server_binary(),
+            "-c", server_config(),
             "--host", "127.0.0.1",
             "--port", str(self.http_port),
             "--enable_rpc", "true",
             "--rpc_port", str(self.rpc_port),
             "--directory", self.db_dir,
-            "--log_dir", self.db_dir + "/log",
+            # No --log_dir: the readiness marker ("Server started.") is an INFO
+            # line on stderr/stdout, which start() captures. Setting --log_dir
+            # would divert it into a rotating file and the readiness wait would
+            # never see it.
             "--enable_ha", "true",
             "--ha_conf", self.ha_conf,
-            "--ha_node_offline_ms", "5000",
-            "--ha_node_remove_ms", "10000",
+            # Keep peers in the Raft configuration across short chaos outages.
+            # The aggressive test defaults (5s/10s) permanently remove a node
+            # from the group after a brief kill; on restart it can then only
+            # rejoin via add_peer, which makes repeated chaos runs degrade the
+            # cluster. These wide values keep the group a stable 3 peers.
+            "--ha_node_offline_ms", "600000",
+            "--ha_node_remove_ms", "1200000",
             "--ha_node_join_group_s", "30",
+            # The default 500ms election timeout is too tight for a busy
+            # 2-core test host and causes leadership flapping. Give elections
+            # room while keeping failover prompt.
+            "--ha_election_timeout_ms", "3000",
             "--verbose", "1",
         ]
-        if self.node_id == 0:
-            c.append("--ha_bootstrap_role=1")
+        if self.started_once:
+            # Restart: rejoin the existing group from --ha_conf. Reusing the
+            # bootstrap roles here would re-initialise the group and corrupt
+            # it, so restarts always use role 0.
+            c.extend(["--ha_bootstrap_role", "0"])
+        elif self.node_id == 0:
+            c.extend(["--ha_bootstrap_role", "1"])
         else:
-            c.append("--ha_bootstrap_role=2")
+            c.extend(["--ha_bootstrap_role", "2"])
         return c + self.extra_args
 
     def start(self, timeout=120.0):
@@ -110,6 +149,7 @@ class HANodeHandle(object):
                     "node %d server exited early:\n%s"
                     % (self.node_id, self.log_tail()))
             if self._log_has(READY_MARKER):
+                self.started_once = True
                 return self
             time.sleep(0.1)
         self.kill()
@@ -173,6 +213,11 @@ class HAHandle(object):
             "127.0.0.1:%d" % p for p in self.rpc_ports)
         self.nodes = []
         self._rpc_clients = {}
+        # Nodes paused with SIGSTOP. A stopped process still accepts TCP
+        # connections but never replies, and the python RPC binding does not
+        # always honour its timeout during connect/login, so calls to a frozen
+        # node can hang forever. Track them and skip in rpc().
+        self._frozen = set()
 
     def start(self, timeout=120.0):
         for i in range(3):
@@ -215,38 +260,53 @@ class HAHandle(object):
         if n.proc is None or n.proc.poll() is not None:
             return
         n.proc.send_signal(_signal.SIGCONT if resume else _signal.SIGSTOP)
+        if resume:
+            self._frozen.discard(node_id)
+        else:
+            self._frozen.add(node_id)
+        # The peer's TCP connection stalls while stopped; drop the cached
+        # client so the next rpc() reconnects cleanly after resume.
+        self._invalidate_rpc(node_id)
 
     def cleanup(self):
         self.stop()
+        if os.environ.get("HA_KEEP"):
+            LOG.info("HA_KEEP set: leaving %s for inspection", self.work_dir)
+            return
         import shutil
         if os.path.isdir(self.work_dir):
             shutil.rmtree(self.work_dir, ignore_errors=True)
 
     def rpc(self, node_id=0, retries=30):
-        key = (node_id, DEFAULT_USER)
-        if key in self._rpc_clients:
-            c = self._rpc_clients[key]
-            if c is not None:
-                return c
+        """Return a live, freshly-created client for a node.
+
+        The python binding keeps process-global connection state, so a client
+        cached across a node restart (or across a different node) can silently
+        point at a dead socket. Always create a new client and validate it with
+        a local `RETURN 1` (no master contact).
+        """
         import liblgraph_client_python
+        if node_id in self._frozen:
+            raise RuntimeError("node %d is frozen (SIGSTOP); skipping" % node_id)
         host = "127.0.0.1:%d" % self.rpc_ports[node_id]
         last = None
         for _ in range(retries):
             try:
                 c = liblgraph_client_python.client(
                     host, DEFAULT_USER, DEFAULT_PASSWORD)
-                self._rpc_clients[key] = c
-                return c
+                ok, _ = c.callCypher("RETURN 1 AS ok", "default", timeout=5)
+                if ok:
+                    return c
+                last = "client created but not usable"
             except Exception as exc:
                 last = exc
-                time.sleep(1)
+            time.sleep(1)
         raise RuntimeError(
             "could not connect to node %d RPC at %s: %s"
             % (node_id, host, last))
 
     def _invalidate_rpc(self, node_id):
-        key = (node_id, DEFAULT_USER)
-        self._rpc_clients.pop(key, None)
+        self._rpc_clients.pop(node_id, None)
 
 
 # Public helpers -------------------------------------------------------------
@@ -264,41 +324,92 @@ def cypher_all(nodes, script, graph="default", timeout=10):
     return results
 
 
-def cypher_on_leader(handle, script, graph="default", timeout=10):
-    """Run a Cypher statement on the leader. Returns (ok, result)."""
-    leader_id, leader_rpc = find_leader(handle)
-    if leader_rpc is None:
-        raise RuntimeError("no leader found")
-    ok, result = leader_rpc.callCypher(script, graph, timeout=timeout)
-    return ok, result
+def live_client(handle, prefer=None, retries=1):
+    """Return a client to a node that answers, or raise.
+
+    TuGraph's RPC server redirects write requests from a follower to the
+    current leader, so a client to *any* live node can perform writes. This is
+    far more robust than discovering the leader explicitly: it keeps working
+    across elections as long as one node is up.
+    """
+    order = list(range(3))
+    if prefer is not None:
+        order = [prefer] + [i for i in order if i != prefer]
+    last = None
+    for i in order:
+        try:
+            return handle.rpc(i, retries=retries)
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+    raise RuntimeError("no live node: %s" % last)
+
+
+def cypher_on_leader(handle, script, graph="default", timeout=15,
+                     leader_timeout=90.0):
+    """Run a Cypher statement, retrying against live nodes. Returns (ok, result).
+
+    Writes executed on a follower are redirected by the server to the leader,
+    so this works during elections and node restarts without explicit leader
+    tracking.
+    """
+    deadline = time.time() + leader_timeout
+    last = None
+    while time.time() < deadline:
+        try:
+            c = live_client(handle)
+            ok, result = c.callCypher(script, graph, timeout=timeout)
+            if ok:
+                return ok, result
+            last = result
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+        time.sleep(1)
+    return False, last
+
+
+def _peers_from_cluster_info(result):
+    rows = json.loads(result)
+    for row in rows:
+        info = row.get("cluster_info", row)
+        if isinstance(info, str):
+            info = json.loads(info)
+        if isinstance(info, list):
+            return info
+    return []
 
 
 def find_leader(handle):
-    """Return (node_id, rpc_client) of the current leader, or (None, None)."""
+    """Return (node_id, rpc_client) of the current leader, or (None, None).
+
+    The leader is the peer reported with state MASTER in clusterInfo's peer
+    list; its rpc_address maps back to a node index.
+    """
     for i in range(3):
         try:
-            c = handle.rpc(i, retries=5)
+            c = handle.rpc(i, retries=1)
             ok, result = c.callCypher(
-                "CALL dbms.ha.clusterInfo()", "default", timeout=10)
+                "CALL dbms.ha.clusterInfo()", "default", timeout=8)
             if not ok:
                 continue
-            rows = json.loads(result)
-            for row in rows:
-                info = row.get("cluster_info", row)
-                if isinstance(info, list):
-                    for peer in info:
-                        if peer.get("state") == "MASTER":
-                            return i, c
-                elif isinstance(info, dict):
-                    if info.get("state") == "MASTER":
-                        return i, c
+            for peer in _peers_from_cluster_info(result):
+                if peer.get("state") == "MASTER":
+                    addr = peer.get("rpc_address") or peer.get("rpc_addr") or ""
+                    if ":" in addr:
+                        port = int(addr.rsplit(":", 1)[1])
+                        for j in range(3):
+                            if handle.rpc_ports[j] == port:
+                                try:
+                                    return j, handle.rpc(j, retries=1)
+                                except Exception:  # noqa: BLE001
+                                    return j, c
+                    return i, c
         except Exception:
             continue
     return None, None
 
 
-def wait_for_leader(handle, timeout=60.0):
-    """Block until a leader is elected. Returns (node_id, client)."""
+def wait_for_leader(handle, timeout=90.0):
+    """Block until a leader is reported. Returns (node_id, client)."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         leader_id, leader_client = find_leader(handle)
@@ -309,10 +420,10 @@ def wait_for_leader(handle, timeout=60.0):
 
 
 def all_nodes_healthy(handle):
-    """Check that all 3 nodes report a non-OFFLINE state."""
+    """Check that all 3 nodes are reachable and report a peer list."""
     for i in range(3):
         try:
-            c = handle.rpc(i, retries=3)
+            c = handle.rpc(i, retries=2)
             ok, result = c.callCypher(
                 "CALL dbms.ha.clusterInfo()", "default", timeout=10)
             if not ok:
@@ -333,18 +444,43 @@ def wait_for_all_healthy(handle, timeout=60.0):
 
 # Sentinel data --------------------------------------------------------------
 # Small deterministic graph that every chaos test can create and verify.
+# TuGraph requires vertex labels to be declared before CREATE/MERGE, and the
+# schema procedure runs in the context of the target graph.
 
+SENTINEL_GRAPH = "sentinel"
 SENTINEL_CREATE = (
-    "CALL dbms.graph.createGraph('sentinel', 'Phase3 HA test graph', 1)")
-SENTINEL_MATCH = "MATCH (n:Person) RETURN n.name ORDER BY n.name"
+    "CALL dbms.graph.createGraph('%s', 'Phase3 HA test graph', 1)" % SENTINEL_GRAPH)
+SENTINEL_SCHEMA = [
+    "CALL db.createVertexLabel('Person', 'name', 'name', 'STRING', false)",
+    "CALL db.createVertexLabel('Counter', 'id', 'id', 'INT64', false, "
+    "'value', 'INT64', false)",
+]
 SENTINEL_VERTICES = 3
 SENTINEL_DATA = (
-    "CREATE (n:Person {name: 'Alice'}) "
-    "CREATE (n:Person {name: 'Bob'}) "
-    "CREATE (n:Person {name: 'Carol'})"
+    "CREATE (a:Person {name: 'Alice'}), "
+    "(b:Person {name: 'Bob'}), "
+    "(c:Person {name: 'Carol'})"
 )
-SENTINEL_CHECK = (
-    "MATCH (n:Person) RETURN count(n) AS cnt"
-)
+SENTINEL_CHECK = "MATCH (n:Person) RETURN count(n) AS cnt"
+
+
+def setup_sentinel(cluster, timeout=20.0):
+    """Idempotently create the sentinel graph, its labels and initial data.
+
+    Failures from a previous run (graph/label already exists) are ignored, so
+    the fixture can be module-scoped and re-run safely.
+    """
+    leader_id, client = wait_for_leader(cluster, timeout=timeout)
+    statements = [("default", SENTINEL_CREATE)]
+    statements += [("sentinel", stmt) for stmt in SENTINEL_SCHEMA]
+    statements.append(("sentinel", SENTINEL_DATA))
+    for graph, stmt in statements:
+        try:
+            ok, result = client.callCypher(stmt, graph, timeout=timeout)
+            if not ok:
+                LOG.info("sentinel setup (ignored): %s -> %s", stmt, result)
+        except Exception as exc:  # noqa: BLE001
+            LOG.info("sentinel setup (ignored): %s -> %s", stmt, exc)
+
 
 LOG = logging.getLogger(__name__)
