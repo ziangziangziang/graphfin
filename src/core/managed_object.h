@@ -39,6 +39,23 @@
 namespace lgraph {
 
 namespace _detail {
+// Per-thread reference slot type.
+//
+// Default: each slot is padded to a cache line (64 B) to avoid false sharing
+// between adjacent threads' counters. With LGRAPH_MAX_THREADS = 480 this costs
+// ~30 KiB per RefCountedObj, and each graph has ~2 of them (~60 KiB/open graph).
+//
+// Build with -DLGRAPH_COMPACT_REFCOUNT=1 for the memory-frugal build used by the
+// sharding test fleet: slots are plain uint64_t (8 B), an 8x reduction to
+// ~7.5 KiB/open graph. Correctness is unchanged (each thread writes only its own
+// index); only false-sharing performance is traded away, which matters little
+// for low-concurrency, many-graph workloads. See docs/architecture/13-memory-footprint.md.
+#ifdef LGRAPH_COMPACT_REFCOUNT
+using RefCountSlot = uint64_t;
+#else
+using RefCountSlot = fma_common::PadForCacheLine<uint64_t>;
+#endif
+
 // Reference counted object
 // NOTE: References are kept in Thread-Local-Storage, so Reference(tid) and Dereference(tid)
 // must be paired with the same tid.
@@ -52,12 +69,12 @@ class RefCountedObj {
     // only when manager_count_==1
     std::atomic<int64_t> manager_count_;
     T* obj_;
-    std::vector<fma_common::PadForCacheLine<uint64_t>> references_;
+    std::vector<RefCountSlot> references_;
 
  public:
     explicit RefCountedObj(T* obj, size_t max_threads = LGRAPH_MAX_THREADS)
         : manager_count_(1), obj_(obj),
-            references_(max_threads, fma_common::PadForCacheLine<uint64_t>(0)) {}
+            references_(max_threads, RefCountSlot(0)) {}
 
     ~RefCountedObj() {
         FMA_ASSERT(!HasReference());

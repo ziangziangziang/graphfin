@@ -27,6 +27,7 @@
 #include "core/audit_logger.h"
 #include "core/global_config.h"
 #include "core/full_text_index.h"
+#include "core/thread_id.h"  // LGRAPH_MAX_THREADS for the memory estimate
 #include "restful/server/rest_server.h"
 #include "server/state_machine.h"
 #include "server/ha_state_machine.h"
@@ -198,6 +199,33 @@ int LGraphServer::Start() {
                << "Server is configured with the following parameters:\n"
                << config_->FormatAsString();
         LOG_INFO() << header.str();
+        // Memory footprint estimate for the open-graph cache, so operators can
+        // see the cost of max_open_graphs / lmdb_max_dbs before it bites.
+        // See docs/architecture/13-memory-footprint.md.
+        {
+#ifdef LGRAPH_COMPACT_REFCOUNT
+            const size_t ref_slot = sizeof(uint64_t);
+            const char* ref_mode = "compact";
+#else
+            const size_t ref_slot = 64;  // cache-line padded slot
+            const char* ref_mode = "padded";
+#endif
+            // ~2 RefCountedObj per open graph (LightningGraph + schema).
+            const size_t refcount_per_open = 2 * static_cast<size_t>(lgraph::LGRAPH_MAX_THREADS) * ref_slot;
+            // LMDB per-env calloc of me_dbxs/me_dbflags/me_dbiseqs, sized by maxdbs.
+            const size_t env_per_open = static_cast<size_t>(config_->lmdb_max_dbs) * 54;
+            const size_t open_graphs = static_cast<size_t>(config_->max_open_graphs);
+            const size_t est_mib =
+                (open_graphs * (refcount_per_open + env_per_open)) >> 20;
+            LOG_INFO() << FMA_FMT(
+                "Open-graph cache estimate: {} graphs x ({} B refcount[{}] + {} B env) = {} MiB",
+                open_graphs, refcount_per_open, ref_mode, env_per_open, est_mib);
+            if (est_mib >= 4096) {
+                LOG_WARN() << "Open-graph cache estimate is " << est_mib << " MiB. Lower "
+                           << "--max_open_graphs and/or --lmdb_max_dbs, or build with "
+                           << "-DLGRAPH_COMPACT_REFCOUNT=1 (see docs/architecture/13-memory-footprint.md).";
+            }
+        }
         struct rlimit rlim{};
         getrlimit(RLIMIT_CORE, &rlim);
         LOG_INFO() << FMA_FMT("Core dump file limit size, soft limit: {}, hard limit: {}",
