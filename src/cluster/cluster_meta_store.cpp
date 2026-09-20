@@ -229,16 +229,20 @@ const char* ClusterMetaStore::NameOf(GraphId id, uint32_t* len) const {
 bool ClusterMetaStore::RegisterShard(KvTransaction& txn, const ShardInfo& info) {
     std::unique_lock<std::shared_mutex> lock(mtx_);
     if (!shard_table_) return false;
+    // Stamp the shard with a fresh config version so that endpoint/state
+    // changes are detectable by the router's versioned cache.
+    staged_version_ += 1;
+    ShardInfo stored = info;
+    stored.config_version = staged_version_;
     fma_common::BinaryBuffer buf;
-    info.Serialize(buf);
-    std::string key = EncodeShardKey(info.shard_id);
+    stored.Serialize(buf);
+    std::string key = EncodeShardKey(stored.shard_id);
     shard_table_->SetValue(txn, Value::ConstRef(key),
                            Value(buf.GetBuf(), buf.GetSize()));
-    staged_version_ += 1;
     WriteVersion(txn);
     Pending op;
     op.type = PendingType::REGISTER_SHARD;
-    op.shard = info;
+    op.shard = stored;
     op.version = staged_version_;
     pending_.push_back(std::move(op));
     return true;
@@ -275,13 +279,14 @@ bool ClusterMetaStore::SetShardState(KvTransaction& txn, ShardId id, ShardState 
     std::unique_lock<std::shared_mutex> lock(mtx_);
     auto it = shards_.find(id);
     if (it == shards_.end()) return false;
+    staged_version_ += 1;
     ShardInfo updated = it->second;
     updated.state = state;
+    updated.config_version = staged_version_;  // detect state changes via cache
     fma_common::BinaryBuffer buf;
     updated.Serialize(buf);
     std::string key = EncodeShardKey(id);
     shard_table_->SetValue(txn, Value::ConstRef(key), Value(buf.GetBuf(), buf.GetSize()));
-    staged_version_ += 1;
     WriteVersion(txn);
     Pending op;
     op.type = PendingType::SHARD_STATE;

@@ -218,3 +218,42 @@ TEST_F(TestRouter, CacheIsBounded) {
         EXPECT_LE(f.router->CacheSize(), 2u);
     }
 }
+
+// Review finding 6: a warmed cache must not bypass shard-health/endpoint state.
+TEST_F(TestRouter, CacheInvalidatedByShardChange) {
+    AutoCleanDir cleaner("./test_router_shardchg");
+    Fixture f;
+    f.Init("./test_router_shardchg");
+    f.locator->endpoint = "";  // fall back to the shard's registered endpoint
+    {
+        auto txn = f.store->CreateWriteTxn(false);
+        f.mgr->RegisterShard(*txn, MakeShard(0, "127.0.0.1:29092"));
+        f.ms->PutGraphPlacement(*txn, "g1", 0, PlacementState::ACTIVE);
+        txn->Commit();
+        f.ms->CommitStaged();
+    }
+    RouteTarget t;
+    EXPECT_EQ(f.router->Resolve("g1", f.now, &t), RouteStatus::OK);
+    EXPECT_EQ(t.endpoint, "127.0.0.1:29092");
+
+    // Mark the shard OFFLINE after warming the cache: the next resolve must not
+    // use the cached endpoint.
+    {
+        auto txn = f.store->CreateWriteTxn(false);
+        f.mgr->SetShardState(*txn, 0, ShardState::OFFLINE);
+        txn->Commit();
+        f.ms->CommitStaged();
+    }
+    EXPECT_EQ(f.router->Resolve("g1", f.now, &t), RouteStatus::NO_HEALTHY_SHARD);
+
+    // Back ONLINE with a new endpoint; the shard config-version change
+    // invalidates the cached endpoint.
+    {
+        auto txn = f.store->CreateWriteTxn(false);
+        f.mgr->RegisterShard(*txn, MakeShard(0, "127.0.0.1:29099"));
+        txn->Commit();
+        f.ms->CommitStaged();
+    }
+    EXPECT_EQ(f.router->Resolve("g1", f.now, &t), RouteStatus::OK);
+    EXPECT_EQ(t.endpoint, "127.0.0.1:29099");
+}
