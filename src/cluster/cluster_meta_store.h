@@ -97,7 +97,8 @@ class ClusterMetaStore {
      * placement_version bumped. Bumps the cluster version.
      */
     bool PutGraphPlacement(KvTransaction& txn, const std::string& name, ShardId shard,
-                           PlacementState state, PlacementVersion* out_version = nullptr);
+                           PlacementState state, PlacementVersion* out_version = nullptr,
+                           uint64_t* out_uid = nullptr);
     bool DeleteGraphPlacement(KvTransaction& txn, const std::string& name);
     bool HasGraph(const std::string& name) const;
 
@@ -137,6 +138,7 @@ class ClusterMetaStore {
     void ApplyPutGraph(const std::string& name, const GraphPlacement& placement);
     void ApplyDeleteGraph(const std::string& name, ConfigVersion version);
     void WriteVersion(KvTransaction& txn);
+    void WriteNextUid(KvTransaction& txn);
 
     // Compact name index ---------------------------------------------------
     void IndexInsert(GraphId id, const char* data, size_t len);
@@ -167,6 +169,9 @@ class ClusterMetaStore {
     std::unordered_map<ShardId, ShardInfo> shards_;
 
     ConfigVersion version_ = 0;
+    // Monotonic allocator for immutable graph unique_ids. Persisted so ids are
+    // never reused, even after restarts and deleted graphs.
+    uint64_t next_uid_ = 0;
 
     // Staged (durable-written, not-yet-published) mutations.
     enum class PendingType : uint8_t {

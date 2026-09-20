@@ -45,11 +45,13 @@ ControlStatus ClusterControl::RemoveShard(KvTransaction& txn, ShardId id) {
 std::vector<ShardInfo> ClusterControl::ListShards() const { return shards_->ListShards(); }
 
 ControlStatus ClusterControl::CreateGraph(KvTransaction& txn, const std::string& name,
-                                          int64_t now_ms, PlacementVersion* out_version) {
+                                          int64_t now_ms, PlacementVersion* out_version,
+                                          uint64_t* out_uid) {
     if (store_->HasGraph(name)) return ControlStatus::GRAPH_EXISTS;
     ShardId shard = INVALID_SHARD_ID;
     if (!shards_->PickShard(now_ms, &shard)) return ControlStatus::NO_HEALTHY_SHARD;
-    if (!store_->PutGraphPlacement(txn, name, shard, PlacementState::ACTIVE, out_version)) {
+    if (!store_->PutGraphPlacement(txn, name, shard, PlacementState::ACTIVE, out_version,
+                                   out_uid)) {
         return ControlStatus::PERSIST_FAILED;
     }
     return ControlStatus::OK;

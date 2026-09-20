@@ -96,20 +96,23 @@ TEST_F(TestClusterControl, CreatePlaceResolveFence) {
     }
     EXPECT_EQ(f.control->ListShards().size(), 2u);
 
-    // Create places the graph and returns its placement version.
+    // Create places the graph and returns its placement version + unique id.
     PlacementVersion pv = 0;
+    uint64_t uid = 0;
     {
         auto txn = f.store->CreateWriteTxn(false);
-        EXPECT_EQ(f.control->CreateGraph(*txn, "g1", f.now, &pv), ControlStatus::OK);
+        EXPECT_EQ(f.control->CreateGraph(*txn, "g1", f.now, &pv, &uid), ControlStatus::OK);
         txn->Commit();
         f.ms->CommitStaged();
     }
     EXPECT_GT(pv, 0u);
+    EXPECT_GT(uid, 0u);
 
     GraphPlacement p;
     EXPECT_EQ(f.control->GetPlacement("g1", &p), ControlStatus::OK);
     EXPECT_EQ(p.State(), PlacementState::ACTIVE);
     EXPECT_EQ(p.placement_version, pv);
+    EXPECT_EQ(p.unique_id, uid);
 
     // Duplicate creation is rejected.
     {
@@ -145,6 +148,8 @@ TEST_F(TestClusterControl, CreatePlaceResolveFence) {
     EXPECT_GT(pv2, pv);
     EXPECT_FALSE(f.control->Fence("g1", pv));   // old version now stale
     EXPECT_TRUE(f.control->Fence("g1", pv2));    // current version accepted
+    EXPECT_EQ(f.control->GetPlacement("g1", &p), ControlStatus::OK);
+    EXPECT_EQ(p.unique_id, uid);  // immutable identity preserved across a move
 
     // Delete then re-create.
     {

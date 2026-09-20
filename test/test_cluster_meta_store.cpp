@@ -306,6 +306,50 @@ TEST_F(TestClusterMetaStore, ConcurrentReaderSeesCommittedOnly) {
     EXPECT_EQ(after.placement_version, v1);
 }
 
+// The immutable graph identity must be assigned once, preserved across moves,
+// and stable across a reload (unlike the dense, process-local GraphId).
+TEST_F(TestClusterMetaStore, UniqueIdIsImmutableAcrossReload) {
+    AutoCleanDir cleaner("./test_cluster_meta_uid");
+    uint64_t uid1 = 0;
+    uint64_t uid2 = 0;
+    {
+        auto store = std::make_unique<LMDBKvStore>("./test_cluster_meta_uid");
+        auto ms = OpenStore(store.get());
+        auto txn = store->CreateWriteTxn(false);
+        EXPECT_TRUE(ms->PutGraphPlacement(*txn, "g1", 0, PlacementState::ACTIVE, nullptr, &uid1));
+        EXPECT_TRUE(ms->PutGraphPlacement(*txn, "g2", 0, PlacementState::ACTIVE, nullptr, &uid2));
+        txn->Commit();
+        ms->CommitStaged();
+        EXPECT_GT(uid1, 0u);
+        EXPECT_NE(uid1, uid2);
+    }
+    {
+        auto store = std::make_unique<LMDBKvStore>("./test_cluster_meta_uid");
+        auto ms = OpenStore(store.get());
+        GraphPlacement p;
+        GraphId id = 0;
+        EXPECT_TRUE(ms->GetGraphPlacement("g1", &p, &id));
+        EXPECT_EQ(p.unique_id, uid1);  // stable across reload
+
+        // Moving the graph preserves its identity.
+        auto txn = store->CreateWriteTxn(false);
+        EXPECT_TRUE(ms->PutGraphPlacement(*txn, "g1", 1, PlacementState::ACTIVE));
+        txn->Commit();
+        ms->CommitStaged();
+        EXPECT_TRUE(ms->GetGraphPlacement("g1", &p, &id));
+        EXPECT_EQ(p.unique_id, uid1);
+        EXPECT_EQ(p.shard_id, 1u);
+
+        // A newly created graph gets a strictly larger identity (no reuse).
+        uint64_t uid3 = 0;
+        txn = store->CreateWriteTxn(false);
+        EXPECT_TRUE(ms->PutGraphPlacement(*txn, "g3", 0, PlacementState::ACTIVE, nullptr, &uid3));
+        txn->Commit();
+        ms->CommitStaged();
+        EXPECT_GT(uid3, uid2);
+    }
+}
+
 TEST_F(TestClusterMetaStore, MemoryFootprintIsCompact) {
     AutoCleanDir cleaner("./test_cluster_meta_mem");
     auto store = std::make_unique<LMDBKvStore>("./test_cluster_meta_mem");

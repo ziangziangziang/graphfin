@@ -79,20 +79,26 @@ inline const char* ToString(PlacementState s) {
     return "UNKNOWN";
 }
 
-// One placement record per registered graph. Fixed 16 bytes, naturally
+// One placement record per registered graph. Fixed 24 bytes, naturally
 // aligned, trivially copyable — stored densely in a single vector indexed by
-// GraphId, so 100k graphs cost 1.6 MiB with zero per-entry allocations.
+// GraphId, so 100k graphs cost 2.4 MiB with zero per-entry allocations.
+//
+// `unique_id` is the graph's IMMUTABLE identity: assigned once at creation,
+// persisted, and stable across reloads/restarts. GraphId is only a dense,
+// process-local array index (reassigned on reload), so distributed operations
+// (routing, migration, fencing) must key on unique_id, not GraphId.
 struct GraphPlacement {
-    PlacementVersion placement_version = 0;  // +0
-    uint32_t shard_id = INVALID_SHARD_ID;    // +8
-    uint16_t generation = 0;                 // +12  (number of moves)
-    uint8_t state = static_cast<uint8_t>(PlacementState::CREATING);  // +14
-    uint8_t reserved = 0;                    // +15
+    uint64_t unique_id = 0;                  // +0  immutable, persisted identity
+    PlacementVersion placement_version = 0;  // +8
+    uint32_t shard_id = INVALID_SHARD_ID;    // +16
+    uint16_t generation = 0;                 // +20  (number of moves)
+    uint8_t state = static_cast<uint8_t>(PlacementState::CREATING);  // +22
+    uint8_t reserved = 0;                    // +23
 
     PlacementState State() const { return static_cast<PlacementState>(state); }
     void SetState(PlacementState s) { state = static_cast<uint8_t>(s); }
 };
-static_assert(sizeof(GraphPlacement) == 16, "GraphPlacement must stay 16 bytes");
+static_assert(sizeof(GraphPlacement) == 24, "GraphPlacement must stay 24 bytes");
 static_assert(std::is_trivially_copyable<GraphPlacement>::value,
               "GraphPlacement must be trivially copyable");
 

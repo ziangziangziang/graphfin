@@ -21,20 +21,26 @@ graphs — those are 4B (shard registry + registration) and 4C (router).
 | `ShardId` | shard identity (≤ 65535 shards) | 2 B |
 | `PlacementVersion` | monotonic per-graph version; guards stale routing | 8 B |
 | `ConfigVersion` | monotonic cluster-wide version | 8 B |
-| `GraphPlacement` | shard + state + versions for one graph | **16 B** |
+| `unique_id` | immutable, persisted graph identity (stable across reload) | 8 B |
+| `GraphPlacement` | identity + shard + state + versions for one graph | **24 B** |
 | `ShardInfo` | shard descriptor (name, endpoints, state, weight) | few |
 
-`GraphPlacement` is deliberately a 16-byte, trivially-copyable POD:
+`GraphPlacement` is deliberately a 24-byte, trivially-copyable POD:
 
 ```cpp
 struct GraphPlacement {
-    uint64_t placement_version;  // +0
-    uint32_t shard_id;           // +8
-    uint16_t generation;         // +12 (number of moves)
-    uint8_t  state;              // +14 (PlacementState)
-    uint8_t  reserved;           // +15
+    uint64_t unique_id;          // +0  immutable identity (persisted)
+    uint64_t placement_version;  // +8
+    uint32_t shard_id;           // +16
+    uint16_t generation;         // +20 (number of moves)
+    uint8_t  state;              // +22 (PlacementState)
+    uint8_t  reserved;           // +23
 };
 ```
+
+`unique_id` is the graph's identity for distributed operations (routing,
+migration, fencing). `GraphId` is only a dense, process-local array index and is
+reassigned on reload, so it must never be used as a stable key.
 
 `PlacementState`: `CREATING → ACTIVE → MOVING → DELETING → DELETED`.
 `ShardState`: `OFFLINE / ONLINE / DRAINING / REMOVED`.
@@ -46,7 +52,7 @@ to 100k+ graphs with a small, predictable resident cost.
 
 | Structure | Representation | 100k graphs |
 |---|---|---|
-| Placements | one flat `std::vector<GraphPlacement>` indexed by `GraphId` | 1.6 MiB |
+| Placements | one flat `std::vector<GraphPlacement>` indexed by `GraphId` | 2.4 MiB |
 | Names | one byte arena, length-prefixed entries | ~2 MiB |
 | Name→id | open-addressing table, 4-byte slots (`id+1`, 0=empty) | ~1 MiB |
 | Name offsets | `std::vector<uint32_t>` (id → arena offset) | 0.4 MiB |

@@ -27,6 +27,7 @@ namespace cluster {
 namespace {
 
 const char kVersionKey[] = "v";
+const char kNextUidKey[] = "u";  // monotonic graph unique_id allocator
 
 uint64_t HashName(const char* data, size_t len) {
     // FNV-1a, 64-bit.
@@ -47,6 +48,7 @@ std::string EncodeShardKey(ShardId id) {
 
 void EncodePlacement(const GraphPlacement& p, std::string* out) {
     fma_common::BinaryBuffer buf;
+    fma_common::BinaryWrite(buf, p.unique_id);
     fma_common::BinaryWrite(buf, p.placement_version);
     fma_common::BinaryWrite(buf, p.shard_id);
     fma_common::BinaryWrite(buf, p.generation);
@@ -55,25 +57,36 @@ void EncodePlacement(const GraphPlacement& p, std::string* out) {
 }
 
 bool DecodePlacement(const Value& v, GraphPlacement* p) {
-    if (v.Size() < sizeof(uint64_t) + sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint8_t)) {
-        return false;
-    }
+    const size_t kMin = sizeof(uint64_t) * 2 + sizeof(uint32_t) + sizeof(uint16_t) +
+                        sizeof(uint8_t);
+    if (v.Size() < kMin) return false;
     fma_common::BinaryBuffer buf(v.Data(), v.Size());
+    uint64_t uid = 0;
     uint64_t ver = 0;
     uint32_t shard = 0;
     uint16_t gen = 0;
     uint8_t st = 0;
     size_t n = 0;
+    n += fma_common::BinaryRead(buf, uid);
     n += fma_common::BinaryRead(buf, ver);
     n += fma_common::BinaryRead(buf, shard);
     n += fma_common::BinaryRead(buf, gen);
     n += fma_common::BinaryRead(buf, st);
     if (n > v.Size()) return false;
+    p->unique_id = uid;
     p->placement_version = ver;
     p->shard_id = static_cast<ShardId>(shard);
     p->generation = gen;
     p->state = st;
     return true;
+}
+
+Value EncodeU64(uint64_t v) { return Value(&v, sizeof(v)); }
+
+uint64_t DecodeU64(const Value& val) {
+    uint64_t v = 0;
+    if (val.Size() >= sizeof(v)) std::memcpy(&v, val.Data(), sizeof(v));
+    return v;
 }
 
 Value EncodeVersion(ConfigVersion v) { return Value(&v, sizeof(v)); }
@@ -150,7 +163,13 @@ void ClusterMetaStore::Reload(KvTransaction& txn) {
         if (meta_table_->GetValue(txn, Value::ConstRef(std::string(kVersionKey)), v)) {
             version_ = DecodeVersion(v);
         }
+        Value u;
+        if (meta_table_->GetValue(txn, Value::ConstRef(std::string(kNextUidKey)), u)) {
+            next_uid_ = DecodeU64(u);
+        }
     }
+    // Never reuse an id: the allocator must exceed every persisted unique_id.
+    for (const auto& pl : placements_) next_uid_ = std::max(next_uid_, pl.unique_id);
     // No staged state after a (re)load.
     staged_version_ = version_;
     pending_.clear();
@@ -324,7 +343,7 @@ size_t ClusterMetaStore::ShardCount() const {
 
 bool ClusterMetaStore::PutGraphPlacement(KvTransaction& txn, const std::string& name,
                                          ShardId shard, PlacementState state,
-                                         PlacementVersion* out_version) {
+                                         PlacementVersion* out_version, uint64_t* out_uid) {
     std::unique_lock<std::shared_mutex> lock(mtx_);
     if (!graph_table_) return false;
 
@@ -337,6 +356,23 @@ bool ClusterMetaStore::PutGraphPlacement(KvTransaction& txn, const std::string& 
     p.shard_id = shard;
     p.SetState(state);
     p.placement_version = staged_version_;
+    // Immutable identity: preserve an existing graph's id, allocate one for a
+    // new graph, and reuse a pending id if it was staged earlier in this batch.
+    GraphId existing_id = 0;
+    if (IndexFind(name, &existing_id)) {
+        p.unique_id = placements_[existing_id].unique_id;
+    } else {
+        for (const auto& op : pending_) {
+            if (op.type == PendingType::PUT_GRAPH && op.name == name) {
+                p.unique_id = op.placement.unique_id;
+                break;
+            }
+        }
+        if (p.unique_id == 0) {
+            p.unique_id = ++next_uid_;
+            WriteNextUid(txn);
+        }
+    }
 
     std::string encoded;
     EncodePlacement(p, &encoded);
@@ -350,6 +386,7 @@ bool ClusterMetaStore::PutGraphPlacement(KvTransaction& txn, const std::string& 
     op.version = staged_version_;
     pending_.push_back(std::move(op));
     if (out_version) *out_version = p.placement_version;
+    if (out_uid) *out_uid = p.unique_id;
     return true;
 }
 
@@ -455,6 +492,13 @@ void ClusterMetaStore::WriteVersion(KvTransaction& txn) {
     if (meta_table_) {
         meta_table_->SetValue(txn, Value::ConstRef(std::string(kVersionKey)),
                               EncodeVersion(staged_version_));
+    }
+}
+
+void ClusterMetaStore::WriteNextUid(KvTransaction& txn) {
+    if (meta_table_) {
+        meta_table_->SetValue(txn, Value::ConstRef(std::string(kNextUidKey)),
+                              EncodeU64(next_uid_));
     }
 }
 

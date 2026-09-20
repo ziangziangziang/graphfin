@@ -70,7 +70,8 @@ class ClusterControl {
      * available.
      */
     ControlStatus CreateGraph(KvTransaction& txn, const std::string& name, int64_t now_ms,
-                              PlacementVersion* out_version = nullptr);
+                              PlacementVersion* out_version = nullptr,
+                              uint64_t* out_uid = nullptr);
     ControlStatus DeleteGraph(KvTransaction& txn, const std::string& name);
 
     /** Current placement of a graph. */
