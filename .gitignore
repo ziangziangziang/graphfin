@@ -125,3 +125,6 @@ deps/geax-front-end/cpplint
 # Phase 0 build/benchmark logs and scratch artifacts
 phase0-logs/
 phase0-results/
+
+# Remote test-host notes (contains host credentials; never commit)
+TEST-REMOTE.md
