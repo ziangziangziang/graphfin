@@ -250,6 +250,32 @@ ci/phase0/experiments/run_notls_matrix.sh on 4
 ci/phase0/experiments/run_notls_matrix.sh off 4
 ```
 
+### Status update (Phase 4 review) — still open, diagnosis blocked in this window
+
+The reviewer flagged this as an open reliability gap (`REVIEW.md` finding: "make
+test failures propagate … diagnose crashes"). It remains the one defect that
+prevents the upstream unit suite from being a clean pass/fail gate.
+
+Diagnosis could not be completed in the allotted time box; the blocker is
+environmental, not analytical:
+
+- Core files written to the virtiofs bind mount are **truncated** (frame #0 only),
+  so the caller cannot be read. A full stack needs cores written to
+  container-local storage, or `gdb` catching the signal live.
+- The crash **clusters on a test that spawns `lgraph_server` subprocesses**
+  (`TestBackupRestore`), pointing at `tiny-process-library` teardown, but this is
+  a hypothesis.
+
+Concrete next steps (unblocked, ~1–2 h):
+1. Run `unit_test --gtest_filter=TestBackupRestore.*` in a loop (say 50×) inside
+   the container with `ulimit -c unlimited` and cores written to `/tmp` (not the
+   bind mount); inspect the full stack of the first crash.
+2. Build the suite with `-DENABLE_ASAN=ON` and run `TestBackupRestore` alone; ASAN
+   will name the corrupting write for the subprocess-teardown path.
+3. If confirmed in the harness, quarantine by marking the subprocess-teardown
+   tests (or the F3 interaction) `GTEST_SKIP` behind an env flag while a fix is
+   developed, and keep the suite a reliable gate.
+
 ---
 
 ## F3a — Phase 2 eviction task use-after-free (crash inside `EvictIdleGraphs`)

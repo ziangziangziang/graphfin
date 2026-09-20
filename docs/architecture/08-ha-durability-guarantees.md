@@ -146,7 +146,33 @@ idempotency.
 | No Raft Prometheus metrics | **Fixed** | `tugraph_raft` gauge family now exposes term, commit index, applied index and leader state (Phase 3). |
 | Bolt with legacy HA without Bolt Raft | **Fixed** | Startup now rejects `--bolt_port` + `--enable_ha` without `--bolt_raft_port` to prevent silent divergence. |
 
-## 8. Document History
+## 8. Ambiguous write outcomes and retry (contract)
+
+When a client's connection to the leader fails during a write, the client
+**cannot know** whether the entry committed. This is the standard Raft
+"ambiguous outcome" and it must be handled explicitly.
+
+Rules:
+
+- **At-most-once is not guaranteed across a retry of a non-idempotent write.**
+  If the original write actually committed, retrying it will apply it twice.
+  Callers must make retried writes idempotent (e.g. `MERGE` on a stable key, or
+  a client-generated unique operation id) or reconcile afterwards.
+- **A `REDIRECT` response is not a failure** — the client should re-issue to the
+  returned address. Redirects carry no application side effect.
+- **A `Timeout`/connection error after commit returns may be a success.** Read
+  back the graph's version/state before retrying.
+- **Read-your-writes** is guaranteed only when the write and the read are both
+  served by the leader (a follower may lag; see §4). Clients that need it should
+  read from the leader, or wait for their token/version to be visible.
+- **Idempotency anchor**: legacy HA dedups applied entries by the persisted Raft
+  log index (`SetRaftLogIndexBeforeWrite`), so an entry replayed after restart is
+  not applied twice. This protects *internal* replay, not client retries.
+
+Retry policy recommendation: bounded exponential backoff with jitter, capped at
+the election-timeout scale, and application-level idempotency for writes.
+
+## 9. Document History
 
 | Date | Author | Change |
 |---|---|---|

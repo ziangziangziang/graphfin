@@ -88,3 +88,23 @@ ci/phase0/run_bench.sh --help   # benchmark harness entry point
 
 Or open the repo in the devcontainer (`.devcontainer/devcontainer.json`), which
 uses the same pinned image.
+
+## Reproducible-from-source path (x86_64/amd64)
+
+The arm64 image cannot be rebuilt from HEAD (the provenance gap above). The
+x86_64 path used by CI and the test host **can**:
+
+```bash
+ci/phase0/build_image.sh          # builds ci/images/tugraph-compile-centos7-Dockerfile
+                                  # (self-contained: no external COPY/ADD)
+PHASE0_COMPILE_IMAGE=tugraph-compile-amd64:from-source ci/phase0/build.sh
+```
+
+`build_image.sh` prints the resulting `image_id` and the source commit. Record
+that id alongside any result produced from it so the toolchain is anchored to a
+revision that is reproducible from this checkout. Prefer this path over the
+arm64 pinned image whenever certification from source is required.
+
+Every test run also records `run_id`, `git_commit` and a `timestamp_utc` in
+`phase0-results/summary.json` (see `ci/phase0/run_tests_inner.sh`), and JSON
+benchmark results carry the image id, so provenance is no longer only in prose.
