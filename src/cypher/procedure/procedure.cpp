@@ -2379,6 +2379,12 @@ void BuiltinProcedure::DbmsTakeSnapshot(RTContext *ctx, const cypher::Record *re
                                            "given. Usage: dbms.takeSnapshot()",
                                            args.size()))
     if (!ctx->sm_) THROW_CODE(InputError, "Cannot be called in embedded mode.");
+    // The snapshot cold-opens graphs (GraphManager::Backup -> GetOrOpenGraphRef)
+    // and each open constructs a PluginManager, whose constructor creates a write
+    // transaction. Abort the request transaction first so that cold-open does not
+    // fail with "Nested transaction is forbidden". Same pattern as
+    // dbms.meta.refreshCount().
+    if (ctx->txn_) ctx->txn_->Abort();
     std::string path = ctx->sm_->TakeSnapshot();
     Record r;
     r.AddConstant(lgraph::FieldData(path));
