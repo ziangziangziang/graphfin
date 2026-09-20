@@ -102,6 +102,7 @@ add_executable(unit_test
         test_schema.cpp
         test_schema_change.cpp
         test_schema_manager.cpp
+        test_series_encoding.cpp
         test_bolt_hydrator.cpp
         test_service.cpp
         test_snapshot.cpp
