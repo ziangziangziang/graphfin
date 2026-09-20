@@ -66,7 +66,8 @@ set(LGRAPH_DB_SRC
         db/token_manager.cpp)
 
 set(LGRAPH_CLUSTER_SRC
-        cluster/cluster_meta_store.cpp)
+        cluster/cluster_meta_store.cpp
+        cluster/shard_manager.cpp)
 
 set(LGRAPH_API_SRC
         lgraph_api/c.cpp

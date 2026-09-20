@@ -107,28 +107,55 @@ Version() / SetVersion(txn, v)     MemoryFootprint()
 All mutating calls also bump the cluster `ConfigVersion`, which the router
 (4C) uses to detect and reject stale graph→shard mappings.
 
-## 6. Phase 4A files
+## 6. Shard lifecycle (Phase 4B)
+
+`ShardManager` (`src/cluster/shard_manager.h/.cpp`) wraps the store with:
+
+- **Registration** with validation (non-invalid id, non-empty name and
+  endpoints). A successful registration seeds the first heartbeat.
+- **Liveness**: `Heartbeat(id)`, `IsHealthy(id, now)`, `HealthyShards(now)`,
+  `LastHeartbeat(id)`. Health lives only in memory (one `int64` per shard) and
+  is never persisted. A shard is healthy when it is `ONLINE` and its last
+  heartbeat is within `heartbeat_timeout_ms` (default 30 s).
+- **Placement selection**: `PickShard(now)` chooses a shard for a new graph
+  among healthy ONLINE shards by `LEAST_GRAPH_COUNT` (default) or
+  `ROUND_ROBIN`. Least-count uses the store's incremental per-shard counter, so
+  it is O(#shards), not O(#graphs).
+- **Deregistration** delegates to the store's refuse-while-graphs-remain rule.
+
+The clock is injectable (`SetClock`) so tests are deterministic.
+
+### Per-shard count index
+
+`ClusterMetaStore` now maintains `shard_counts_` (one entry per shard), updated
+on every placement create/move/delete, so `GraphCountOnShard` and least-loaded
+placement are O(1)/O(#shards). `MemoryFootprint()` is unaffected in practice
+(a handful of shards).
+
+## 7. Files
 
 | File | Contents |
 |---|---|
 | `src/cluster/cluster_types.h` | POD types, enums, `ShardInfo` serialization |
 | `src/cluster/cluster_meta_store.h/.cpp` | the catalog (durable + compact index) |
+| `src/cluster/shard_manager.h/.cpp` | shard registration, health, placement |
 | `test/test_cluster_meta_store.cpp` | CRUD, reload, version, footprint tests |
+| `test/test_shard_manager.cpp` | registration, health, placement, dereg tests |
 | `src/BuildLGraphApi.cmake` | adds `LGRAPH_CLUSTER_SRC` to `liblgraph` |
-| `test/CMakeLists.txt` | registers the unit test |
+| `test/CMakeLists.txt` | registers the unit tests |
 
-## 7. Next steps
+## 8. Next steps
 
-- **4B** — shard abstraction + registration/heartbeat; make `ShardInfo` the
-  source of truth for endpoints/health; move the catalog behind a replicated
-  control-plane Raft group.
+- **4B.2** — promote the catalog behind a replicated control-plane Raft group so
+  the mapping is consistent cluster-wide (the store API is backend-agnostic).
 - **4C** — the router: resolve graph→shard→leader, cache keyed by
   `placement_version`, refresh on mismatch, forward via the existing RPC.
-- **4D–4G** — placement strategies, admin procedures, client transparency,
-  multi-shard test harness and metrics.
+- **4D–4G** — richer placement strategies (disk/utilization weights), admin
+  procedures, client transparency, multi-shard test harness and metrics.
 
-## 8. Document history
+## 9. Document history
 
 | Date | Author | Change |
 |---|---|---|
 | 2026-09-20 | Phase 4A | Initial cluster metadata model and store |
+| 2026-09-20 | Phase 4B | Shard lifecycle: registration, health, placement |

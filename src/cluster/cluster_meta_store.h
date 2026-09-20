@@ -121,6 +121,7 @@ class ClusterMetaStore {
  private:
     void Reload(KvTransaction& txn);
     bool BumpVersion(KvTransaction& txn);
+    void AdjustShardCount(ShardId shard, int delta);
 
     // Compact name index ---------------------------------------------------
     void IndexInsert(GraphId id, const char* data, size_t len);
@@ -139,6 +140,10 @@ class ClusterMetaStore {
 
     std::vector<GraphPlacement> placements_;  // GraphId -> placement
     size_t live_count_ = 0;                   // placements not in DELETED state
+    // Per-shard count of non-DELETED graphs, maintained incrementally so that
+    // placement and admin queries are O(1) rather than O(N). Tiny: one entry
+    // per shard.
+    std::unordered_map<ShardId, size_t> shard_counts_;
     std::vector<uint32_t> name_offset_;       // GraphId -> offset in name_arena_
     std::vector<char> name_arena_;            // [uint32 len][bytes]
     std::vector<uint32_t> bucket_;            // open addressing, value = id+1

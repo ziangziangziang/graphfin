@@ -107,6 +107,7 @@ void ClusterMetaStore::Init(KvStore* store, KvTransaction& txn, const Config& co
 void ClusterMetaStore::Reload(KvTransaction& txn) {
     placements_.clear();
     live_count_ = 0;
+    shard_counts_.clear();
     name_offset_.clear();
     name_arena_.clear();
     bucket_.clear();
@@ -126,6 +127,9 @@ void ClusterMetaStore::Reload(KvTransaction& txn) {
             IndexInsert(id, name.data(), name.size());
         }
         live_count_ = placements_.size();
+        for (const auto& p : placements_) {
+            if (p.State() != PlacementState::DELETED) shard_counts_[p.shard_id]++;
+        }
     }
 
     // Shards.
@@ -289,11 +293,19 @@ bool ClusterMetaStore::PutGraphPlacement(KvTransaction& txn, const std::string& 
 
     ConfigVersion next_version = version_ + 1;
     GraphId id = 0;
-    if (IndexFind(name, &id)) {
+    const bool existing = IndexFind(name, &id);
+    const bool old_live = existing && placements_[id].State() != PlacementState::DELETED;
+    const ShardId old_shard = existing ? placements_[id].shard_id : INVALID_SHARD_ID;
+    const bool new_live = state != PlacementState::DELETED;
+
+    // Maintain the live counter and per-shard counts incrementally.
+    if (!old_live && new_live) live_count_++;
+    if (old_live && !new_live) live_count_--;
+    if (old_live && (!new_live || old_shard != shard)) AdjustShardCount(old_shard, -1);
+    if (new_live && (!old_live || old_shard != shard)) AdjustShardCount(shard, +1);
+
+    if (existing) {
         GraphPlacement& p = placements_[id];
-        if (p.State() == PlacementState::DELETED) {
-            live_count_++;  // revive a tombstoned placement
-        }
         p.shard_id = shard;
         p.SetState(state);
         p.placement_version = next_version;
@@ -305,7 +317,6 @@ bool ClusterMetaStore::PutGraphPlacement(KvTransaction& txn, const std::string& 
         id = static_cast<GraphId>(placements_.size());
         placements_.push_back(p);
         IndexInsert(id, name.data(), name.size());
-        live_count_++;
     }
     version_ = next_version;
 
@@ -322,7 +333,10 @@ bool ClusterMetaStore::DeleteGraphPlacement(KvTransaction& txn, const std::strin
     GraphId id = 0;
     if (!IndexFind(name, &id)) return false;
     // Tombstone in memory (ids stay stable); drop the durable row.
-    if (placements_[id].State() != PlacementState::DELETED) live_count_--;
+    if (placements_[id].State() != PlacementState::DELETED) {
+        live_count_--;
+        AdjustShardCount(placements_[id].shard_id, -1);
+    }
     placements_[id].SetState(PlacementState::DELETED);
     placements_[id].placement_version = ++version_;
     bool removed = graph_table_->DeleteKey(txn, Value::ConstRef(name));
@@ -371,11 +385,26 @@ size_t ClusterMetaStore::GraphCount() const {
 
 size_t ClusterMetaStore::GraphCountOnShard(ShardId shard) const {
     std::shared_lock<std::shared_mutex> lock(mtx_);
-    size_t n = 0;
-    for (const auto& p : placements_) {
-        if (p.shard_id == shard && p.State() != PlacementState::DELETED) n++;
+    auto it = shard_counts_.find(shard);
+    return it == shard_counts_.end() ? 0 : it->second;
+}
+
+void ClusterMetaStore::AdjustShardCount(ShardId shard, int delta) {
+    auto it = shard_counts_.find(shard);
+    if (delta > 0) {
+        if (it == shard_counts_.end()) {
+            shard_counts_[shard] = static_cast<size_t>(delta);
+        } else {
+            it->second += static_cast<size_t>(delta);
+        }
+    } else if (it != shard_counts_.end()) {
+        size_t d = static_cast<size_t>(-delta);
+        if (it->second <= d) {
+            shard_counts_.erase(it);
+        } else {
+            it->second -= d;
+        }
     }
-    return n;
 }
 
 // ---- version ------------------------------------------------------------
