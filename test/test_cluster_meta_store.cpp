@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <memory>
 #include <string>
+#include <thread>
 
 #include "gtest/gtest.h"
 
@@ -260,6 +261,49 @@ TEST_F(TestClusterMetaStore, StagingIsolationAndRollback) {
     EXPECT_TRUE(ms->HasGraph("g3"));
     EXPECT_EQ(ms->GraphCount(), 3u);
     EXPECT_FALSE(ms->HasStaged());
+}
+
+// A reader on another thread must observe only committed state while a writer
+// has staged (but not published) an update.
+TEST_F(TestClusterMetaStore, ConcurrentReaderSeesCommittedOnly) {
+    AutoCleanDir cleaner("./test_cluster_meta_conc");
+    auto store = std::make_unique<LMDBKvStore>("./test_cluster_meta_conc");
+    auto ms = OpenStore(store.get());
+
+    PlacementVersion v1 = 0;
+    {
+        auto txn = store->CreateWriteTxn(false);
+        EXPECT_TRUE(ms->RegisterShard(*txn, MakeShard(0)));
+        EXPECT_TRUE(ms->RegisterShard(*txn, MakeShard(1)));
+        EXPECT_TRUE(ms->PutGraphPlacement(*txn, "g1", 0, PlacementState::ACTIVE, &v1));
+        txn->Commit();
+        ms->CommitStaged();
+    }
+
+    // Stage a move to shard 1 but do NOT publish it.
+    PlacementVersion v2 = 0;
+    auto txn = store->CreateWriteTxn(false);
+    EXPECT_TRUE(ms->PutGraphPlacement(*txn, "g1", 1, PlacementState::MOVING, &v2));
+    EXPECT_GT(v2, v1);
+
+    // A concurrent reader must still see the committed placement (shard 0).
+    GraphPlacement seen;
+    GraphId seen_id = 0;
+    bool found = false;
+    std::thread reader([&]() { found = ms->GetGraphPlacement("g1", &seen, &seen_id); });
+    reader.join();
+    EXPECT_TRUE(found);
+    EXPECT_EQ(seen.shard_id, 0u);
+    EXPECT_EQ(seen.placement_version, v1);
+    EXPECT_EQ(seen.State(), PlacementState::ACTIVE);
+
+    // Abort the staged move: state is unchanged.
+    txn->Abort();
+    ms->RollbackStaged();
+    GraphPlacement after;
+    EXPECT_TRUE(ms->GetGraphPlacement("g1", &after, &seen_id));
+    EXPECT_EQ(after.shard_id, 0u);
+    EXPECT_EQ(after.placement_version, v1);
 }
 
 TEST_F(TestClusterMetaStore, MemoryFootprintIsCompact) {
