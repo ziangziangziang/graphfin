@@ -306,17 +306,17 @@ def scalar(client, script, graph="default"):
 
 
 def count_vertices(client, graph, label=None):
-    """Count vertices, working around an engine limitation on empty labels.
+    """Count vertices in a graph.
 
-    TuGraph 4.5.2 rejects a label-filtered count when the label currently has no
-    vertices:
+    TuGraph 4.5.2 originally rejected a label-filtered count when the label
+    currently had no vertices:
 
         MATCH (n:person) RETURN count(n)
         -> [InputError] capacity cannot be 0
 
-    That is a problem precisely for multi-graph workloads, where many graphs are
-    created empty. This helper asks for the count first and falls back to
-    counting returned rows, which does not hit the faulty path.
+    That defect (F2) has been fixed: an empty label now returns 0. The
+    row-counting fallback below is retained defensively for older binaries,
+    and also covers the case where the label does not exist at all.
     """
     if label is None:
         return scalar(client, "MATCH (n) RETURN count(n)", graph)
