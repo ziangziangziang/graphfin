@@ -214,6 +214,53 @@ TEST_F(TestShardManager, PickShardRoundRobin) {
     EXPECT_EQ(pick, 0u);  // wraps
 }
 
+TEST_F(TestShardManager, PickShardWeightedLeastLoad) {
+    AutoCleanDir cleaner("./test_shard_mgr_w");
+    auto store = std::make_unique<LMDBKvStore>("./test_shard_mgr_w");
+    auto ms = std::make_unique<ClusterMetaStore>();
+    {
+        auto txn = store->CreateWriteTxn(false);
+        ms->Init(store.get(), *txn, true);
+        txn->Commit();
+    }
+    int64_t now = 1000;
+    ShardManager mgr(ms.get(),
+                     ShardManager::Config{30000,
+                                          ShardManager::PlacementStrategy::WEIGHTED_LEAST_LOAD});
+    mgr.SetClock([&now]() { return now; });
+
+    ShardInfo s0 = MakeShard(0);
+    s0.capacity_weight = 1;
+    ShardInfo s1 = MakeShard(1);
+    s1.capacity_weight = 2;
+    {
+        auto txn = store->CreateWriteTxn(false);
+        mgr.RegisterShard(*txn, s0);
+        mgr.RegisterShard(*txn, s1);
+        ms->PutGraphPlacement(*txn, "a0", 0, PlacementState::ACTIVE);  // shard0 = 1
+        txn->Commit();
+    }
+    ShardId pick = INVALID_SHARD_ID;
+    EXPECT_TRUE(mgr.PickShard(now, &pick));
+    EXPECT_EQ(pick, 1u);  // 1/1 vs 0/2
+
+    {
+        auto txn = store->CreateWriteTxn(false);
+        ms->PutGraphPlacement(*txn, "b0", 1, PlacementState::ACTIVE);  // shard1 = 1
+        txn->Commit();
+    }
+    EXPECT_TRUE(mgr.PickShard(now, &pick));
+    EXPECT_EQ(pick, 1u);  // 1/1 vs 1/2
+
+    {
+        auto txn = store->CreateWriteTxn(false);
+        ms->PutGraphPlacement(*txn, "b1", 1, PlacementState::ACTIVE);  // shard1 = 2
+        txn->Commit();
+    }
+    EXPECT_TRUE(mgr.PickShard(now, &pick));
+    EXPECT_EQ(pick, 0u);  // 1/1 == 2/2 -> tie breaks to lowest id
+}
+
 TEST_F(TestShardManager, DeregisterRefusedWhileGraphsRemain) {
     AutoCleanDir cleaner("./test_shard_mgr_dereg");
     auto store = std::make_unique<LMDBKvStore>("./test_shard_mgr_dereg");

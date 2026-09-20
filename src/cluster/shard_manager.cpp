@@ -135,6 +135,28 @@ bool ShardManager::PickShard(int64_t now_ms, ShardId* out) {
     if (config_.strategy == PlacementStrategy::ROUND_ROBIN) {
         chosen = healthy[rr_cursor_ % healthy.size()].shard_id;
         rr_cursor_++;
+    } else if (config_.strategy == PlacementStrategy::WEIGHTED_LEAST_LOAD) {
+        // Choose min(graph_count / capacity_weight); compare with integer
+        // cross-multiplication to avoid floating point.
+        size_t best_count = 0;
+        uint64_t best_w = 1;
+        for (const auto& s : healthy) {
+            size_t n = store_->GraphCountOnShard(s.shard_id);
+            uint64_t w = s.capacity_weight == 0 ? 1 : s.capacity_weight;
+            if (chosen == INVALID_SHARD_ID) {
+                chosen = s.shard_id;
+                best_count = n;
+                best_w = w;
+                continue;
+            }
+            uint64_t lhs = static_cast<uint64_t>(n) * best_w;
+            uint64_t rhs = static_cast<uint64_t>(best_count) * w;
+            if (lhs < rhs || (lhs == rhs && s.shard_id < chosen)) {
+                chosen = s.shard_id;
+                best_count = n;
+                best_w = w;
+            }
+        }
     } else {  // LEAST_GRAPH_COUNT
         size_t best = std::numeric_limits<size_t>::max();
         for (const auto& s : healthy) {
