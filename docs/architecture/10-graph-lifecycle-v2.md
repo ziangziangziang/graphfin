@@ -121,12 +121,21 @@ In Phase 0/1, `max_graphs` counted **open** graphs (because all graphs were
 open). In Phase 2, it counts **registered** graphs (from the catalog). The
 open count is separately limited by `max_open_graphs`.
 
-## New correctness defects (documented, not fixed)
+## Correctness defects (see 08)
 
 See [08-correctness-findings.md](08-correctness-findings.md) for:
-- F1: `UNWIND ... CREATE` under-insertion in the default Cypher v2 engine
-- F2: label-filtered `count()` failing on empty labels
-- F3: intermittent unit-suite SIGSEGV (pre-existing, not caused by Phase 2)
+
+- F1: `UNWIND ... CREATE` under-insertion in the default Cypher v2 engine —
+  **FIXED** (per-record `Visited` reset in the create operators)
+- F2: label-filtered `count()` failing on empty labels — **FIXED** (empty-graph
+  guard in `FindVertices` + single-row `0` from the count-traversal operators)
+- F3: intermittent unit-suite SIGSEGV (pre-existing, not caused by Phase 2) —
+  still open
+- F3a: Phase 2 eviction-task use-after-free — **FIXED** (eviction task owned by
+  `Galaxy`, resolves `graphs_` under `graphs_lock_`; see 08 for the design)
+- F4: `dbms.takeSnapshot()` "Nested transaction" failure under lazy loading —
+  **FIXED** (request txn aborted before takeSnapshot, matching
+  `dbms.meta.refreshCount()`; see 08)
 
 ## Data migration
 

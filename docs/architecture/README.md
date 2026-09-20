@@ -24,10 +24,12 @@ something is a scaling limit, it is called out explicitly as such.
 | 09 | [09-test-baseline.md](09-test-baseline.md) | Build, upstream unit-test and integration-test baseline, with the pass/fail record |
 | 10 | [10-graph-lifecycle-v2.md](10-graph-lifecycle-v2.md) | Phase 2 migration notes: lazy loading, eviction, new config knobs, behaviour changes |
 
-> **Two correctness defects found during Phase 0 require attention before any
-> scaling work:** `UNWIND ... CREATE` under-inserts in the default Cypher v2
-> engine, and a label-filtered `count()` fails on an empty label. See
-> [08-correctness-findings.md](08-correctness-findings.md).
+> **Two correctness defects found during Phase 0 have since been fixed:** (F1)
+> `UNWIND ... CREATE` under-inserts in the default Cypher v2 engine, and (F2) a
+> label-filtered `count()` fails on an empty label — see
+> [08-correctness-findings.md](08-correctness-findings.md). A Phase 2 crash in
+> the graph-eviction task (F3a) was also fixed. A pre-existing intermittent
+> SIGSEGV in the upstream unit suite (F3) remains open.
 
 ## The system in one page
 

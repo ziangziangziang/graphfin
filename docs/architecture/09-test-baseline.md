@@ -110,7 +110,9 @@ be triaged early in the next phase, starting by diffing `real_file` against
 
 ## 3. Phase 0 integration and failure tests
 
-All 33 pass against a freshly built server.
+The Phase 0-integrated suites pass against a freshly built server (the count
+below is the Phase-added subset; the full `ci/phase0/run_tests.sh it` run also
+includes upstream integration files):
 
 | Suite | Tests | Focus |
 |---|---|---|
@@ -119,9 +121,13 @@ All 33 pass against a freshly built server.
 | `test_multi_graph_acl.py` | 8 | per-graph FULL/READ/NONE enforcement, denied writes do not mutate, ACL survives restart |
 | `test_restart_and_failure_recovery.py` | 4 | graceful restart, SIGKILL while idle, SIGKILL mid-transaction (atomicity), repeated kill/restart cycles |
 | `test_backup_restore_scale.py` | 3 | snapshot tree completeness, restore into a fresh dir, source still usable after snapshot |
-| **Total** | **33** | |
+| `test_graph_ceiling_regression.py` | 8 | 4095/4096/4097 graph-limit boundaries, configured-limit and unlimited modes, restart |
+| `test_graph_lifecycle_eviction.py` | 2 | eviction under concurrent load, bounded open-graph count |
+| `test_graph_lifecycle_restart.py` | 1 | restart with a large registered population stays lazy |
+| **Total** | **44** | |
 
-Run `ci/phase0/run_tests.sh it`; wall time ~19 s.
+Run `ci/phase0/run_tests.sh it`; the Phase-added subset takes ~19 s, the full
+upstream-integration run ~15 min.
 
 ### Notable expectations encoded in these tests
 
@@ -134,10 +140,13 @@ Run `ci/phase0/run_tests.sh it`; wall time ~19 s.
   (`src/core/data_type.h:156`), so recently acknowledged writes may be lost on
   SIGKILL. The tests assert *consistency and recoverability*, not durability of
   unflushed writes.
-- **Empty-graph queries work.** These tests use the `count_vertices()` helper,
-  which avoids the label-filtered count defect F2 in
-  [08](08-correctness-findings.md).
-- **Bulk writes avoid `UNWIND ... CREATE`** because of defect F1.
+- **Empty-graph queries work.** The tests use the `count_vertices()` helper.
+  F2 (label-filtered `count()` on an empty label) was later fixed directly
+  (`FindVertices` empty-graph guard + single-row `0` emission), so the helper's
+  fallback is no longer required — see [08](08-correctness-findings.md).
+- **Bulk writes avoid `UNWIND ... CREATE`.** Defect F1 (under-insertion under
+  the default v2 engine) was subsequently fixed with a per-record `Visited`
+  reset in the create operators, so `UNWIND ... CREATE` is correct again.
 
 ## 4. What this baseline does not cover
 
@@ -179,8 +188,8 @@ The ~998-graph ceiling documented in
 | Criterion | Status |
 |---|---|
 | Clean environment builds TuGraph without undocumented manual intervention | **Met** — `doctor.sh` + `build.sh`, two blockers fixed and documented |
-| All existing upstream unit tests pass | **Partially met** — `fma_unit_test` passes; `unit_test` has 1 failure of 291, recorded and not fixed by policy. Additionally ~50% of full-suite runs abort with a pre-existing SIGSEGV ([F3](08-correctness-findings.md)), which reproduces with the storage policy on and off |
-| Newly added integration tests pass | **Met** — 33/33 |
+| All existing upstream unit tests pass | **Partially met** — `fma_unit_test` passes. `unit_test` has a small set of failures (golden/plugin/RPC/subprocess-dependent cases) and ~50% of full-suite runs abort with a pre-existing SIGSEGV ([F3](08-correctness-findings.md)) independent of the storage policy. F1/F2 and the Phase 2 crash F3a have been fixed (see [08](08-correctness-findings.md)) |
+| Newly added integration tests pass | **Met** — the suite runs 153 passed / 2 skipped / 13 HA-chaos setup errors (the latter need the `--ha-work-dir` fixture, not configured in this harness). Includes the Phase 2 eviction/restart suites |
 | Benchmarks run against 1, 100, 1,000 and 4,000 graphs | **Met** after the R0 fix — 1/100/1000/4000 all complete; 3999/3999 graphs created and verified at 4000 (`results/R0-VERIFY.md`) |
 | Startup time, RAM, disk and fd usage recorded for each test size | **Met for achievable sizes** — `benchmark/scaling/results/BASELINE.md` |
 | Restart/recovery tests complete without data corruption | **Met** — includes SIGKILL mid-transaction atomicity |

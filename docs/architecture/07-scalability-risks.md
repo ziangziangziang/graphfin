@@ -251,12 +251,14 @@ R0 fix changes the picture in Phase 1's favour:**
    (`benchmark/scaling/run_bench.py`) implements create/open/list/restart/
    backup/restore/delete across arbitrary graph counts and is driven by
    `--graphs`, so Phase 1 can reuse it directly by changing one flag.
-5. **Two pre-existing correctness defects should be triaged first** — F1
-   (`UNWIND ... CREATE` under-inserts under the default Cypher v2 engine) and
-   F2 (label-filtered `count()` fails on an empty label) — see
-   [08-correctness-findings.md](08-correctness-findings.md). At 10,000
-   mostly-empty graphs, F2 will be hit constantly, and F3 (the intermittent
-   unit-suite SIGSEGV) makes the suite unusable as a clean gate until fixed.
+5. **Two pre-existing correctness defects were fixed during Phase 2
+   validation** — F1 (`UNWIND ... CREATE` under-inserts under the default
+   Cypher v2 engine) and F2 (label-filtered `count()` fails on an empty label)
+   — see [08-correctness-findings.md](08-correctness-findings.md). They no
+   longer block clean graph-count work. F3 (the intermittent unit-suite
+   SIGSEGV) remains open and still prevents using the unit suite as a clean
+   gate; the Phase 2-introduced eviction crash F3a has been fixed
+   (eviction task now owned by `Galaxy`).
 
 Everything else in Phase 1 — finding every graph-count limit, consolidating
 validation into one authoritative path, verifying no storage/ID/serialization
