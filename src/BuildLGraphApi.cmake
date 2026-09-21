@@ -70,7 +70,8 @@ set(LGRAPH_CLUSTER_SRC
         cluster/shard_manager.cpp
         cluster/router.cpp
         cluster/cluster_control.cpp
-        cluster/migration_manager.cpp)
+        cluster/migration_manager.cpp
+        cluster/request_router.cpp)
 
 set(LGRAPH_API_SRC
         lgraph_api/c.cpp

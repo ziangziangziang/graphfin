@@ -33,6 +33,7 @@ add_executable(unit_test
         test_router.cpp
         test_cluster_control.cpp
         test_migration_manager.cpp
+        test_request_router.cpp
         test_cpp_procedure.cpp
         test_cppresetsdk_json.cpp
         test_cypher_v2.cpp
