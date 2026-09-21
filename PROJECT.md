@@ -1,12 +1,10 @@
     Branch timeseries — Time-Series Properties in TuGraph
 
-    New clone, new branch timeseries, based on performance @ 488ad42cc
-    (not including the uncommitted Phase 3 HA work).
-
-    Provenance correction (2026-09-21 review): the named base 488ad42cc is not
-    present in this clone; the local merge base with performance is 384dc7da.
-    No HA dependency was found; the discrepancy is record-keeping, not a
-    branch-management failure.
+    New clone, new branch timeseries, based on performance at local merge base
+    384dc7da. (The earlier named base 488ad42cc is not present in this clone;
+    no HA dependency was found — record-keeping only.) The uncommitted Phase 3
+    HA work is not included, and nothing here depends on it: everything builds
+    and passes on the merge base alone.
 
     This feature is developed in parallel with the other work streams (scaling, HA), not
     sequenced after them. The design below is chosen purely on engineering merit — where a
@@ -50,7 +48,7 @@
     ---
     Parallel development model
 
-    - Branch timeseries is cut from performance @ 488ad42cc and rebased onto performance
+    - Branch timeseries is cut from performance at 384dc7da and rebased onto performance
     regularly so the other streams' changes are absorbed continuously rather than in one
     big merge.
     - Work is organized so each stage lands as a coherent commit touching a predictable set of
@@ -62,8 +60,6 @@
     src/cypher/procedure/procedure.cpp, src/restful/server/rest_server.cpp), the edits are
     small and localized to one function or one switch, and never reformat surrounding code —
     that keeps any conflict trivially mechanical to resolve.
-    - No dependence on the uncommitted Phase 3 HA work: everything here builds and passes on
-    488ad42cc alone.
 
     Decision 1 — do NOT add a new FieldType (engineering cost, not conflict avoidance)
 
@@ -91,7 +87,7 @@
     the record). It returns a cheap summary map instead; real access goes through the
     series.* function family.
 
-    Decision 2 — return Cypher-native types, so serialization is free
+    Decision 2 — return Cypher-native types, so client conversion stays small
 
     Every read function returns LIST<MAP<STRING, scalar>> (and scalars: INT64/DOUBLE/
     DATETIME). The Cypher value model already has MAP/ARRAY with existing JSON, Bolt and
@@ -151,11 +147,13 @@
       per measure m:  u32 byte_len | u8 encoding_code | ceil(count/8) null bitmap | payload
                       encoding_code: 0 = RAW64, 1 = GORILLA_XOR, 2 = ZIGZAG_VARINT64
 
-    - Timestamps — delta-of-delta with the 4-way control-bit scheme
-    (0→14 bits, 10→7, 110→9, 1110→12, 1111→32 bits), zigzag encoded, bit-packed.
-    The widest escape is 64 bits, not 32: timestamps are microseconds, so a
-    one-day gap (8.64e10) does not fit in 32 bits. Constant cadence still costs
-    ~1 bit/point.
+    - Timestamps — delta-of-delta with the classic Gorilla control-bit tree
+    ('0' for 0 in 1 bit; '10' + 7 bits; '110' + 9; '1110' + 12; '1111' + a
+    64-bit escape), zigzag-encoded and bit-packed, applied uniformly to every
+    delta (the first delta is against an implicit previous delta of zero).
+    The widest escape is 64 bits rather than Gorilla's 32: timestamps are
+    microseconds, so a one-day gap (8.64e10) does not fit in 32 bits.
+    Constant cadence still costs ~1 bit/point.
     - DOUBLE measures — Gorilla XOR against the previous value: equal ⇒ single 0 bit;
     otherwise control 1 + 6-bit leading-zero count + 6-bit meaningful-bit length +
     trailing-zero-trimmed payload. The leading-zero count is 6 bits, not 5: it can
@@ -419,32 +417,39 @@
     test/integration/test_timeseries.py.
 
     ---
-    Milestones (status 2026-09-21: S0–S3 done and gated; S4–S5 outstanding)
+    Milestones (status 2026-09-21: S0–S3 implemented, hardening in progress per REVIEW.md R1–R6; S4–S5 outstanding)
 
     Stage: S0 Encoding primitives — DONE
     Delivers: series_encoding + fuzz/round-trip unit tests
     Done criteria: unit tests green; no DB dependency
     ────────────────────────────────────────
-    Stage: S1 Core store + schema — DONE, hardened past the plan
+    Stage: S1 Core store + schema — implemented, hardening in progress
     Delivers: series_store, _tseries_ table, FieldSpec.series, Transaction API for vertices; schema persists and reloads
     Done criteria: unit tests cover upsert/overwrite/split/range/delete-element, abort leaves no residue, data survives reopen
     Plus: atomic split (collect-then-write), field migration + bucket cleanup
     on schema edits, DropAllVertex/DelLabel/incident-edge cleanup, measure
     redefinition guard, ts reservation — all with regression tests.
+    Hardening (see REPORT.md): R1 reload-shift DDL guards, R2 fast-alter
+    default fix with load-time recovery, R3 atomic decode counter, R6
+    DATETIME-domain timestamps.
     ────────────────────────────────────────
-    Stage: S2 Cypher reads — DONE, hardened past the plan
+    Stage: S2 Cypher reads — implemented, client/memory evidence outstanding
     Delivers: all read functions + summary map; golden Cypher cases
     Done criteria: series.test/.result passes on both Lcypher and GQL paths (or aliased)
     Plus: type-preserving result conversion (properties() returns real MAPs),
     checked integer sums, schema-only resolution with an operation-count test,
     nested map access, YAGO_SERIES fixture isolation, nested goldens.
+    Outstanding: REST/Bolt client assertions, large-window memory behavior.
     ────────────────────────────────────────
-    Stage: S3 Writes + edges — DONE
+    Stage: S3 Writes + edges — implemented, hardening in progress
     Delivers: series.append/update/clear procedures, label DDL procedures, edge series (kind=0x01)
     Done criteria: round-trip through Cypher only; idempotent repeat produces identical bytes
-    Evidence: series_write goldens on both parsers (declare → write →
+    Evidence: series_write golden on Cypher (declare → write →
     correct-one-measure → idempotent repeat → clear → drop → error paths,
-    vertex and edge); C++ edge round-trip and byte-identical-repeat tests;
+    vertex and edge, plus R4–R6 input-boundary cases); GQL suite pins
+    scalar-argument DDL and the documented GQL limits (map literals arrive as
+    MkRecord, CREATE has no viable alternative — point writes stay
+    Cypher-only); C++ edge round-trip and byte-identical-repeat tests;
     series gate green. Two deviations: series.set shipped as series.update
     (SET is a Cypher keyword; series_set kept as alias), and only standalone
     DDL shipped (inline label-DDL sugar deferred).
