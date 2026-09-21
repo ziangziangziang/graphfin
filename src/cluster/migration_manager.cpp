@@ -94,6 +94,8 @@ bool MigrationManager::CanTransition(MigrationState from, MigrationState to) {
     return false;
 }
 
+MigrationManager::MigrationManager(KvStore* store) : MigrationManager(store, Config{}) {}
+
 MigrationManager::MigrationManager(KvStore* store, Config config)
     : store_(store), config_(config) {}
 

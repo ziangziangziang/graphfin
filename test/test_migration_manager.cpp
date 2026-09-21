@@ -43,7 +43,7 @@ TEST_F(TestMigrationManager, FullLifecycleAndValidation) {
     auto mgr = std::make_unique<MigrationManager>(store.get());
     {
         auto txn = store->CreateWriteTxn(false);
-        mgr->Init(store.get(), *txn, true);
+        mgr->Init(*txn, true);
         txn->Commit();
     }
 
@@ -102,7 +102,7 @@ TEST_F(TestMigrationManager, CancelFailRollbackAndPersistence) {
     auto mgr = std::make_unique<MigrationManager>(store.get());
     {
         auto txn = store->CreateWriteTxn(false);
-        mgr->Init(store.get(), *txn, true);
+        mgr->Init(*txn, true);
         txn->Commit();
     }
 
@@ -161,7 +161,7 @@ TEST_F(TestMigrationManager, CancelFailRollbackAndPersistence) {
         auto store2 = std::make_unique<LMDBKvStore>("./test_migration_ctrl");
         auto mgr2 = std::make_unique<MigrationManager>(store2.get());
         auto txn = store2->CreateWriteTxn(false);
-        mgr2->Init(store2.get(), *txn, true);
+        mgr2->Init(*txn, true);
         txn->Commit();
         EXPECT_TRUE(mgr2->Get(9, &r));
         EXPECT_EQ(r.state, MigrationState::FAILED);
@@ -178,7 +178,7 @@ TEST_F(TestMigrationManager, ProgressAndFailureAccounting) {
     auto mgr = std::make_unique<MigrationManager>(store.get());
     {
         auto txn = store->CreateWriteTxn(false);
-        mgr->Init(store.get(), *txn, true);
+        mgr->Init(*txn, true);
         txn->Commit();
     }
     EXPECT_FALSE(mgr->ReportProgress(*store->CreateWriteTxn(false), 99, 0.5, 10));
@@ -201,21 +201,38 @@ TEST_F(TestMigrationManager, ProgressAndFailureAccounting) {
     EXPECT_FALSE(mgr->ReportProgress(*store->CreateWriteTxn(false), 12345, 0.5, 1));
 }
 
+namespace {
+
+RebalanceInput MakeInput(ShardId s, size_t g, uint32_t w, double d) {
+    RebalanceInput in;
+    in.shard = s;
+    in.graphs = g;
+    in.weight = w;
+    in.disk_used = d;
+    return in;
+}
+
+}  // namespace
+
 TEST_F(TestMigrationManager, PlanRebalanceMoves) {
     // Empty and singleton inputs produce nothing.
     EXPECT_TRUE(PlanRebalanceMoves({}, 10).empty());
-    EXPECT_TRUE(PlanRebalanceMoves({{{0}, 5, 1, 0.0}}, 10).empty());
+    {
+        std::vector<RebalanceInput> one;
+        one.push_back(MakeInput(0, 5, 1, 0.0));
+        EXPECT_TRUE(PlanRebalanceMoves(one, 10).empty());
+    }
 
     // Already balanced: no moves.
-    std::vector<RebalanceInput> even = {
-        {0, 5, 1, 0.0}, {1, 5, 1, 0.0},
-    };
+    std::vector<RebalanceInput> even;
+    even.push_back(MakeInput(0, 5, 1, 0.0));
+    even.push_back(MakeInput(1, 5, 1, 0.0));
     EXPECT_TRUE(PlanRebalanceMoves(even, 10).empty());
 
-    // 10 vs 0 (equal weights) -> exactly 5 moves, alternating halved peaks.
-    std::vector<RebalanceInput> skewed = {
-        {0, 10, 1, 0.0}, {1, 0, 1, 0.0},
-    };
+    // 10 vs 0 (equal weights) -> exactly 5 moves, halving the peak each time.
+    std::vector<RebalanceInput> skewed;
+    skewed.push_back(MakeInput(0, 10, 1, 0.0));
+    skewed.push_back(MakeInput(1, 0, 1, 0.0));
     auto moves = PlanRebalanceMoves(skewed, 100);
     ASSERT_EQ(moves.size(), 5u);
     for (const auto& m : moves) {
@@ -227,11 +244,10 @@ TEST_F(TestMigrationManager, PlanRebalanceMoves) {
     EXPECT_EQ(PlanRebalanceMoves(skewed, 2).size(), 2u);
 
     // Weights respected: shard 1 with weight 3 absorbs more.
-    std::vector<RebalanceInput> weighted = {
-        {0, 8, 1, 0.0}, {1, 0, 3, 0.0},
-    };
+    std::vector<RebalanceInput> weighted;
+    weighted.push_back(MakeInput(0, 8, 1, 0.0));
+    weighted.push_back(MakeInput(1, 0, 3, 0.0));
     auto wm = PlanRebalanceMoves(weighted, 100);
-    // loads: 8 -> 7,6 (shard0) vs 1/3,2/3...: keeps moving while peak drops.
     EXPECT_FALSE(wm.empty());
     for (const auto& m : wm) {
         EXPECT_EQ(m.src, 0u);
@@ -241,9 +257,10 @@ TEST_F(TestMigrationManager, PlanRebalanceMoves) {
     // Disk breaks load ties among destinations: shard 1 and 2 both sit at
     // load 4, so the emptier disk (shard 2) is chosen. The move also strictly
     // reduces the peak (8 -> 7).
-    std::vector<RebalanceInput> disks = {
-        {0, 8, 1, 0.5}, {1, 4, 1, 0.9}, {2, 4, 1, 0.1},
-    };
+    std::vector<RebalanceInput> disks;
+    disks.push_back(MakeInput(0, 8, 1, 0.5));
+    disks.push_back(MakeInput(1, 4, 1, 0.9));
+    disks.push_back(MakeInput(2, 4, 1, 0.1));
     auto dm = PlanRebalanceMoves(disks, 1);
     ASSERT_EQ(dm.size(), 1u);
     EXPECT_EQ(dm[0].src, 0u);

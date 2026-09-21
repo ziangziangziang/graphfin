@@ -128,7 +128,8 @@ class MigrationManager {
         std::string migration_table = "_cluster_migration_";
     };
 
-    explicit MigrationManager(KvStore* store, Config config = Config());
+    explicit MigrationManager(KvStore* store);
+    MigrationManager(KvStore* store, Config config);
 
     void Init(KvTransaction& txn, bool create_if_not_exist);
 
@@ -164,12 +165,26 @@ class MigrationManager {
     static bool IsTerminal(MigrationState s);
     static bool CanTransition(MigrationState from, MigrationState to);
 
+  private:
+    void PersistLocked(KvTransaction& txn, const Record& r);
+    void DeleteRowLocked(KvTransaction& txn, uint64_t graph_uid);
+    int64_t Now() const;
+
+    KvStore* store_ = nullptr;
+    Config config_;
+    std::unique_ptr<KvTable> table_;
+    mutable std::mutex mtx_;
+    std::unordered_map<uint64_t, Record> migrations_;  // graph_uid -> record
+    uint64_t next_id_ = 1;
+    std::function<int64_t()> clock_;
+};
+
 /** One shard's load snapshot for rebalancing. */
 struct RebalanceInput {
     ShardId shard = INVALID_SHARD_ID;
     size_t graphs = 0;
     uint32_t weight = 1;    // 0 treated as 1; drain semantics are out of scope
-    double disk_used = 0.0;  // 0..1, currently a deterministic tiebreak only
+    double disk_used = 0.0;  // 0..1, tiebreak for equal loads (see planner)
 };
 
 /** One suggested unit of rebalancing: move a single graph src -> dst. */
@@ -187,20 +202,6 @@ struct RebalanceMove {
  */
 std::vector<RebalanceMove> PlanRebalanceMoves(const std::vector<RebalanceInput>& shards,
                                               size_t max_moves);
-
- private:
-    void PersistLocked(KvTransaction& txn, const Record& r);
-    void DeleteRowLocked(KvTransaction& txn, uint64_t graph_uid);
-    int64_t Now() const;
-
-    KvStore* store_ = nullptr;
-    Config config_;
-    std::unique_ptr<KvTable> table_;
-    mutable std::mutex mtx_;
-    std::unordered_map<uint64_t, Record> migrations_;  // graph_uid -> record
-    uint64_t next_id_ = 1;
-    std::function<int64_t()> clock_;
-};
 
 }  // namespace cluster
 }  // namespace lgraph
