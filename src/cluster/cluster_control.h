@@ -74,6 +74,27 @@ class ClusterControl {
                               uint64_t* out_uid = nullptr);
     ControlStatus DeleteGraph(KvTransaction& txn, const std::string& name);
 
+    /**
+     * Begin a migration: mark the graph MOVING on its current shard. The
+     * graph stops routing (MOVING is not ACTIVE) while data moves; the
+     * destination must be an existing, ONLINE, healthy shard different from
+     * the current one.
+     */
+    ControlStatus BeginMove(KvTransaction& txn, const std::string& name, ShardId dst,
+                            int64_t now_ms, PlacementVersion* out_version = nullptr);
+    /**
+     * Complete a migration: flip a MOVING graph to ACTIVE on `dst`. The caller
+     * performs data transfer/validation first; this is the atomic placement
+     * cutover that makes the destination writable and the source stale.
+     */
+    ControlStatus CompleteMove(KvTransaction& txn, const std::string& name, ShardId dst,
+                               PlacementVersion* out_version = nullptr);
+    /**
+     * Abort a migration: return a MOVING graph to ACTIVE on its current shard.
+     */
+    ControlStatus AbortMove(KvTransaction& txn, const std::string& name,
+                            PlacementVersion* out_version = nullptr);
+
     /** Current placement of a graph. */
     ControlStatus GetPlacement(const std::string& name, GraphPlacement* out) const;
 

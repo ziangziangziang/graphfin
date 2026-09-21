@@ -260,3 +260,104 @@ TEST_F(TestClusterControl, ListGraphsOnShard) {
     EXPECT_TRUE(std::is_sorted(s1.begin(), s1.end()));
     EXPECT_TRUE(f.control->ListGraphsOnShard(7).empty());
 }
+
+// Move lifecycle: begin (quiesce) -> complete (atomic cutover) or abort.
+TEST_F(TestClusterControl, MoveLifecycle) {
+    AutoCleanDir cleaner("./test_cluster_control_move");
+    Fixture f;
+    f.Init("./test_cluster_control_move");
+    {
+        auto txn = f.store->CreateWriteTxn(false);
+        EXPECT_EQ(f.control->RegisterShard(*txn, MakeShard(0)), ControlStatus::OK);
+        EXPECT_EQ(f.control->RegisterShard(*txn, MakeShard(1)), ControlStatus::OK);
+        txn->Commit();
+        f.ms->CommitStaged();
+    }
+    PlacementVersion v0 = 0;
+    uint64_t uid = 0;
+    {
+        auto txn = f.store->CreateWriteTxn(false);
+        EXPECT_EQ(f.control->CreateGraph(*txn, "g1", f.now, &v0, &uid), ControlStatus::OK);
+        txn->Commit();
+        f.ms->CommitStaged();
+    }
+    GraphPlacement p;
+    EXPECT_EQ(f.control->GetPlacement("g1", &p), ControlStatus::OK);
+    const ShardId src = p.shard_id;
+    const ShardId dst = (src == 0) ? 1 : 0;
+
+    // Guards.
+    {
+        auto txn = f.store->CreateWriteTxn(false);
+        EXPECT_EQ(f.control->BeginMove(*txn, "nope", dst, f.now), ControlStatus::GRAPH_NOT_FOUND);
+        EXPECT_EQ(f.control->BeginMove(*txn, "g1", src, f.now), ControlStatus::PERSIST_FAILED);
+        EXPECT_EQ(f.control->BeginMove(*txn, "g1", 7, f.now), ControlStatus::NO_HEALTHY_SHARD);
+        txn->Abort();
+        f.ms->RollbackStaged();
+    }
+
+    // Begin: graph quiesces on its current shard (not routable while moving).
+    PlacementVersion v1 = 0;
+    {
+        auto txn = f.store->CreateWriteTxn(false);
+        EXPECT_EQ(f.control->BeginMove(*txn, "g1", dst, f.now, &v1), ControlStatus::OK);
+        txn->Commit();
+        f.ms->CommitStaged();
+    }
+    EXPECT_GT(v1, v0);
+    EXPECT_EQ(f.control->GetPlacement("g1", &p), ControlStatus::OK);
+    EXPECT_EQ(p.shard_id, src);
+    EXPECT_EQ(p.State(), PlacementState::MOVING);
+    EXPECT_EQ(p.unique_id, uid);
+    RouteTarget t;
+    EXPECT_EQ(f.control->Resolve("g1", f.now, &t), RouteStatus::PLACEMENT_NOT_ACTIVE);
+    // The pre-move version no longer routes.
+    EXPECT_EQ(f.control->Fence("g1", v0), false);
+
+    // Abort: back to ACTIVE on the source, identity preserved.
+    PlacementVersion v2 = 0;
+    {
+        auto txn = f.store->CreateWriteTxn(false);
+        EXPECT_EQ(f.control->AbortMove(*txn, "g1", &v2), ControlStatus::OK);
+        txn->Commit();
+        f.ms->CommitStaged();
+    }
+    EXPECT_GT(v2, v1);
+    EXPECT_EQ(f.control->GetPlacement("g1", &p), ControlStatus::OK);
+    EXPECT_EQ(p.shard_id, src);
+    EXPECT_EQ(p.State(), PlacementState::ACTIVE);
+    EXPECT_EQ(p.unique_id, uid);
+
+    // Complete the move for real this time.
+    {
+        auto txn = f.store->CreateWriteTxn(false);
+        EXPECT_EQ(f.control->BeginMove(*txn, "g1", dst, f.now), ControlStatus::OK);
+        txn->Commit();
+        f.ms->CommitStaged();
+    }
+    PlacementVersion v3 = 0;
+    {
+        auto txn = f.store->CreateWriteTxn(false);
+        EXPECT_EQ(f.control->CompleteMove(*txn, "g1", dst, &v3), ControlStatus::OK);
+        txn->Commit();
+        f.ms->CommitStaged();
+    }
+    EXPECT_EQ(f.control->GetPlacement("g1", &p), ControlStatus::OK);
+    EXPECT_EQ(p.shard_id, dst);
+    EXPECT_EQ(p.State(), PlacementState::ACTIVE);
+    EXPECT_EQ(p.unique_id, uid);
+    // Old versions are stale everywhere; the new version routes to dst.
+    EXPECT_FALSE(f.control->FenceAt(dst, "g1", v1));
+    EXPECT_TRUE(f.control->FenceAt(dst, "g1", v3));
+    EXPECT_EQ(f.control->Resolve("g1", f.now, &t), RouteStatus::OK);
+    EXPECT_EQ(t.shard_id, dst);
+
+    // Completing/aborting a non-moving graph fails.
+    {
+        auto txn = f.store->CreateWriteTxn(false);
+        EXPECT_EQ(f.control->CompleteMove(*txn, "g1", dst), ControlStatus::PERSIST_FAILED);
+        EXPECT_EQ(f.control->AbortMove(*txn, "g1"), ControlStatus::PERSIST_FAILED);
+        txn->Abort();
+        f.ms->RollbackStaged();
+    }
+}

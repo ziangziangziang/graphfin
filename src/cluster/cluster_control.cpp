@@ -65,6 +65,56 @@ ControlStatus ClusterControl::DeleteGraph(KvTransaction& txn, const std::string&
     return ControlStatus::OK;
 }
 
+ControlStatus ClusterControl::BeginMove(KvTransaction& txn, const std::string& name,
+                                        ShardId dst, int64_t now_ms,
+                                        PlacementVersion* out_version) {
+    GraphPlacement cur;
+    if (!store_->GetGraphPlacement(name, &cur)) return ControlStatus::GRAPH_NOT_FOUND;
+    if (cur.State() != PlacementState::ACTIVE) return ControlStatus::PERSIST_FAILED;
+    if (dst == cur.shard_id) return ControlStatus::PERSIST_FAILED;
+    ShardInfo info;
+    if (!store_->GetShard(dst, &info) || info.state != ShardState::ONLINE) {
+        return ControlStatus::NO_HEALTHY_SHARD;
+    }
+    if (!shards_->IsHealthy(dst, now_ms)) return ControlStatus::NO_HEALTHY_SHARD;
+    PlacementVersion v = 0;
+    if (!store_->PutGraphPlacement(txn, name, cur.shard_id, PlacementState::MOVING, &v)) {
+        return ControlStatus::PERSIST_FAILED;
+    }
+    if (out_version) *out_version = v;
+    return ControlStatus::OK;
+}
+
+ControlStatus ClusterControl::CompleteMove(KvTransaction& txn, const std::string& name,
+                                           ShardId dst, PlacementVersion* out_version) {
+    GraphPlacement cur;
+    if (!store_->GetGraphPlacement(name, &cur)) return ControlStatus::GRAPH_NOT_FOUND;
+    if (cur.State() != PlacementState::MOVING) return ControlStatus::PERSIST_FAILED;
+    ShardInfo info;
+    if (!store_->GetShard(dst, &info) || info.state != ShardState::ONLINE) {
+        return ControlStatus::NO_HEALTHY_SHARD;
+    }
+    PlacementVersion v = 0;
+    if (!store_->PutGraphPlacement(txn, name, dst, PlacementState::ACTIVE, &v)) {
+        return ControlStatus::PERSIST_FAILED;
+    }
+    if (out_version) *out_version = v;
+    return ControlStatus::OK;
+}
+
+ControlStatus ClusterControl::AbortMove(KvTransaction& txn, const std::string& name,
+                                        PlacementVersion* out_version) {
+    GraphPlacement cur;
+    if (!store_->GetGraphPlacement(name, &cur)) return ControlStatus::GRAPH_NOT_FOUND;
+    if (cur.State() != PlacementState::MOVING) return ControlStatus::PERSIST_FAILED;
+    PlacementVersion v = 0;
+    if (!store_->PutGraphPlacement(txn, name, cur.shard_id, PlacementState::ACTIVE, &v)) {
+        return ControlStatus::PERSIST_FAILED;
+    }
+    if (out_version) *out_version = v;
+    return ControlStatus::OK;
+}
+
 ControlStatus ClusterControl::GetPlacement(const std::string& name, GraphPlacement* out) const {
     if (!store_->GetGraphPlacement(name, out)) return ControlStatus::GRAPH_NOT_FOUND;
     return ControlStatus::OK;
