@@ -34,6 +34,14 @@ const uint32_t kBucketMagic = 0x31534254;  // "TSB1" as little-endian bytes
 const uint16_t kBucketFormatVersion = 1;
 const uint16_t kFlagHasNulls = 1;
 
+// Decode-time allocation bound: the header count is untrusted until the
+// timestamp block proves it can describe that many points, so allocations
+// below must never be sized by a raw u32. Schema caps bucket_max_points at
+// 1000000, hence no legitimate bucket is larger; anything above the bound is
+// rejected before any allocation. (Without this, count=UINT32_MAX would
+// attempt multi-GB vectors — a stored-corruption DoS.)
+const uint32_t kMaxDecodableBucketPoints = 1u << 20;
+
 const uint8_t kKeyKindVertex = 0x00;
 const uint8_t kKeyKindEdge = 0x01;
 
@@ -335,7 +343,7 @@ bool SeriesStore::DecodeBucket(const char* data, size_t len,
     if (!r.ReadU32(&magic) || magic != kBucketMagic) return false;
     if (!r.ReadU16(&version) || version != kBucketFormatVersion) return false;
     if (!r.ReadU16(&flags) || (flags & ~kFlagHasNulls) != 0) return false;
-    if (!r.ReadU32(&count) || count == 0) return false;
+    if (!r.ReadU32(&count) || count == 0 || count > kMaxDecodableBucketPoints) return false;
     if (!r.ReadU16(&n_measures) || n_measures == 0) return false;
     if (n_measures > columns.size()) return false;
     out->measure_ids.resize(n_measures);
@@ -410,7 +418,7 @@ bool SeriesStore::DecodeBucketTimestamps(const char* data, size_t len, int64_t* 
     if (!r.ReadU32(&magic) || magic != kBucketMagic) return false;
     if (!r.ReadU16(&version) || version != kBucketFormatVersion) return false;
     if (!r.ReadU16(&flags) || (flags & ~kFlagHasNulls) != 0) return false;
-    if (!r.ReadU32(&count) || count == 0) return false;
+    if (!r.ReadU32(&count) || count == 0 || count > kMaxDecodableBucketPoints) return false;
     if (!r.ReadU16(&n_measures) || n_measures == 0) return false;
     if (!r.Skip(static_cast<size_t>(n_measures) * 2)) return false;
     if (!r.ReadI64(first_ts)) return false;
