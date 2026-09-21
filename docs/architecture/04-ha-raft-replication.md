@@ -14,7 +14,7 @@ run at the same time**:
 | Group id | constant string `"lgraph"` | one unnamed global group per process |
 | Replicated unit | a whole `LGraphRequest` (any write op) | a raw Bolt `Run` message (Cypher text) |
 | Main files | `src/server/ha_state_machine.{h,cpp}`, `src/server/state_machine.cpp` | `src/bolt_raft/*`, `src/server/bolt_raft_server.cpp`, `src/server/bolt_handler.cpp` |
-| Snapshotting | real braft snapshots | **deliberately disabled** |
+| Snapshotting | real braft snapshots | metadata kept (`SetSnapshot`/`ApplySnapshot`); catch-up by log replay under safe GC; no data-carrying snapshot yet |
 
 `LGraphServer::Start` selects `HaStateMachine` when `enable_ha`
 (`src/server/lgraph_server.cpp:240-246`) and **independently** starts
@@ -273,7 +273,13 @@ threads, fixed timers, one log store.
    path (`src/server/bolt_handler.cpp:282-299`). Writes issued over REST, the RPC
    API, or admin operations are **not** replicated by Bolt HA. Mixing surfaces
    silently breaks replica consistency.
-2. **Bolt HA cannot recover a lagging follower** (snapshots disabled, §5).
+2. **Bolt HA recovery of a lagging follower** is bounded by design: the log
+   store keeps the etcd-raft snapshot contract (`SetSnapshot`/`GetSnapshotMeta`/
+   `ApplySnapshot`), `CheckReady` persists received snapshots instead of
+   crashing, and log GC never compacts past the slowest peer's acknowledged
+   index (safe compaction). A follower that is merely behind therefore always
+   catches up by log replay. A genuinely new peer joining a fully-compacted
+   group still needs a data-carrying snapshot (§5).
 3. **Both HA modes are single-group**, so replication throughput does not scale
    with graphs — and a global Raft order is a global serialization point for all
    writes across all graphs.

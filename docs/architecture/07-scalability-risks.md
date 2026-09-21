@@ -385,9 +385,12 @@ BLOCKER; R1-R14 are the structural risks that remain relevant once R0 is solved.
   - Bolt HA replicates **only** the Bolt `Run` path
     (`src/server/bolt_handler.cpp:282-299`); REST/RPC/admin writes are not
     replicated by it, silently risking replica divergence.
-  - Bolt HA snapshots are **deliberately disabled**
-    (`src/bolt_raft/raft_log_store.cpp:301-305`), so a follower behind the
-    compacted prefix cannot catch up.
+  - Bolt HA previously returned `ErrSnapshotTemporarilyUnavailable` unconditionally,
+    so a follower behind the compacted prefix could never catch up. The store now
+    keeps the etcd-raft snapshot contract (`SetSnapshot`/`GetSnapshotMeta`/
+    `ApplySnapshot`) and log GC is bounded by the slowest peer's acknowledged
+    index, so a lagging follower recovers by log replay; only a brand-new peer
+    on a fully-compacted log still needs a data-carrying snapshot.
   - Legacy braft applies whole requests and interacts with O(N) stop-the-world
     reload/snapshot paths.
 - **Required change:** decide the replication unit (per-graph vs sharded
@@ -544,13 +547,13 @@ Ordered by expected necessity, with the specific code to change.
 | 2 | `AclManager` graph-access representation | `src/db/acl.h:139-203`, `src/db/acl.cpp:76-107` | dense per-role/per-user graph maps |
 | 2 | Graph registry storage | `src/db/galaxy.cpp:554-572`, `src/db/graph_manager.cpp:50-56` | one shared 1 GiB meta env, single writer |
 | 2 | Backup/snapshot/restore | `src/db/galaxy.cpp:481-531,590-604`, `src/db/graph_manager.cpp:298-316` | whole-server O(N), blocking, serial |
-| 2 | Raft replication unit | `src/bolt_raft/*`, `src/server/ha_state_machine.cpp` | one global group; partial coverage; snapshots disabled |
+| 2 | Raft replication unit | `src/bolt_raft/*`, `src/server/ha_state_machine.cpp` | one global group; partial coverage; snapshot metadata kept, GC bounded by slowest peer |
 | 3 | `RefCountedObj` reference array | `src/core/managed_object.h:55-60`, `src/core/thread_id.h:21` | ~60 KiB/graph, O(480) scans |
 | 3 | Global locks | `src/db/galaxy.h:62,71,73` | one RW lock pair for all graphs |
 | 3 | `AllocatorManager` | `src/cypher/monitor/monitor_allocator*`, `monitor_manager.h:48` | per-allocation global mutex |
 | 3 | Bolt threading and request path | `src/server/bolt_handler.cpp:302,380` | thread-per-connection; bypasses state machine |
 | 4 | Plan cache | `src/cypher/execution_plan/scheduler.cpp:74,170` | thread-local, not graph-keyed |
-| 4 | Capacity validation at startup | `src/server/lgraph_server.cpp:116-386` | no fd/thread/mmap budget checks |
+| 4 | Capacity validation at startup | `src/server/lgraph_server.cpp:116-386` | open-graph cache estimate logged with a 4 GiB warning; no fd/mmap budget checks |
 | 4 | Vector index open cost | `src/core/index_manager.cpp:97-147` | full scan per open |
 
 ## 4. What Phase 0 explicitly does not do

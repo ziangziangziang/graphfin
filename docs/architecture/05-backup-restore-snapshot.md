@@ -8,13 +8,15 @@ separates them first, then covers backup and restore.
 
 | # | Mechanism | Scope | Blocking? | Where |
 |---|---|---|---|---|
-| A | Bolt-Raft Raft snapshot | Raft log | n/a — **disabled** | `src/bolt_raft/raft_log_store.cpp:301-305` |
+| A | Bolt-Raft Raft snapshot | Raft log | recorded (index/term/conf-state); catch-up by log replay under safe GC | `src/bolt_raft/raft_log_store.{h,cpp}`, `src/bolt_raft/raft_driver.cpp` (safe compaction) |
 | B | braft Raft snapshot | whole server | braft-scheduled | `src/server/ha_state_machine.cpp:275-323` |
 | C | Business "backup snapshot" (`dbms.takeSnapshot`) | whole server, all graphs | holds Galaxy `reload_lock_` read | `src/server/state_machine.cpp:202-234`, `src/db/galaxy.cpp:505-531` |
 | D | Incremental binlog | whole server, request-level | online (append per write) | `src/core/backup_log.h`, `src/server/state_machine.cpp:150-163` |
 
 Mechanism A is covered in [04](04-ha-raft-replication.md); it is a Raft log
-snapshot, not a data snapshot, and it is disabled.
+snapshot, not a data snapshot. It carries metadata (index/term/conf-state);
+`Snapshot()` returns the stored snapshot when one exists and
+`ErrSnapshotTemporarilyUnavailable` only when none has been recorded yet.
 
 ## 1. Business snapshot (`dbms.takeSnapshot`)
 
