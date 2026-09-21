@@ -87,10 +87,12 @@ bool ClusterControl::FenceAt(ShardId shard, const std::string& name,
     GraphPlacement p;
     GraphId id = 0;
     if (!store_->GetGraphPlacement(name, &p, &id)) return false;
+    // Always report the authoritative version (so callers can route a retry),
+    // even when rejecting because this shard does not host the graph.
+    if (current) *current = p.placement_version;
     // The receiver must host the graph; otherwise the request belongs to
     // another shard (or to no shard at all).
     if (p.shard_id != shard) return false;
-    if (current) *current = p.placement_version;
     return expected >= p.placement_version;
 }
 

@@ -229,10 +229,17 @@ TEST_F(TestClusterControl, ListGraphsOnShard) {
     AutoCleanDir cleaner("./test_cluster_control_list");
     Fixture f;
     f.Init("./test_cluster_control_list");
+    // Stage-publish: shards must be registered AND committed before creation
+    // can place onto them, because placement reads committed counts only.
     {
         auto txn = f.store->CreateWriteTxn(false);
         EXPECT_EQ(f.control->RegisterShard(*txn, MakeShard(0)), ControlStatus::OK);
         EXPECT_EQ(f.control->RegisterShard(*txn, MakeShard(1)), ControlStatus::OK);
+        txn->Commit();
+        f.ms->CommitStaged();
+    }
+    {
+        auto txn = f.store->CreateWriteTxn(false);
         EXPECT_EQ(f.control->CreateGraph(*txn, "b", f.now), ControlStatus::OK);
         EXPECT_EQ(f.control->CreateGraph(*txn, "a", f.now), ControlStatus::OK);
         EXPECT_EQ(f.control->CreateGraph(*txn, "c", f.now), ControlStatus::OK);
