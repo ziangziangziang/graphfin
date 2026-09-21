@@ -83,12 +83,17 @@ class ClusterRequestHandler {
                           ClusterControl* control, Forwarder* forwarder, ShardId local_shard);
 
     /**
-     * Route one request. `seen_version` is the placement version the caller
-     * routed with (0 when unknown, meaning "resolve fresh"). `payload` is
-     * forwarded verbatim when the decision is FORWARD.
+     * Route one request. (`expected_uid`, `seen_version`) is the incarnation +
+     * epoch the caller routed with (both 0 when unknown, meaning "resolve
+     * fresh"). The local write boundary always re-fences with the
+     * authoritative tuple; a directly-reached obsolete destination still
+     * refuses. `payload` is forwarded verbatim when the decision is FORWARD.
+     * A UID mismatch (recreate) is REJECT_STALE even when the version
+     * coincidentally matches.
      */
-    HandleResult Handle(const std::string& graph, PlacementVersion seen_version,
-                        const std::string& payload, int64_t now_ms);
+    HandleResult Handle(const std::string& graph, uint64_t expected_uid,
+                        PlacementVersion seen_version, const std::string& payload,
+                        int64_t now_ms);
 
  private:
     ClusterMetaStore* store_;

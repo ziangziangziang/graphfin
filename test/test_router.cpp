@@ -88,10 +88,10 @@ TEST_F(TestRouter, ResolveUnknownAndActive) {
 
     {
         auto txn = f.store->CreateWriteTxn(false);
-        f.mgr->RegisterShard(*txn, MakeShard(0));
-        f.ms->PutGraphPlacement(*txn, "g1", 0, PlacementState::ACTIVE);
-        txn->Commit();
-            f.ms->CommitStaged();
+        ClusterMetaStore::Batch batch(f.ms.get(), *txn);
+        EXPECT_TRUE(f.mgr->RegisterShard(batch, MakeShard(0)));
+        EXPECT_TRUE(batch.PutGraphPlacement("g1", 0, PlacementState::ACTIVE));
+        EXPECT_TRUE(batch.Commit());
     }
     EXPECT_EQ(f.router->Resolve("g1", f.now, &t), RouteStatus::OK);
     EXPECT_EQ(t.shard_id, 0u);
@@ -101,9 +101,9 @@ TEST_F(TestRouter, ResolveUnknownAndActive) {
     // Not-yet-active placement is not routable.
     {
         auto txn = f.store->CreateWriteTxn(false);
-        f.ms->PutGraphPlacement(*txn, "g2", 0, PlacementState::CREATING);
-        txn->Commit();
-            f.ms->CommitStaged();
+        ClusterMetaStore::Batch batch(f.ms.get(), *txn);
+        EXPECT_TRUE(batch.PutGraphPlacement("g2", 0, PlacementState::CREATING));
+        EXPECT_TRUE(batch.Commit());
     }
     EXPECT_EQ(f.router->Resolve("g2", f.now, &t), RouteStatus::PLACEMENT_NOT_ACTIVE);
 }
@@ -114,10 +114,10 @@ TEST_F(TestRouter, CacheHitAndTtl) {
     f.Init("./test_router_cache", Router::Config{5000, 65536});
     {
         auto txn = f.store->CreateWriteTxn(false);
-        f.mgr->RegisterShard(*txn, MakeShard(0));
-        f.ms->PutGraphPlacement(*txn, "g1", 0, PlacementState::ACTIVE);
-        txn->Commit();
-            f.ms->CommitStaged();
+        ClusterMetaStore::Batch batch(f.ms.get(), *txn);
+        EXPECT_TRUE(f.mgr->RegisterShard(batch, MakeShard(0)));
+        EXPECT_TRUE(batch.PutGraphPlacement("g1", 0, PlacementState::ACTIVE));
+        EXPECT_TRUE(batch.Commit());
     }
     RouteTarget t;
     EXPECT_EQ(f.router->Resolve("g1", f.now, &t), RouteStatus::OK);
@@ -135,27 +135,28 @@ TEST_F(TestRouter, ValidateDetectsStalePlacement) {
     Fixture f;
     f.Init("./test_router_stale");
     PlacementVersion v0 = 0;
+    uint64_t uid0 = 0;
     {
         auto txn = f.store->CreateWriteTxn(false);
-        f.mgr->RegisterShard(*txn, MakeShard(0));
-        f.mgr->RegisterShard(*txn, MakeShard(1));
-        f.ms->PutGraphPlacement(*txn, "g1", 0, PlacementState::ACTIVE, &v0);
-        txn->Commit();
-            f.ms->CommitStaged();
+        ClusterMetaStore::Batch batch(f.ms.get(), *txn);
+        EXPECT_TRUE(f.mgr->RegisterShard(batch, MakeShard(0)));
+        EXPECT_TRUE(f.mgr->RegisterShard(batch, MakeShard(1)));
+        EXPECT_TRUE(batch.PutGraphPlacement("g1", 0, PlacementState::ACTIVE, &v0, &uid0));
+        EXPECT_TRUE(batch.Commit());
     }
     RouteTarget t;
     // Caller at the current version is fine.
-    EXPECT_EQ(f.router->Validate("g1", v0, f.now, &t), RouteStatus::OK);
+    EXPECT_EQ(f.router->Validate("g1", uid0, v0, f.now, &t), RouteStatus::OK);
     EXPECT_EQ(t.shard_id, 0u);
 
     // Move the graph to shard 1; a stale caller is rejected but told where to go.
     {
         auto txn = f.store->CreateWriteTxn(false);
-        f.ms->PutGraphPlacement(*txn, "g1", 1, PlacementState::ACTIVE);
-        txn->Commit();
-            f.ms->CommitStaged();
+        ClusterMetaStore::Batch batch(f.ms.get(), *txn);
+        EXPECT_TRUE(batch.PutGraphPlacement("g1", 1, PlacementState::ACTIVE));
+        EXPECT_TRUE(batch.Commit());
     }
-    EXPECT_EQ(f.router->Validate("g1", v0, f.now, &t), RouteStatus::STALE_PLACEMENT);
+    EXPECT_EQ(f.router->Validate("g1", uid0, v0, f.now, &t), RouteStatus::STALE_PLACEMENT);
     EXPECT_EQ(t.shard_id, 1u);
 
     // And a fresh resolve follows the move.
@@ -170,10 +171,10 @@ TEST_F(TestRouter, UnhealthyShardNotRouted) {
     f.Init("./test_router_health");
     {
         auto txn = f.store->CreateWriteTxn(false);
-        f.mgr->RegisterShard(*txn, MakeShard(0));
-        f.ms->PutGraphPlacement(*txn, "g1", 0, PlacementState::ACTIVE);
-        txn->Commit();
-            f.ms->CommitStaged();
+        ClusterMetaStore::Batch batch(f.ms.get(), *txn);
+        EXPECT_TRUE(f.mgr->RegisterShard(batch, MakeShard(0)));
+        EXPECT_TRUE(batch.PutGraphPlacement("g1", 0, PlacementState::ACTIVE));
+        EXPECT_TRUE(batch.Commit());
     }
     RouteTarget t;
     EXPECT_EQ(f.router->Resolve("g1", f.now, &t), RouteStatus::OK);
@@ -189,10 +190,10 @@ TEST_F(TestRouter, EndpointFallbackWhenLocatorEmpty) {
     f.locator->endpoint = "";  // locator cannot resolve a leader
     {
         auto txn = f.store->CreateWriteTxn(false);
-        f.mgr->RegisterShard(*txn, MakeShard(3, "127.0.0.1:29093"));
-        f.ms->PutGraphPlacement(*txn, "g1", 3, PlacementState::ACTIVE);
-        txn->Commit();
-            f.ms->CommitStaged();
+        ClusterMetaStore::Batch batch(f.ms.get(), *txn);
+        EXPECT_TRUE(f.mgr->RegisterShard(batch, MakeShard(3, "127.0.0.1:29093")));
+        EXPECT_TRUE(batch.PutGraphPlacement("g1", 3, PlacementState::ACTIVE));
+        EXPECT_TRUE(batch.Commit());
     }
     RouteTarget t;
     EXPECT_EQ(f.router->Resolve("g1", f.now, &t), RouteStatus::OK);
@@ -205,18 +206,64 @@ TEST_F(TestRouter, CacheIsBounded) {
     f.Init("./test_router_bound", Router::Config{5000, 2});  // cap = 2
     {
         auto txn = f.store->CreateWriteTxn(false);
-        f.mgr->RegisterShard(*txn, MakeShard(0));
+        ClusterMetaStore::Batch batch(f.ms.get(), *txn);
+        EXPECT_TRUE(f.mgr->RegisterShard(batch, MakeShard(0)));
         for (int i = 0; i < 5; i++) {
-            f.ms->PutGraphPlacement(*txn, "g" + std::to_string(i), 0, PlacementState::ACTIVE);
+            EXPECT_TRUE(batch.PutGraphPlacement("g" + std::to_string(i), 0, PlacementState::ACTIVE));
         }
-        txn->Commit();
-            f.ms->CommitStaged();
+        EXPECT_TRUE(batch.Commit());
     }
     RouteTarget t;
     for (int i = 0; i < 5; i++) {
         EXPECT_EQ(f.router->Resolve("g" + std::to_string(i), f.now, &t), RouteStatus::OK);
         EXPECT_LE(f.router->CacheSize(), 2u);
     }
+}
+
+// R3: a warmed route is bound to the incarnation. Recreating the graph
+// retires the cached UID: resolve returns the fresh UID and the old tuple
+// validates stale.
+TEST_F(TestRouter, CacheInvalidatedByRecreate) {
+    AutoCleanDir cleaner("./test_router_recreate");
+    Fixture f;
+    f.Init("./test_router_recreate");
+    PlacementVersion v0 = 0;
+    uint64_t uid0 = 0;
+    {
+        auto txn = f.store->CreateWriteTxn(false);
+        ClusterMetaStore::Batch batch(f.ms.get(), *txn);
+        EXPECT_TRUE(f.mgr->RegisterShard(batch, MakeShard(0)));
+        EXPECT_TRUE(batch.PutGraphPlacement("g1", 0, PlacementState::ACTIVE, &v0, &uid0));
+        EXPECT_TRUE(batch.Commit());
+    }
+    RouteTarget t0;
+    EXPECT_EQ(f.router->Resolve("g1", f.now, &t0), RouteStatus::OK);
+    EXPECT_EQ(t0.unique_id, uid0);
+    EXPECT_EQ(f.router->Validate("g1", uid0, v0, f.now, &t0), RouteStatus::OK);
+
+    PlacementVersion v1 = 0;
+    uint64_t uid1 = 0;
+    {
+        auto txn = f.store->CreateWriteTxn(false);
+        ClusterMetaStore::Batch batch(f.ms.get(), *txn);
+        EXPECT_TRUE(batch.DeleteGraphPlacement("g1"));
+        EXPECT_TRUE(batch.Commit());
+    }
+    {
+        auto txn = f.store->CreateWriteTxn(false);
+        ClusterMetaStore::Batch batch(f.ms.get(), *txn);
+        EXPECT_TRUE(batch.PutGraphPlacement("g1", 0, PlacementState::ACTIVE, &v1, &uid1));
+        EXPECT_TRUE(batch.Commit());
+    }
+    EXPECT_NE(uid1, uid0);
+    // The old tuple is stale even though the dense GraphId slot is reused.
+    RouteTarget told;
+    EXPECT_EQ(f.router->Validate("g1", uid0, v0, f.now, &told), RouteStatus::STALE_PLACEMENT);
+    EXPECT_EQ(told.unique_id, uid1);
+    RouteTarget t1;
+    EXPECT_EQ(f.router->Resolve("g1", f.now, &t1), RouteStatus::OK);
+    EXPECT_EQ(t1.unique_id, uid1);
+    EXPECT_EQ(f.router->Validate("g1", uid1, v1, f.now, &t1), RouteStatus::OK);
 }
 
 // Review finding 6: a warmed cache must not bypass shard-health/endpoint state.
@@ -227,10 +274,10 @@ TEST_F(TestRouter, CacheInvalidatedByShardChange) {
     f.locator->endpoint = "";  // fall back to the shard's registered endpoint
     {
         auto txn = f.store->CreateWriteTxn(false);
-        f.mgr->RegisterShard(*txn, MakeShard(0, "127.0.0.1:29092"));
-        f.ms->PutGraphPlacement(*txn, "g1", 0, PlacementState::ACTIVE);
-        txn->Commit();
-        f.ms->CommitStaged();
+        ClusterMetaStore::Batch batch(f.ms.get(), *txn);
+        EXPECT_TRUE(f.mgr->RegisterShard(batch, MakeShard(0, "127.0.0.1:29092")));
+        EXPECT_TRUE(batch.PutGraphPlacement("g1", 0, PlacementState::ACTIVE));
+        EXPECT_TRUE(batch.Commit());
     }
     RouteTarget t;
     EXPECT_EQ(f.router->Resolve("g1", f.now, &t), RouteStatus::OK);
@@ -240,9 +287,9 @@ TEST_F(TestRouter, CacheInvalidatedByShardChange) {
     // use the cached endpoint.
     {
         auto txn = f.store->CreateWriteTxn(false);
-        f.mgr->SetShardState(*txn, 0, ShardState::OFFLINE);
-        txn->Commit();
-        f.ms->CommitStaged();
+        ClusterMetaStore::Batch batch(f.ms.get(), *txn);
+        EXPECT_TRUE(f.mgr->SetShardState(batch, 0, ShardState::OFFLINE));
+        EXPECT_TRUE(batch.Commit());
     }
     EXPECT_EQ(f.router->Resolve("g1", f.now, &t), RouteStatus::NO_HEALTHY_SHARD);
 
@@ -250,9 +297,9 @@ TEST_F(TestRouter, CacheInvalidatedByShardChange) {
     // invalidates the cached endpoint.
     {
         auto txn = f.store->CreateWriteTxn(false);
-        f.mgr->RegisterShard(*txn, MakeShard(0, "127.0.0.1:29099"));
-        txn->Commit();
-        f.ms->CommitStaged();
+        ClusterMetaStore::Batch batch(f.ms.get(), *txn);
+        EXPECT_TRUE(f.mgr->RegisterShard(batch, MakeShard(0, "127.0.0.1:29099")));
+        EXPECT_TRUE(batch.Commit());
     }
     EXPECT_EQ(f.router->Resolve("g1", f.now, &t), RouteStatus::OK);
     EXPECT_EQ(t.endpoint, "127.0.0.1:29099");

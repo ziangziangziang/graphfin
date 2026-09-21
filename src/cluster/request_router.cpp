@@ -39,7 +39,7 @@ ClusterRequestHandler::ClusterRequestHandler(ClusterMetaStore* store, ShardManag
       forwarder_(forwarder),
       local_shard_(local_shard) {}
 
-HandleResult ClusterRequestHandler::Handle(const std::string& graph,
+HandleResult ClusterRequestHandler::Handle(const std::string& graph, uint64_t expected_uid,
                                            PlacementVersion seen_version,
                                            const std::string& payload, int64_t now_ms) {
     HandleResult out;
@@ -67,14 +67,24 @@ HandleResult ClusterRequestHandler::Handle(const std::string& graph,
         break;
     }
 
+    // Incarnation check first: a recreated graph never accepts the old UID,
+    // even if the version coincidentally matches.
+    if (expected_uid != 0 && expected_uid != target.unique_id) {
+        out.disposition = Disposition::REJECT_STALE;
+        out.reason = "stale graph incarnation for graph: " + graph;
+        return out;
+    }
+    const uint64_t fence_uid = expected_uid == 0 ? target.unique_id : expected_uid;
+    const PlacementVersion fence_version = seen_version == 0 ? target.version : seen_version;
+
     if (target.shard_id == local_shard_) {
         // Write boundary of the receiving shard: enforce the fence here, not
         // just in the router, so a directly-reached obsolete destination still
         // refuses a stale write.
         PlacementVersion current = 0;
-        if (!control_->FenceAt(local_shard_, graph, seen_version == 0 ? target.version
-                                                                      : seen_version,
-                               &current)) {
+        uint64_t current_uid = 0;
+        if (!control_->FenceAt(local_shard_, graph, fence_uid, fence_version, &current,
+                               &current_uid)) {
             out.disposition = Disposition::REJECT_STALE;
             out.reason = "stale placement version for graph: " + graph;
             return out;

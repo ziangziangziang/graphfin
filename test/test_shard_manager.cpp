@@ -50,33 +50,32 @@ TEST_F(TestShardManager, RegistrationValidation) {
         auto txn = store->CreateWriteTxn(false);
         ms->Init(store.get(), *txn, true);
         txn->Commit();
-            ms->CommitStaged();
     }
     ShardManager mgr(ms.get());
     std::string err;
     {
         auto txn = store->CreateWriteTxn(false);
+        ClusterMetaStore::Batch batch(ms.get(), *txn);
 
         ShardInfo bad;  // invalid id
         bad.name = "x";
         bad.endpoints = {"h:1"};
-        EXPECT_FALSE(mgr.RegisterShard(*txn, bad, &err));
+        EXPECT_FALSE(mgr.RegisterShard(batch, bad, &err));
 
         ShardInfo no_name = MakeShard(1);
         no_name.name = "";
-        EXPECT_FALSE(mgr.RegisterShard(*txn, no_name, &err));
+        EXPECT_FALSE(mgr.RegisterShard(batch, no_name, &err));
 
         ShardInfo no_ep = MakeShard(2);
         no_ep.endpoints.clear();
-        EXPECT_FALSE(mgr.RegisterShard(*txn, no_ep, &err));
+        EXPECT_FALSE(mgr.RegisterShard(batch, no_ep, &err));
 
         ShardInfo empty_ep = MakeShard(3);
         empty_ep.endpoints = {"127.0.0.1:1", ""};
-        EXPECT_FALSE(mgr.RegisterShard(*txn, empty_ep, &err));
+        EXPECT_FALSE(mgr.RegisterShard(batch, empty_ep, &err));
 
-        EXPECT_TRUE(mgr.RegisterShard(*txn, MakeShard(0), &err)) << err;
-        txn->Commit();
-            ms->CommitStaged();
+        EXPECT_TRUE(mgr.RegisterShard(batch, MakeShard(0), &err)) << err;
+        EXPECT_TRUE(batch.Commit());
     }
     EXPECT_EQ(mgr.ShardCount(), 1u);
     ShardInfo got;
@@ -92,7 +91,6 @@ TEST_F(TestShardManager, HealthTracksHeartbeat) {
         auto txn = store->CreateWriteTxn(false);
         ms->Init(store.get(), *txn, true);
         txn->Commit();
-            ms->CommitStaged();
     }
     int64_t now = 1000;
     ShardManager mgr(ms.get());
@@ -100,10 +98,10 @@ TEST_F(TestShardManager, HealthTracksHeartbeat) {
 
     {
         auto txn = store->CreateWriteTxn(false);
-        EXPECT_TRUE(mgr.RegisterShard(*txn, MakeShard(0)));
-        EXPECT_TRUE(mgr.RegisterShard(*txn, MakeShard(1)));
-        txn->Commit();
-            ms->CommitStaged();
+        ClusterMetaStore::Batch batch(ms.get(), *txn);
+        EXPECT_TRUE(mgr.RegisterShard(batch, MakeShard(0)));
+        EXPECT_TRUE(mgr.RegisterShard(batch, MakeShard(1)));
+        EXPECT_TRUE(batch.Commit());
     }
     // Registration sets the first heartbeat.
     EXPECT_TRUE(mgr.IsHealthy(0, now));
@@ -128,7 +126,6 @@ TEST_F(TestShardManager, PickShardLeastGraphCount) {
         auto txn = store->CreateWriteTxn(false);
         ms->Init(store.get(), *txn, true);
         txn->Commit();
-            ms->CommitStaged();
     }
     int64_t now = 1000;
     ShardManager mgr(ms.get());
@@ -136,13 +133,13 @@ TEST_F(TestShardManager, PickShardLeastGraphCount) {
 
     {
         auto txn = store->CreateWriteTxn(false);
-        mgr.RegisterShard(*txn, MakeShard(0));
-        mgr.RegisterShard(*txn, MakeShard(1));
+        ClusterMetaStore::Batch batch(ms.get(), *txn);
+        EXPECT_TRUE(mgr.RegisterShard(batch, MakeShard(0)));
+        EXPECT_TRUE(mgr.RegisterShard(batch, MakeShard(1)));
         // shard 0 gets two graphs, shard 1 none.
-        ms->PutGraphPlacement(*txn, "a0", 0, PlacementState::ACTIVE);
-        ms->PutGraphPlacement(*txn, "a1", 0, PlacementState::ACTIVE);
-        txn->Commit();
-            ms->CommitStaged();
+        EXPECT_TRUE(batch.PutGraphPlacement("a0", 0, PlacementState::ACTIVE));
+        EXPECT_TRUE(batch.PutGraphPlacement("a1", 0, PlacementState::ACTIVE));
+        EXPECT_TRUE(batch.Commit());
     }
     EXPECT_EQ(ms->GraphCountOnShard(0), 2u);
     EXPECT_EQ(ms->GraphCountOnShard(1), 0u);
@@ -154,9 +151,9 @@ TEST_F(TestShardManager, PickShardLeastGraphCount) {
     // Balance: shard 0 has 2, shard 1 has 1 -> still 1.
     {
         auto txn = store->CreateWriteTxn(false);
-        ms->PutGraphPlacement(*txn, "b0", 1, PlacementState::ACTIVE);
-        txn->Commit();
-            ms->CommitStaged();
+        ClusterMetaStore::Batch batch(ms.get(), *txn);
+        EXPECT_TRUE(batch.PutGraphPlacement("b0", 1, PlacementState::ACTIVE));
+        EXPECT_TRUE(batch.Commit());
     }
     EXPECT_TRUE(mgr.PickShard(now, &pick));
     EXPECT_EQ(pick, 1u);
@@ -164,9 +161,9 @@ TEST_F(TestShardManager, PickShardLeastGraphCount) {
     // Equalize: 2 vs 2 -> tie-break to the lowest id (0).
     {
         auto txn = store->CreateWriteTxn(false);
-        ms->PutGraphPlacement(*txn, "b1", 1, PlacementState::ACTIVE);
-        txn->Commit();
-            ms->CommitStaged();
+        ClusterMetaStore::Batch batch(ms.get(), *txn);
+        EXPECT_TRUE(batch.PutGraphPlacement("b1", 1, PlacementState::ACTIVE));
+        EXPECT_TRUE(batch.Commit());
     }
     EXPECT_EQ(ms->GraphCountOnShard(0), 2u);
     EXPECT_EQ(ms->GraphCountOnShard(1), 2u);
@@ -184,9 +181,9 @@ TEST_F(TestShardManager, PickShardLeastGraphCount) {
     mgr.Heartbeat(0);
     {
         auto txn = store->CreateWriteTxn(false);
-        mgr.SetShardState(*txn, 1, ShardState::DRAINING);
-        txn->Commit();
-            ms->CommitStaged();
+        ClusterMetaStore::Batch batch(ms.get(), *txn);
+        EXPECT_TRUE(mgr.SetShardState(batch, 1, ShardState::DRAINING));
+        EXPECT_TRUE(batch.Commit());
     }
     EXPECT_TRUE(mgr.PickShard(now, &pick));
     EXPECT_EQ(pick, 0u);
@@ -200,7 +197,6 @@ TEST_F(TestShardManager, PickShardRoundRobin) {
         auto txn = store->CreateWriteTxn(false);
         ms->Init(store.get(), *txn, true);
         txn->Commit();
-            ms->CommitStaged();
     }
     int64_t now = 5000;
     ShardManager mgr(ms.get(), ShardManager::Config{30000,
@@ -208,11 +204,11 @@ TEST_F(TestShardManager, PickShardRoundRobin) {
     mgr.SetClock([&now]() { return now; });
     {
         auto txn = store->CreateWriteTxn(false);
-        mgr.RegisterShard(*txn, MakeShard(0));
-        mgr.RegisterShard(*txn, MakeShard(1));
-        mgr.RegisterShard(*txn, MakeShard(2));
-        txn->Commit();
-            ms->CommitStaged();
+        ClusterMetaStore::Batch batch(ms.get(), *txn);
+        EXPECT_TRUE(mgr.RegisterShard(batch, MakeShard(0)));
+        EXPECT_TRUE(mgr.RegisterShard(batch, MakeShard(1)));
+        EXPECT_TRUE(mgr.RegisterShard(batch, MakeShard(2)));
+        EXPECT_TRUE(batch.Commit());
     }
     ShardId pick = INVALID_SHARD_ID;
     EXPECT_TRUE(mgr.PickShard(now, &pick));
@@ -233,7 +229,6 @@ TEST_F(TestShardManager, PickShardWeightedLeastLoad) {
         auto txn = store->CreateWriteTxn(false);
         ms->Init(store.get(), *txn, true);
         txn->Commit();
-            ms->CommitStaged();
     }
     int64_t now = 1000;
     ShardManager mgr(ms.get(),
@@ -247,11 +242,11 @@ TEST_F(TestShardManager, PickShardWeightedLeastLoad) {
     s1.capacity_weight = 2;
     {
         auto txn = store->CreateWriteTxn(false);
-        mgr.RegisterShard(*txn, s0);
-        mgr.RegisterShard(*txn, s1);
-        ms->PutGraphPlacement(*txn, "a0", 0, PlacementState::ACTIVE);  // shard0 = 1
-        txn->Commit();
-            ms->CommitStaged();
+        ClusterMetaStore::Batch batch(ms.get(), *txn);
+        EXPECT_TRUE(mgr.RegisterShard(batch, s0));
+        EXPECT_TRUE(mgr.RegisterShard(batch, s1));
+        EXPECT_TRUE(batch.PutGraphPlacement("a0", 0, PlacementState::ACTIVE));  // shard0 = 1
+        EXPECT_TRUE(batch.Commit());
     }
     ShardId pick = INVALID_SHARD_ID;
     EXPECT_TRUE(mgr.PickShard(now, &pick));
@@ -259,18 +254,18 @@ TEST_F(TestShardManager, PickShardWeightedLeastLoad) {
 
     {
         auto txn = store->CreateWriteTxn(false);
-        ms->PutGraphPlacement(*txn, "b0", 1, PlacementState::ACTIVE);  // shard1 = 1
-        txn->Commit();
-            ms->CommitStaged();
+        ClusterMetaStore::Batch batch(ms.get(), *txn);
+        EXPECT_TRUE(batch.PutGraphPlacement("b0", 1, PlacementState::ACTIVE));  // shard1 = 1
+        EXPECT_TRUE(batch.Commit());
     }
     EXPECT_TRUE(mgr.PickShard(now, &pick));
     EXPECT_EQ(pick, 1u);  // 1/1 vs 1/2
 
     {
         auto txn = store->CreateWriteTxn(false);
-        ms->PutGraphPlacement(*txn, "b1", 1, PlacementState::ACTIVE);  // shard1 = 2
-        txn->Commit();
-            ms->CommitStaged();
+        ClusterMetaStore::Batch batch(ms.get(), *txn);
+        EXPECT_TRUE(batch.PutGraphPlacement("b1", 1, PlacementState::ACTIVE));  // shard1 = 2
+        EXPECT_TRUE(batch.Commit());
     }
     EXPECT_TRUE(mgr.PickShard(now, &pick));
     EXPECT_EQ(pick, 0u);  // 1/1 == 2/2 -> tie breaks to lowest id
@@ -284,33 +279,32 @@ TEST_F(TestShardManager, DeregisterRefusedWhileGraphsRemain) {
         auto txn = store->CreateWriteTxn(false);
         ms->Init(store.get(), *txn, true);
         txn->Commit();
-            ms->CommitStaged();
     }
     ShardManager mgr(ms.get());
     {
         auto txn = store->CreateWriteTxn(false);
-        mgr.RegisterShard(*txn, MakeShard(0));
-        ms->PutGraphPlacement(*txn, "g0", 0, PlacementState::ACTIVE);
-        txn->Commit();
-            ms->CommitStaged();
+        ClusterMetaStore::Batch batch(ms.get(), *txn);
+        EXPECT_TRUE(mgr.RegisterShard(batch, MakeShard(0)));
+        EXPECT_TRUE(batch.PutGraphPlacement("g0", 0, PlacementState::ACTIVE));
+        EXPECT_TRUE(batch.Commit());
     }
     {
         auto txn = store->CreateWriteTxn(false);
-        EXPECT_FALSE(mgr.DeregisterShard(*txn, 0));  // graph still there
-        txn->Commit();
-            ms->CommitStaged();
+        ClusterMetaStore::Batch batch(ms.get(), *txn);
+        EXPECT_FALSE(mgr.DeregisterShard(batch, 0));  // graph still there
+        batch.Abort();
     }
     {
         auto txn = store->CreateWriteTxn(false);
-        ms->DeleteGraphPlacement(*txn, "g0");
-        txn->Commit();
-            ms->CommitStaged();
+        ClusterMetaStore::Batch batch(ms.get(), *txn);
+        EXPECT_TRUE(batch.DeleteGraphPlacement("g0"));
+        EXPECT_TRUE(batch.Commit());
     }
     {
         auto txn = store->CreateWriteTxn(false);
-        EXPECT_TRUE(mgr.DeregisterShard(*txn, 0));
-        txn->Commit();
-            ms->CommitStaged();
+        ClusterMetaStore::Batch batch(ms.get(), *txn);
+        EXPECT_TRUE(mgr.DeregisterShard(batch, 0));
+        EXPECT_TRUE(batch.Commit());
     }
     EXPECT_EQ(mgr.ShardCount(), 0u);
     EXPECT_EQ(mgr.LastHeartbeat(0), -1);
@@ -333,7 +327,6 @@ TEST_F(TestShardManager, StrategyListingRoundTrip) {
         auto txn = store->CreateWriteTxn(false);
         ms->Init(store.get(), *txn, true);
         txn->Commit();
-        ms->CommitStaged();
     }
     ShardManager mgr(ms.get());
     EXPECT_EQ(mgr.GetStrategy(), ShardManager::PlacementStrategy::LEAST_GRAPH_COUNT);

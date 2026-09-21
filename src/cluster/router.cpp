@@ -45,6 +45,7 @@ RouteStatus Router::Resolve(const std::string& graph, int64_t now_ms, RouteTarge
     out->graph_id = gid;
     out->shard_id = placement.shard_id;
     out->version = placement.placement_version;
+    out->unique_id = placement.unique_id;
 
     // Only ACTIVE placements serve traffic.
     if (placement.State() != PlacementState::ACTIVE) {
@@ -63,11 +64,14 @@ RouteStatus Router::Resolve(const std::string& graph, int64_t now_ms, RouteTarge
         return RouteStatus::NO_HEALTHY_SHARD;
     }
 
-    // Cache hit: same placement version, same shard config version, not expired.
+    // Cache hit: same incarnation, same placement version, same shard config
+    // version, not expired. A recreated graph reuses the dense GraphId slot
+    // with a fresh UID, so the UID check is what invalidates the old route.
     {
         std::lock_guard<std::mutex> l(mtx_);
         auto it = cache_.find(gid);
-        if (it != cache_.end() && it->second.version == placement.placement_version &&
+        if (it != cache_.end() && it->second.unique_id == placement.unique_id &&
+            it->second.version == placement.placement_version &&
             it->second.shard_config_version == shard.config_version &&
             now_ms < it->second.expires_ms && !it->second.endpoint.empty()) {
             out->endpoint = it->second.endpoint;
@@ -91,6 +95,7 @@ RouteStatus Router::Resolve(const std::string& graph, int64_t now_ms, RouteTarge
         CacheEntry e;
         e.shard_id = placement.shard_id;
         e.version = placement.placement_version;
+        e.unique_id = placement.unique_id;
         e.shard_config_version = shard.config_version;
         e.expires_ms = now_ms + config_.cache_ttl_ms;
         e.endpoint = endpoint;
@@ -99,11 +104,12 @@ RouteStatus Router::Resolve(const std::string& graph, int64_t now_ms, RouteTarge
     return RouteStatus::OK;
 }
 
-RouteStatus Router::Validate(const std::string& graph, PlacementVersion seen, int64_t now_ms,
-                             RouteTarget* out) {
+RouteStatus Router::Validate(const std::string& graph, uint64_t expected_uid,
+                             PlacementVersion seen, int64_t now_ms, RouteTarget* out) {
     RouteStatus st = Resolve(graph, now_ms, out);
     if (st != RouteStatus::OK) return st;
-    if (out->version != seen) return RouteStatus::STALE_PLACEMENT;
+    if (out->unique_id != expected_uid || out->version != seen)
+        return RouteStatus::STALE_PLACEMENT;
     return RouteStatus::OK;
 }
 

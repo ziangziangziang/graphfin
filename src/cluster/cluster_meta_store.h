@@ -20,6 +20,7 @@
 #include <shared_mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "core/kv_engine.h"
@@ -78,28 +79,31 @@ class ClusterMetaStore {
     void Init(KvStore* store, KvTransaction& txn, const Config& config,
               bool create_if_not_exist);
 
-    // ---- Shard registry -------------------------------------------------
+    // Staged (durable-written, not-yet-published) mutations. Pending is
+    // per-Batch (transaction-owned), never store-global (R1).
+    enum class PendingType : uint8_t {
+        PUT_GRAPH = 0,
+        DELETE_GRAPH = 1,
+        REGISTER_SHARD = 2,
+        REMOVE_SHARD = 3,
+        SHARD_STATE = 4,
+        SET_VERSION = 5,
+    };
+    struct Pending {
+        PendingType type;
+        std::string name;                    // PUT_GRAPH / DELETE_GRAPH
+        GraphPlacement placement;            // PUT_GRAPH
+        ShardInfo shard;                     // REGISTER_SHARD / SHARD_STATE (R10: full descriptor)
+        ShardId shard_id = INVALID_SHARD_ID; // REMOVE_SHARD
+        ConfigVersion version = 0;           // DELETE_GRAPH / SET_VERSION / SHARD_STATE
+    };
 
-    /** Register or overwrite a shard descriptor. Bumps the cluster version. */
-    bool RegisterShard(KvTransaction& txn, const ShardInfo& info);
-    /** Remove a shard. Fails if any ACTIVE/not-DELETED graph still lives there. */
-    bool RemoveShard(KvTransaction& txn, ShardId id);
-    bool SetShardState(KvTransaction& txn, ShardId id, ShardState state);
+    // ---- Committed reads (never observe uncommitted staging) ------------
+
     bool GetShard(ShardId id, ShardInfo* out) const;
     std::vector<ShardInfo> ListShards() const;
     size_t ShardCount() const;
 
-    // ---- Graph placement ------------------------------------------------
-
-    /**
-     * Create or update the placement of `name`. A new name is assigned the next
-     * dense GraphId; an existing name has its placement replaced and its
-     * placement_version bumped. Bumps the cluster version.
-     */
-    bool PutGraphPlacement(KvTransaction& txn, const std::string& name, ShardId shard,
-                           PlacementState state, PlacementVersion* out_version = nullptr,
-                           uint64_t* out_uid = nullptr);
-    bool DeleteGraphPlacement(KvTransaction& txn, const std::string& name);
     bool HasGraph(const std::string& name) const;
 
     bool GetGraphPlacement(const std::string& name, GraphPlacement* out,
@@ -126,23 +130,77 @@ class ClusterMetaStore {
     /** Number of graphs currently placed on `shard`. */
     size_t GraphCountOnShard(ShardId shard) const;
 
+    // ---- Transaction-owned batch ----------------------------------------
+    //
+    // All mutations MUST go through Batch. A Batch owns one KvTransaction,
+    // holds the store-wide writer lock from construction until Commit/Abort,
+    // stages mutations transaction-locally (never store-global), writes the
+    // durable rows, and publishes to the in-memory index only after the
+    // durable commit succeeds — in one Commit() entry point with RAII abort.
+    //
+    // This closes REVIEW R1: two interleaved batches can never share staged
+    // state, because staging is per-Batch and only one Batch can be active
+    // (writer-serialized) at a time. Readers observe committed state only.
+    class Batch {
+     public:
+        Batch(ClusterMetaStore* store, KvTransaction& kv);
+        ~Batch();
+        DISABLE_COPY(Batch);
+        Batch(Batch&& other) noexcept;
+        Batch& operator=(Batch&& other) noexcept = delete;
+
+        bool RegisterShard(const ShardInfo& info);
+        bool RemoveShard(ShardId id);
+        bool SetShardState(ShardId id, ShardState state);
+        bool PutGraphPlacement(const std::string& name, ShardId shard,
+                               PlacementState state,
+                               PlacementVersion* out_version = nullptr,
+                               uint64_t* out_uid = nullptr);
+        bool DeleteGraphPlacement(const std::string& name);
+        bool SetVersion(ConfigVersion v);
+
+        // Transaction-local (read-your-writes) views for validation (R8).
+        bool HasGraph(const std::string& name) const;
+        bool GetGraphPlacement(const std::string& name, GraphPlacement* out,
+                               GraphId* out_id = nullptr) const;
+        size_t GraphCountOnShard(ShardId shard) const;
+        bool GetShard(ShardId id, ShardInfo* out) const;
+
+        // Durable commit followed by in-memory publication. Returns false on
+        // durable-commit failure (nothing published). After Commit/Abort the
+        // Batch must not be used again.
+        bool Commit();
+        void Abort();
+
+        size_t StagedCount() const;
+        bool Committed() const { return done_ && committed_; }
+
+     private:
+        ClusterMetaStore* store_ = nullptr;
+        KvTransaction* kv_ = nullptr;
+        std::unique_lock<std::mutex> writer_guard_;
+        std::vector<Pending> pending_;
+        ConfigVersion staged_version_ = 0;
+        bool done_ = false;
+        bool committed_ = false;
+        // Transaction-local UIDs for staged puts. R3: a delete drops the
+        // entry so a later recreate in the same batch allocates a fresh
+        // incarnation UID; repeated puts without an intervening delete reuse.
+        std::unordered_map<std::string, uint64_t> batch_uids_;
+        std::unordered_map<std::string, GraphPlacement> batch_puts_;
+        std::unordered_set<std::string> batch_deletes_;
+        std::unordered_map<ShardId, ShardInfo> batch_shards_;
+        std::unordered_map<ShardId, bool> batch_shard_removed_;
+
+        bool FindPlacementForWrite(const std::string& name, GraphPlacement* out,
+                                   bool* is_new) const;
+    };
+
+    Batch BeginBatch(KvTransaction& kv) { return Batch(this, kv); }
+
     // ---- Cluster version -------------------------------------------------
 
     ConfigVersion Version() const;
-    bool SetVersion(KvTransaction& txn, ConfigVersion v);
-
-    // ---- Staged publication ---------------------------------------------
-    //
-    // Mutators above change ONLY the durable tables and record a pending
-    // change; the in-memory index is updated by CommitStaged() (call after
-    // txn->Commit()) and discarded by RollbackStaged() (call on abort or
-    // commit failure). This guarantees readers never observe an uncommitted
-    // placement and that a failed/aborted transaction cannot leave the index
-    // inconsistent with storage.
-    bool CommitStaged();
-    void RollbackStaged();
-    bool HasStaged() const;
-    size_t StagedCount() const;
 
     /** Approximate resident bytes of the in-memory index (tests/metrics). */
     size_t MemoryFootprint() const;
@@ -169,6 +227,9 @@ class ClusterMetaStore {
     std::unique_ptr<KvTable> meta_table_;
 
     mutable std::shared_mutex mtx_;
+    // Serializes whole batches: mutation -> durable commit -> publication.
+    // Held by Batch from construction until Commit/Abort (R1).
+    mutable std::mutex write_mtx_;
 
     std::vector<GraphPlacement> placements_;  // GraphId -> placement
     size_t live_count_ = 0;                   // placements not in DELETED state
@@ -188,29 +249,7 @@ class ClusterMetaStore {
     // never reused, even after restarts and deleted graphs.
     uint64_t next_uid_ = 0;
 
-    // Staged (durable-written, not-yet-published) mutations.
-    enum class PendingType : uint8_t {
-        PUT_GRAPH = 0,
-        DELETE_GRAPH = 1,
-        REGISTER_SHARD = 2,
-        REMOVE_SHARD = 3,
-        SHARD_STATE = 4,
-        SET_VERSION = 5,
-    };
-    struct Pending {
-        PendingType type;
-        std::string name;                    // PUT_GRAPH / DELETE_GRAPH
-        GraphPlacement placement;            // PUT_GRAPH
-        ShardInfo shard;                     // REGISTER_SHARD
-        ShardId shard_id = INVALID_SHARD_ID; // REMOVE_SHARD / SHARD_STATE
-        ShardState shard_state = ShardState::OFFLINE;  // SHARD_STATE
-        ConfigVersion version = 0;           // DELETE_GRAPH / SET_VERSION
-    };
-    std::vector<Pending> pending_;
-    // Version that WOULD be current if the staged batch commits. Mutators
-    // assign per-mutation versions from this so they are monotonic even before
-    // publication.
-    ConfigVersion staged_version_ = 0;
+    friend class Batch;
 };
 
 }  // namespace cluster

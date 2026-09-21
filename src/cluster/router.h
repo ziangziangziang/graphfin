@@ -31,6 +31,7 @@ struct RouteTarget {
     ShardId shard_id = INVALID_SHARD_ID;
     std::string endpoint;              // shard leader endpoint to forward to
     PlacementVersion version = 0;      // placement version this target reflects
+    uint64_t unique_id = 0;            // graph incarnation (R3); receiver must match
 };
 
 enum class RouteStatus {
@@ -89,12 +90,13 @@ class Router {
     RouteStatus Resolve(const std::string& graph, int64_t now_ms, RouteTarget* out);
 
     /**
-     * Validate a request that arrives tagged with the placement version the
-     * caller last saw. If the catalog has moved on, returns STALE_PLACEMENT and
-     * still fills `out` with the current target so the caller can retry there.
+     * Validate a request tagged with the incarnation + placement version the
+     * caller last saw (R3/R4). UID mismatch (recreate) or version mismatch
+     * (move) returns STALE_PLACEMENT and still fills `out` with the current
+     * target so the caller can retry there.
      */
-    RouteStatus Validate(const std::string& graph, PlacementVersion seen, int64_t now_ms,
-                         RouteTarget* out);
+    RouteStatus Validate(const std::string& graph, uint64_t expected_uid,
+                         PlacementVersion seen, int64_t now_ms, RouteTarget* out);
 
     /** Drop cached routing for one graph / all graphs. */
     void Invalidate(const std::string& graph);
@@ -107,6 +109,7 @@ class Router {
     struct CacheEntry {
         ShardId shard_id = INVALID_SHARD_ID;
         PlacementVersion version = 0;
+        uint64_t unique_id = 0;             // R3: cached route is bound to incarnation
         uint64_t shard_config_version = 0;  // detects endpoint/state changes
         int64_t expires_ms = 0;
         std::string endpoint;

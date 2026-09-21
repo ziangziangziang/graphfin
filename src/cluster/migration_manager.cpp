@@ -39,6 +39,19 @@ std::string UidKey(uint64_t graph_uid) {
     return k;
 }
 
+// R7: allocator row key. 8 bytes of 0xFF can never collide with a real
+// graph_uid (allocator starts at 1), and survives Prune() so migration ids
+// are never reused even after terminal records are cleaned up.
+std::string NextIdKey() { return std::string(8, '\xFF'); }
+
+Value EncodeU64Value(uint64_t v) { return Value(&v, sizeof(v)); }
+
+uint64_t DecodeU64Value(const Value& val) {
+    uint64_t v = 0;
+    if (val.Size() >= sizeof(v)) std::memcpy(&v, val.Data(), sizeof(v));
+    return v;
+}
+
 }  // namespace
 
 const char* ToString(MigrationState s) {
@@ -77,14 +90,16 @@ bool MigrationManager::CanTransition(MigrationState from, MigrationState to) {
         return to == MigrationState::PREPARE_CUTOVER || to == MigrationState::FAILED;
     case MigrationState::PREPARE_CUTOVER:
         return to == MigrationState::CUTOVER || to == MigrationState::FAILED;
+    // R7: post-cutover failures must roll back (CUTOVER/VALIDATING/CLEANUP ->
+    // ROLLBACK -> FAILED), never jump terminal directly. A terminal FAILED
+    // after cutover would let another migration start before ownership and
+    // cleanup are reconciled.
     case MigrationState::CUTOVER:
-        return to == MigrationState::VALIDATING || to == MigrationState::ROLLBACK ||
-               to == MigrationState::FAILED;
+        return to == MigrationState::VALIDATING || to == MigrationState::ROLLBACK;
     case MigrationState::VALIDATING:
-        return to == MigrationState::CLEANUP || to == MigrationState::ROLLBACK ||
-               to == MigrationState::FAILED;
+        return to == MigrationState::CLEANUP || to == MigrationState::ROLLBACK;
     case MigrationState::CLEANUP:
-        return to == MigrationState::COMPLETED || to == MigrationState::FAILED;
+        return to == MigrationState::COMPLETED;
     case MigrationState::ROLLBACK:
         return to == MigrationState::FAILED;
     case MigrationState::COMPLETED:
@@ -116,6 +131,8 @@ void MigrationManager::Init(KvTransaction& txn, bool create_if_not_exist) {
     next_id_ = 1;
     auto it = table_->GetIterator(txn);
     for (it->GotoFirstKey(); it->IsValid(); it->Next()) {
+        const Value k = it->GetKey();
+        if (k.Size() == 8 && k.AsString() == NextIdKey()) continue;  // allocator row
         Record r;
         fma_common::BinaryBuffer buf(it->GetValue().Data(), it->GetValue().Size());
         r.Deserialize(buf);
@@ -123,6 +140,14 @@ void MigrationManager::Init(KvTransaction& txn, bool create_if_not_exist) {
         auto emplaced = migrations_.emplace(r.graph_uid, r);
         if (!emplaced.second) emplaced.first->second = r;
         next_id_ = std::max(next_id_, r.migration_id + 1);
+    }
+    // The persisted allocator survives Prune(); take the max so ids are never
+    // reused after cleanup.
+    {
+        Value v;
+        if (table_->GetValue(txn, Value::ConstRef(NextIdKey()), v)) {
+            next_id_ = std::max(next_id_, DecodeU64Value(v));
+        }
     }
 }
 
@@ -137,112 +162,248 @@ void MigrationManager::DeleteRowLocked(KvTransaction& txn, uint64_t graph_uid) {
     table_->DeleteKey(txn, Value::ConstRef(UidKey(graph_uid)));
 }
 
-bool MigrationManager::Begin(KvTransaction& txn, uint64_t graph_uid, ShardId src, ShardId dst,
-                             PlacementVersion placement_version, uint64_t* out_id) {
-    if (graph_uid == 0 || src == dst || src == INVALID_SHARD_ID ||
+void MigrationManager::PersistNextIdLocked(KvTransaction& txn, uint64_t next_id) {
+    table_->SetValue(txn, Value::ConstRef(NextIdKey()), EncodeU64Value(next_id));
+}
+
+// ---- Batch (transaction-owned staging, R2) -------------------------------
+
+MigrationManager::Batch::Batch(MigrationManager* mgr, KvTransaction& kv)
+    : mgr_(mgr), kv_(&kv), writer_guard_(mgr->write_mtx_) {}
+
+MigrationManager::Batch::Batch(Batch&& other) noexcept
+    : mgr_(other.mgr_),
+      kv_(other.kv_),
+      writer_guard_(std::move(other.writer_guard_)),
+      done_(other.done_),
+      committed_(other.committed_),
+      staged_(std::move(other.staged_)),
+      staged_deleted_(std::move(other.staged_deleted_)) {
+    other.mgr_ = nullptr;
+    other.kv_ = nullptr;
+    other.done_ = true;
+}
+
+MigrationManager::Batch::~Batch() {
+    if (!done_ && mgr_ && kv_) {
+        try {
+            Abort();
+        } catch (...) {
+        }
+    }
+}
+
+void MigrationManager::Batch::Abort() {
+    if (done_) return;
+    done_ = true;
+    committed_ = false;
+    try {
+        if (kv_) kv_->Abort();
+    } catch (...) {
+    }
+    staged_.clear();
+    staged_deleted_.clear();
+    if (writer_guard_.owns_lock()) writer_guard_.unlock();
+}
+
+const MigrationManager::Record* MigrationManager::Batch::FindForRead(uint64_t uid) const {
+    auto dd = staged_deleted_.find(uid);
+    if (dd != staged_deleted_.end() && dd->second) return nullptr;
+    auto st = staged_.find(uid);
+    if (st != staged_.end()) return &st->second;
+    std::lock_guard<std::mutex> lock(mgr_->mtx_);
+    auto it = mgr_->migrations_.find(uid);
+    if (it == mgr_->migrations_.end()) return nullptr;
+    return &it->second;
+}
+
+MigrationManager::Record* MigrationManager::Batch::FindForWrite(uint64_t uid) {
+    auto dd = staged_deleted_.find(uid);
+    if (dd != staged_deleted_.end() && dd->second) return nullptr;
+    auto st = staged_.find(uid);
+    if (st != staged_.end()) return &st->second;
+    std::lock_guard<std::mutex> lock(mgr_->mtx_);
+    auto it = mgr_->migrations_.find(uid);
+    if (it == mgr_->migrations_.end()) return nullptr;
+    // Copy-on-write into staging; committed map untouched until Commit.
+    staged_[uid] = it->second;
+    return &staged_[uid];
+}
+
+bool MigrationManager::Batch::Get(uint64_t graph_uid, Record* out) const {
+    const Record* r = FindForRead(graph_uid);
+    if (!r) return false;
+    if (out) *out = *r;
+    return true;
+}
+
+bool MigrationManager::Batch::Begin(uint64_t graph_uid, ShardId src, ShardId dst,
+                                    PlacementVersion placement_version, uint64_t* out_id) {
+    if (done_ || graph_uid == 0 || src == dst || src == INVALID_SHARD_ID ||
         dst == INVALID_SHARD_ID) {
         return false;
     }
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (!table_) return false;
-    auto it = migrations_.find(graph_uid);
-    if (it != migrations_.end() && !IsTerminal(it->second.state)) return false;
+    if (!mgr_->table_) return false;
+    const Record* cur = FindForRead(graph_uid);
+    if (cur && !IsTerminal(cur->state)) return false;
+    uint64_t id = 0;
+    {
+        std::lock_guard<std::mutex> lock(mgr_->mtx_);
+        id = mgr_->next_id_++;
+        mgr_->PersistNextIdLocked(*kv_, mgr_->next_id_);
+    }
     Record r;
-    r.migration_id = next_id_++;
+    r.migration_id = id;
     r.graph_uid = graph_uid;
     r.src_shard = src;
     r.dst_shard = dst;
     r.state = MigrationState::SCHEDULED;
     r.placement_version = placement_version;
-    r.started_ms = Now();
+    r.started_ms = mgr_->Now();
     r.updated_ms = r.started_ms;
-    PersistLocked(txn, r);
-    migrations_[graph_uid] = r;
+    mgr_->PersistLocked(*kv_, r);
+    staged_[graph_uid] = r;
+    staged_deleted_.erase(graph_uid);
     if (out_id) *out_id = r.migration_id;
     return true;
 }
 
-bool MigrationManager::Advance(KvTransaction& txn, uint64_t graph_uid, MigrationState to) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (!table_) return false;
-    auto it = migrations_.find(graph_uid);
-    if (it == migrations_.end()) return false;
-    if (!CanTransition(it->second.state, to)) return false;
-    it->second.state = to;
-    it->second.updated_ms = Now();
-    PersistLocked(txn, it->second);
+bool MigrationManager::Batch::Advance(uint64_t graph_uid, MigrationState to,
+                                       uint64_t expected_id) {
+    if (done_ || !mgr_->table_) return false;
+    Record* r = FindForWrite(graph_uid);
+    if (!r) return false;
+    if (expected_id != 0 && r->migration_id != expected_id) return false;
+    if (!CanTransition(r->state, to)) return false;
+    r->state = to;
+    r->updated_ms = mgr_->Now();
+    mgr_->PersistLocked(*kv_, *r);
     return true;
 }
 
-bool MigrationManager::Fail(KvTransaction& txn, uint64_t graph_uid, const std::string& reason) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (!table_) return false;
-    auto it = migrations_.find(graph_uid);
-    if (it == migrations_.end() || IsTerminal(it->second.state)) return false;
-    it->second.state = MigrationState::FAILED;
-    it->second.error = reason;
-    it->second.updated_ms = Now();
-    PersistLocked(txn, it->second);
+bool MigrationManager::Batch::Fail(uint64_t graph_uid, const std::string& reason,
+                                    uint64_t expected_id) {
+    if (done_ || !mgr_->table_) return false;
+    Record* r = FindForWrite(graph_uid);
+    if (!r || IsTerminal(r->state)) return false;
+    if (expected_id != 0 && r->migration_id != expected_id) return false;
+    r->state = MigrationState::FAILED;
+    r->error = reason;
+    r->updated_ms = mgr_->Now();
+    mgr_->PersistLocked(*kv_, *r);
     return true;
 }
 
-bool MigrationManager::Cancel(KvTransaction& txn, uint64_t graph_uid) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (!table_) return false;
-    auto it = migrations_.find(graph_uid);
-    if (it == migrations_.end()) return false;
-    switch (it->second.state) {
+bool MigrationManager::Batch::Cancel(uint64_t graph_uid, uint64_t expected_id) {
+    if (done_ || !mgr_->table_) return false;
+    Record* r = FindForWrite(graph_uid);
+    if (!r) return false;
+    if (expected_id != 0 && r->migration_id != expected_id) return false;
+    switch (r->state) {
     case MigrationState::SCHEDULED:
     case MigrationState::SNAPSHOTTING:
     case MigrationState::COPYING:
     case MigrationState::CATCHING_UP:
     case MigrationState::PREPARE_CUTOVER:
-        it->second.state = MigrationState::FAILED;
-        it->second.error = "cancelled";
-        it->second.updated_ms = Now();
-        PersistLocked(txn, it->second);
+        r->state = MigrationState::FAILED;
+        r->error = "cancelled";
+        r->updated_ms = mgr_->Now();
+        mgr_->PersistLocked(*kv_, *r);
         return true;
     default:
-        return false;  // cutover and beyond must roll back, not cancel
+        return false;
     }
 }
 
-bool MigrationManager::Prune(KvTransaction& txn, uint64_t graph_uid) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (!table_) return false;
-    auto it = migrations_.find(graph_uid);
-    if (it == migrations_.end()) return false;
-    if (!IsTerminal(it->second.state)) return false;
-    DeleteRowLocked(txn, graph_uid);
-    migrations_.erase(it);
+bool MigrationManager::Batch::Prune(uint64_t graph_uid, uint64_t expected_id) {
+    if (done_ || !mgr_->table_) return false;
+    const Record* r = FindForRead(graph_uid);
+    if (!r || !IsTerminal(r->state)) return false;
+    if (expected_id != 0 && r->migration_id != expected_id) return false;
+    mgr_->DeleteRowLocked(*kv_, graph_uid);
+    staged_.erase(graph_uid);
+    staged_deleted_[graph_uid] = true;
     return true;
 }
 
-bool MigrationManager::ReportProgress(KvTransaction& txn, uint64_t graph_uid, double fraction,
-                                        uint64_t bytes_delta) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (!table_) return false;
-    auto it = migrations_.find(graph_uid);
-    if (it == migrations_.end()) return false;
-    Record& r = it->second;
+bool MigrationManager::Batch::ReportProgress(uint64_t graph_uid, double fraction,
+                                             uint64_t bytes_delta, uint64_t expected_id) {
+    if (done_ || !mgr_->table_) return false;
+    Record* r = FindForWrite(graph_uid);
+    if (!r) return false;
+    if (expected_id != 0 && r->migration_id != expected_id) return false;
     if (fraction < 0.0) fraction = 0.0;
     if (fraction > 1.0) fraction = 1.0;
-    r.progress = fraction;
-    r.bytes_transferred += bytes_delta;
-    r.updated_ms = Now();
-    PersistLocked(txn, r);
+    r->progress = fraction;
+    r->bytes_transferred += bytes_delta;
+    r->updated_ms = mgr_->Now();
+    mgr_->PersistLocked(*kv_, *r);
     return true;
 }
 
-bool MigrationManager::RecordFailure(KvTransaction& txn, uint64_t graph_uid, bool retried) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (!table_) return false;
-    auto it = migrations_.find(graph_uid);
-    if (it == migrations_.end()) return false;
-    it->second.failures += 1;
-    if (retried) it->second.retries += 1;
-    it->second.updated_ms = Now();
-    PersistLocked(txn, it->second);
+bool MigrationManager::Batch::RecordFailure(uint64_t graph_uid, bool retried,
+                                             uint64_t expected_id) {
+    if (done_ || !mgr_->table_) return false;
+    Record* r = FindForWrite(graph_uid);
+    if (!r) return false;
+    if (expected_id != 0 && r->migration_id != expected_id) return false;
+    r->failures += 1;
+    if (retried) r->retries += 1;
+    r->updated_ms = mgr_->Now();
+    mgr_->PersistLocked(*kv_, *r);
+    return true;
+}
+
+bool MigrationManager::Batch::Commit() {
+    if (done_) return committed_;
+    try {
+        kv_->Commit();
+    } catch (...) {
+        staged_.clear();
+        staged_deleted_.clear();
+        done_ = true;
+        committed_ = false;
+        if (writer_guard_.owns_lock()) writer_guard_.unlock();
+        return false;
+    }
+    try {
+        std::lock_guard<std::mutex> lock(mgr_->mtx_);
+        for (auto& kv : staged_) {
+            mgr_->migrations_[kv.first] = kv.second;
+            mgr_->next_id_ = std::max(mgr_->next_id_, kv.second.migration_id + 1);
+        }
+        for (auto& kv : staged_deleted_) {
+            if (kv.second) mgr_->migrations_.erase(kv.first);
+        }
+    } catch (...) {
+        try {
+            auto rtxn = mgr_->store_->CreateReadTxn();
+            std::lock_guard<std::mutex> lock(mgr_->mtx_);
+            mgr_->migrations_.clear();
+            mgr_->next_id_ = 1;
+            auto it = mgr_->table_->GetIterator(*rtxn);
+            for (it->GotoFirstKey(); it->IsValid(); it->Next()) {
+                Record r;
+                fma_common::BinaryBuffer buf(it->GetValue().Data(), it->GetValue().Size());
+                r.Deserialize(buf);
+                if (r.graph_uid == 0) continue;
+                mgr_->migrations_[r.graph_uid] = r;
+                mgr_->next_id_ = std::max(mgr_->next_id_, r.migration_id + 1);
+            }
+        } catch (...) {
+        }
+        staged_.clear();
+        staged_deleted_.clear();
+        done_ = true;
+        committed_ = false;
+        if (writer_guard_.owns_lock()) writer_guard_.unlock();
+        return false;
+    }
+    staged_.clear();
+    staged_deleted_.clear();
+    done_ = true;
+    committed_ = true;
+    if (writer_guard_.owns_lock()) writer_guard_.unlock();
     return true;
 }
 

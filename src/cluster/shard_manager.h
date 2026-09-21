@@ -63,12 +63,13 @@ class ShardManager {
     /**
      * Register or refresh a shard. Rejects an invalid shard id, empty name, or
      * empty endpoints. On success the shard's heartbeat is set to now.
+     * Takes the store Batch (transaction-owned, R1) instead of a raw txn.
      */
-    bool RegisterShard(KvTransaction& txn, const ShardInfo& info,
+    bool RegisterShard(ClusterMetaStore::Batch& batch, const ShardInfo& info,
                        std::string* error = nullptr);
     /** Remove a shard. Refused by the store while live graphs remain on it. */
-    bool DeregisterShard(KvTransaction& txn, ShardId id);
-    bool SetShardState(KvTransaction& txn, ShardId id, ShardState state);
+    bool DeregisterShard(ClusterMetaStore::Batch& batch, ShardId id);
+    bool SetShardState(ClusterMetaStore::Batch& batch, ShardId id, ShardState state);
 
     // ---- liveness -------------------------------------------------------
 

@@ -133,31 +133,69 @@ class MigrationManager {
 
     void Init(KvTransaction& txn, bool create_if_not_exist);
 
-    /** Begin a migration. Fails if an ACTIVE migration already exists for uid. */
-    bool Begin(KvTransaction& txn, uint64_t graph_uid, ShardId src, ShardId dst,
-               PlacementVersion placement_version, uint64_t* out_id = nullptr);
+    // ---- Transaction-owned batch (R2) -----------------------------------
+    //
+    // All mutations MUST go through Batch. Workers observe committed state
+    // only; staged mutations are published to memory after the durable commit
+    // succeeds, in one Commit() entry point with RAII abort. An aborted batch
+    // leaves no in-memory migration behind.
+    class Batch {
+     public:
+        Batch(MigrationManager* mgr, KvTransaction& kv);
+        ~Batch();
+        DISABLE_COPY(Batch);
+        Batch(Batch&& other) noexcept;
+        Batch& operator=(Batch&& other) noexcept = delete;
 
-    /** Advance along the lifecycle (validated). Fails on an invalid transition. */
-    bool Advance(KvTransaction& txn, uint64_t graph_uid, MigrationState to);
+        /** Begin a migration. Fails if an ACTIVE migration already exists for uid. */
+        bool Begin(uint64_t graph_uid, ShardId src, ShardId dst,
+                   PlacementVersion placement_version, uint64_t* out_id = nullptr);
+        /**
+         * Attempt-bound transitions (R7). When `expected_id != 0` the record's
+         * migration_id must match, so a stale worker holding an old attempt id
+         * can never advance/fail/cancel/prune a newer attempt for the same
+         * graph. Pass the id returned by Begin.
+         */
+        bool Advance(uint64_t graph_uid, MigrationState to, uint64_t expected_id = 0);
+        /** Mark failed (with reason). Post-cutover states must use ROLLBACK. */
+        bool Fail(uint64_t graph_uid, const std::string& reason, uint64_t expected_id = 0);
+        /** Cancel a pre-cutover migration (moves it to FAILED). */
+        bool Cancel(uint64_t graph_uid, uint64_t expected_id = 0);
+        /** Remove a terminal record (audit cleanup). Never reuses the id. */
+        bool Prune(uint64_t graph_uid, uint64_t expected_id = 0);
+        /** Record data-phase progress (0..1) and bytes moved. */
+        bool ReportProgress(uint64_t graph_uid, double fraction, uint64_t bytes_delta,
+                            uint64_t expected_id = 0);
+        /** Record a failure; `retried` bumps the retry counter as well. */
+        bool RecordFailure(uint64_t graph_uid, bool retried, uint64_t expected_id = 0);
 
-    /** Mark failed (with reason) from any non-terminal state. */
-    bool Fail(KvTransaction& txn, uint64_t graph_uid, const std::string& reason);
+        // Transaction-local reads (see own writes, never expose uncommitted to
+        // other readers).
+        bool Get(uint64_t graph_uid, Record* out) const;
 
-    /** Cancel a pre-cutover migration (moves it to FAILED). */
-    bool Cancel(KvTransaction& txn, uint64_t graph_uid);
+        bool Commit();
+        void Abort();
 
-    /** Remove a terminal record (audit cleanup). */
-    bool Prune(KvTransaction& txn, uint64_t graph_uid);
+     private:
+        const Record* FindForRead(uint64_t uid) const;
+        Record* FindForWrite(uint64_t uid);
 
+        MigrationManager* mgr_ = nullptr;
+        KvTransaction* kv_ = nullptr;
+        std::unique_lock<std::mutex> writer_guard_;
+        bool done_ = false;
+        bool committed_ = false;
+        // Staged writes (pending publication) + staged deletes.
+        std::unordered_map<uint64_t, Record> staged_;
+        std::unordered_map<uint64_t, bool> staged_deleted_;
+    };
+
+    Batch BeginBatch(KvTransaction& kv) { return Batch(this, kv); }
+
+    // Committed-only reads: never observe uncommitted staging (R2).
     bool Get(uint64_t graph_uid, Record* out) const;
     std::vector<Record> ListActive() const;
     size_t ActiveCount() const;
-
-    /** Record data-phase progress (0..1) and bytes moved. */
-    bool ReportProgress(KvTransaction& txn, uint64_t graph_uid, double fraction,
-                        uint64_t bytes_delta);
-    /** Record a failure; `retried` bumps the retry counter as well. */
-    bool RecordFailure(KvTransaction& txn, uint64_t graph_uid, bool retried);
 
     /** Override the clock (milliseconds) for deterministic tests. */
     void SetClock(std::function<int64_t()> clock);
@@ -168,15 +206,20 @@ class MigrationManager {
   private:
     void PersistLocked(KvTransaction& txn, const Record& r);
     void DeleteRowLocked(KvTransaction& txn, uint64_t graph_uid);
+    void PersistNextIdLocked(KvTransaction& txn, uint64_t next_id);
     int64_t Now() const;
 
     KvStore* store_ = nullptr;
     Config config_;
     std::unique_ptr<KvTable> table_;
     mutable std::mutex mtx_;
+    // Serializes whole batches: mutation -> durable commit -> publication (R2).
+    mutable std::mutex write_mtx_;
     std::unordered_map<uint64_t, Record> migrations_;  // graph_uid -> record
     uint64_t next_id_ = 1;
     std::function<int64_t()> clock_;
+
+    friend class Batch;
 };
 
 /** One shard's load snapshot for rebalancing. */

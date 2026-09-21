@@ -121,7 +121,6 @@ void ClusterMetaStore::Reload(KvTransaction& txn) {
     placements_.clear();
     live_count_ = 0;
     shard_counts_.clear();
-    pending_.clear();
     name_offset_.clear();
     name_arena_.clear();
     bucket_.clear();
@@ -170,16 +169,11 @@ void ClusterMetaStore::Reload(KvTransaction& txn) {
     }
     // Never reuse an id: the allocator must exceed every persisted unique_id.
     for (const auto& pl : placements_) next_uid_ = std::max(next_uid_, pl.unique_id);
-    // No staged state after a (re)load.
-    staged_version_ = version_;
-    pending_.clear();
 }
 
 // ---- name index ---------------------------------------------------------
 
 void ClusterMetaStore::IndexInsert(GraphId id, const char* data, size_t len) {
-    // Grow BEFORE adding this entry so IndexResize rehashes exactly the
-    // already-indexed ids, and this id is inserted exactly once below.
     size_t current = name_offset_.size();
     if (bucket_.empty()) {
         IndexResize(8);
@@ -187,7 +181,6 @@ void ClusterMetaStore::IndexInsert(GraphId id, const char* data, size_t len) {
         IndexResize(bucket_.size() * 2);
     }
 
-    // Append the name into the arena (length-prefixed) and remember its offset.
     uint32_t len32 = static_cast<uint32_t>(len);
     uint32_t offset = static_cast<uint32_t>(name_arena_.size());
     name_arena_.resize(name_arena_.size() + sizeof(uint32_t) + len);
@@ -243,78 +236,7 @@ const char* ClusterMetaStore::NameOf(GraphId id, uint32_t* len) const {
     return name_arena_.data() + offset + sizeof(uint32_t);
 }
 
-// ---- shards -------------------------------------------------------------
-
-bool ClusterMetaStore::RegisterShard(KvTransaction& txn, const ShardInfo& info) {
-    std::unique_lock<std::shared_mutex> lock(mtx_);
-    if (!shard_table_) return false;
-    // Stamp the shard with a fresh config version so that endpoint/state
-    // changes are detectable by the router's versioned cache.
-    staged_version_ += 1;
-    ShardInfo stored = info;
-    stored.config_version = staged_version_;
-    fma_common::BinaryBuffer buf;
-    stored.Serialize(buf);
-    std::string key = EncodeShardKey(stored.shard_id);
-    shard_table_->SetValue(txn, Value::ConstRef(key),
-                           Value(buf.GetBuf(), buf.GetSize()));
-    WriteVersion(txn);
-    Pending op;
-    op.type = PendingType::REGISTER_SHARD;
-    op.shard = stored;
-    op.version = staged_version_;
-    pending_.push_back(std::move(op));
-    return true;
-}
-
-bool ClusterMetaStore::RemoveShard(KvTransaction& txn, ShardId id) {
-    std::unique_lock<std::shared_mutex> lock(mtx_);
-    if (!shard_table_) return false;
-    // Refuse if any committed live graph still lives on the shard.
-    for (const auto& p : placements_) {
-        if (p.shard_id == id && p.State() != PlacementState::DELETED) return false;
-    }
-    // ... or a graph is staged onto it in this same batch.
-    for (const auto& op : pending_) {
-        if (op.type == PendingType::PUT_GRAPH && op.placement.shard_id == id &&
-            op.placement.State() != PlacementState::DELETED) {
-            return false;
-        }
-    }
-    std::string key = EncodeShardKey(id);
-    bool removed = shard_table_->DeleteKey(txn, Value::ConstRef(key));
-    if (!removed) return false;
-    staged_version_ += 1;
-    WriteVersion(txn);
-    Pending op;
-    op.type = PendingType::REMOVE_SHARD;
-    op.shard_id = id;
-    op.version = staged_version_;
-    pending_.push_back(std::move(op));
-    return true;
-}
-
-bool ClusterMetaStore::SetShardState(KvTransaction& txn, ShardId id, ShardState state) {
-    std::unique_lock<std::shared_mutex> lock(mtx_);
-    auto it = shards_.find(id);
-    if (it == shards_.end()) return false;
-    staged_version_ += 1;
-    ShardInfo updated = it->second;
-    updated.state = state;
-    updated.config_version = staged_version_;  // detect state changes via cache
-    fma_common::BinaryBuffer buf;
-    updated.Serialize(buf);
-    std::string key = EncodeShardKey(id);
-    shard_table_->SetValue(txn, Value::ConstRef(key), Value(buf.GetBuf(), buf.GetSize()));
-    WriteVersion(txn);
-    Pending op;
-    op.type = PendingType::SHARD_STATE;
-    op.shard_id = id;
-    op.shard_state = state;
-    op.version = staged_version_;
-    pending_.push_back(std::move(op));
-    return true;
-}
+// ---- committed reads ----------------------------------------------------
 
 bool ClusterMetaStore::GetShard(ShardId id, ShardInfo* out) const {
     std::shared_lock<std::shared_mutex> lock(mtx_);
@@ -337,73 +259,6 @@ std::vector<ShardInfo> ClusterMetaStore::ListShards() const {
 size_t ClusterMetaStore::ShardCount() const {
     std::shared_lock<std::shared_mutex> lock(mtx_);
     return shards_.size();
-}
-
-// ---- graph placement ----------------------------------------------------
-
-bool ClusterMetaStore::PutGraphPlacement(KvTransaction& txn, const std::string& name,
-                                         ShardId shard, PlacementState state,
-                                         PlacementVersion* out_version, uint64_t* out_uid) {
-    std::unique_lock<std::shared_mutex> lock(mtx_);
-    if (!graph_table_) return false;
-
-    // Stage only: the in-memory index is published by CommitStaged() after the
-    // caller commits, so a reader can never observe this placement while it is
-    // still uncommitted. The version is drawn from staged_version_ so it is
-    // monotonic across a batch, even before publication.
-    staged_version_ += 1;
-    GraphPlacement p;
-    p.shard_id = shard;
-    p.SetState(state);
-    p.placement_version = staged_version_;
-    // Immutable identity: preserve an existing graph's id, allocate one for a
-    // new graph, and reuse a pending id if it was staged earlier in this batch.
-    GraphId existing_id = 0;
-    if (IndexFind(name, &existing_id)) {
-        p.unique_id = placements_[existing_id].unique_id;
-    } else {
-        for (const auto& op : pending_) {
-            if (op.type == PendingType::PUT_GRAPH && op.name == name) {
-                p.unique_id = op.placement.unique_id;
-                break;
-            }
-        }
-        if (p.unique_id == 0) {
-            p.unique_id = ++next_uid_;
-            WriteNextUid(txn);
-        }
-    }
-
-    std::string encoded;
-    EncodePlacement(p, &encoded);
-    graph_table_->SetValue(txn, Value::ConstRef(name), Value(encoded.data(), encoded.size()));
-    WriteVersion(txn);
-
-    Pending op;
-    op.type = PendingType::PUT_GRAPH;
-    op.name = name;
-    op.placement = p;
-    op.version = staged_version_;
-    pending_.push_back(std::move(op));
-    if (out_version) *out_version = p.placement_version;
-    if (out_uid) *out_uid = p.unique_id;
-    return true;
-}
-
-bool ClusterMetaStore::DeleteGraphPlacement(KvTransaction& txn, const std::string& name) {
-    std::unique_lock<std::shared_mutex> lock(mtx_);
-    GraphId id = 0;
-    if (!IndexFind(name, &id)) return false;
-    bool removed = graph_table_->DeleteKey(txn, Value::ConstRef(name));
-    if (!removed) return false;
-    staged_version_ += 1;
-    WriteVersion(txn);
-    Pending op;
-    op.type = PendingType::DELETE_GRAPH;
-    op.name = name;
-    op.version = staged_version_;
-    pending_.push_back(std::move(op));
-    return true;
 }
 
 bool ClusterMetaStore::HasGraph(const std::string& name) const {
@@ -469,29 +324,17 @@ void ClusterMetaStore::AdjustShardCount(ShardId shard, int delta) {
     }
 }
 
-// ---- version ------------------------------------------------------------
-
 ConfigVersion ClusterMetaStore::Version() const {
     std::shared_lock<std::shared_mutex> lock(mtx_);
     return version_;
 }
 
-bool ClusterMetaStore::SetVersion(KvTransaction& txn, ConfigVersion v) {
-    std::unique_lock<std::shared_mutex> lock(mtx_);
-    if (!meta_table_) return false;
-    staged_version_ = v;
-    WriteVersion(txn);
-    Pending op;
-    op.type = PendingType::SET_VERSION;
-    op.version = v;
-    pending_.push_back(std::move(op));
-    return true;
-}
-
 void ClusterMetaStore::WriteVersion(KvTransaction& txn) {
+    // Legacy helper: writes committed version_. Batch writes its staged
+    // version directly; see Batch mutators below.
     if (meta_table_) {
         meta_table_->SetValue(txn, Value::ConstRef(std::string(kVersionKey)),
-                              EncodeVersion(staged_version_));
+                              EncodeVersion(version_));
     }
 }
 
@@ -537,51 +380,460 @@ void ClusterMetaStore::ApplyDeleteGraph(const std::string& name, ConfigVersion v
     placements_[id].placement_version = version;
 }
 
-bool ClusterMetaStore::CommitStaged() {
-    std::unique_lock<std::shared_mutex> lock(mtx_);
-    for (auto& op : pending_) {
-        switch (op.type) {
-        case PendingType::PUT_GRAPH:
-            ApplyPutGraph(op.name, op.placement);
-            break;
-        case PendingType::DELETE_GRAPH:
-            ApplyDeleteGraph(op.name, op.version);
-            break;
-        case PendingType::REGISTER_SHARD:
-            shards_[op.shard.shard_id] = op.shard;
-            break;
-        case PendingType::REMOVE_SHARD:
-            shards_.erase(op.shard_id);
-            break;
-        case PendingType::SHARD_STATE:
-            {
-                auto it = shards_.find(op.shard_id);
-                if (it != shards_.end()) it->second.state = op.shard_state;
-                break;
-            }
-        case PendingType::SET_VERSION:
-            break;
+// ---- Batch (transaction-owned staging, R1/R10) --------------------------
+
+ClusterMetaStore::Batch::Batch(ClusterMetaStore* store, KvTransaction& kv)
+    : store_(store), kv_(&kv), writer_guard_(store->write_mtx_) {
+    std::shared_lock<std::shared_mutex> lock(store_->mtx_);
+    staged_version_ = store_->version_;
+}
+
+ClusterMetaStore::Batch::Batch(Batch&& other) noexcept
+    : store_(other.store_),
+      kv_(other.kv_),
+      writer_guard_(std::move(other.writer_guard_)),
+      pending_(std::move(other.pending_)),
+      staged_version_(other.staged_version_),
+      done_(other.done_),
+      committed_(other.committed_),
+      batch_uids_(std::move(other.batch_uids_)),
+      batch_puts_(std::move(other.batch_puts_)),
+      batch_deletes_(std::move(other.batch_deletes_)),
+      batch_shards_(std::move(other.batch_shards_)),
+      batch_shard_removed_(std::move(other.batch_shard_removed_)) {
+    other.store_ = nullptr;
+    other.kv_ = nullptr;
+    other.done_ = true;
+}
+
+ClusterMetaStore::Batch::~Batch() {
+    if (!done_ && store_ && kv_) {
+        try {
+            Abort();
+        } catch (...) {
         }
     }
-    version_ = staged_version_;
+}
+
+void ClusterMetaStore::Batch::Abort() {
+    if (done_) return;
+    done_ = true;
+    committed_ = false;
+    try {
+        if (kv_) kv_->Abort();
+    } catch (...) {
+    }
     pending_.clear();
+    batch_uids_.clear();
+    batch_puts_.clear();
+    batch_deletes_.clear();
+    batch_shards_.clear();
+    batch_shard_removed_.clear();
+    if (writer_guard_.owns_lock()) writer_guard_.unlock();
+}
+
+size_t ClusterMetaStore::Batch::StagedCount() const { return pending_.size(); }
+
+bool ClusterMetaStore::Batch::GetShard(ShardId id, ShardInfo* out) const {
+    auto rm = batch_shard_removed_.find(id);
+    if (rm != batch_shard_removed_.end() && rm->second) return false;
+    auto it = batch_shards_.find(id);
+    if (it != batch_shards_.end()) {
+        if (out) *out = it->second;
+        return true;
+    }
+    return store_->GetShard(id, out);
+}
+
+bool ClusterMetaStore::Batch::HasGraph(const std::string& name) const {
+    if (batch_deletes_.count(name)) return false;
+    auto it = batch_puts_.find(name);
+    if (it != batch_puts_.end()) return it->second.State() != PlacementState::DELETED;
+    return store_->HasGraph(name);
+}
+
+bool ClusterMetaStore::Batch::GetGraphPlacement(const std::string& name, GraphPlacement* out,
+                                                GraphId* out_id) const {
+    if (batch_deletes_.count(name)) return false;
+    auto it = batch_puts_.find(name);
+    if (it != batch_puts_.end()) {
+        if (out) *out = it->second;
+        if (out_id) {
+            GraphId id = 0;
+            std::shared_lock<std::shared_mutex> lock(store_->mtx_);
+            if (store_->IndexFind(name, &id)) {
+                *out_id = id;
+            } else {
+                // New name staged in this batch: no dense id until publication.
+                // Callers needing the id must use committed reads after Commit.
+                return false;
+            }
+        }
+        return true;
+    }
+    return store_->GetGraphPlacement(name, out, out_id);
+}
+
+size_t ClusterMetaStore::Batch::GraphCountOnShard(ShardId shard) const {
+    size_t base = store_->GraphCountOnShard(shard);
+    // Apply transaction-local deltas (R8: batches see their own writes).
+    // For each staged put, compare against committed placement.
+    for (const auto& kv : batch_puts_) {
+        GraphPlacement committed;
+        GraphId id = 0;
+        bool had = store_->GetGraphPlacement(kv.first, &committed, &id);
+        bool old_live = had;
+        ShardId old_shard = had ? committed.shard_id : INVALID_SHARD_ID;
+        bool new_live = kv.second.State() != PlacementState::DELETED;
+        ShardId new_shard = kv.second.shard_id;
+        if (old_live && old_shard == shard && (!new_live || new_shard != shard)) {
+            if (base > 0) base--;
+        }
+        if (new_live && new_shard == shard && (!old_live || old_shard != shard)) {
+            base++;
+        }
+    }
+    for (const auto& name : batch_deletes_) {
+        GraphPlacement committed;
+        if (store_->GetGraphPlacement(name, &committed)) {
+            if (committed.shard_id == shard) {
+                // Skip if the same name was also re-put in this batch (Put clears
+                // the delete marker, so a surviving delete marker means no later
+                // put for that name).
+                if (batch_puts_.count(name) == 0 && base > 0) base--;
+            }
+        }
+    }
+    return base;
+}
+
+bool ClusterMetaStore::Batch::FindPlacementForWrite(const std::string& name,
+                                                    GraphPlacement* out,
+                                                    bool* is_new) const {
+    if (batch_deletes_.count(name)) {
+        // R3: deleted earlier in this batch. A later Put is a NEW incarnation
+        // and must allocate a fresh UID — never resurrect the committed or
+        // staged UID. Report "not found" so the caller allocates fresh.
+        if (is_new) *is_new = true;
+        return false;
+    }
+    auto it = batch_puts_.find(name);
+    if (it != batch_puts_.end()) {
+        if (out) *out = it->second;
+        if (is_new) *is_new = false;
+        return true;
+    }
+    GraphPlacement committed;
+    GraphId id = 0;
+    if (store_->GetGraphPlacement(name, &committed, &id)) {
+        if (out) *out = committed;
+        if (is_new) *is_new = false;
+        return true;
+    }
+    // Check batch UID map for a name put then deleted then re-put tracking.
+    auto bu = batch_uids_.find(name);
+    if (bu != batch_uids_.end()) {
+        GraphPlacement p;
+        p.unique_id = bu->second;
+        if (out) *out = p;
+        if (is_new) *is_new = true;
+        return true;
+    }
+    if (is_new) *is_new = true;
+    return false;
+}
+
+bool ClusterMetaStore::Batch::RegisterShard(const ShardInfo& info) {
+    if (done_ || !store_->shard_table_) return false;
+    staged_version_ += 1;
+    ShardInfo stored = info;
+    stored.config_version = staged_version_;
+    fma_common::BinaryBuffer buf;
+    stored.Serialize(buf);
+    std::string key = EncodeShardKey(stored.shard_id);
+    store_->shard_table_->SetValue(*kv_, Value::ConstRef(key),
+                                   Value(buf.GetBuf(), buf.GetSize()));
+    if (store_->meta_table_) {
+        store_->meta_table_->SetValue(*kv_, Value::ConstRef(std::string(kVersionKey)),
+                                      EncodeVersion(staged_version_));
+    }
+    Pending op;
+    op.type = PendingType::REGISTER_SHARD;
+    op.shard = stored;
+    op.version = staged_version_;
+    pending_.push_back(std::move(op));
+    batch_shards_[stored.shard_id] = stored;
+    batch_shard_removed_.erase(stored.shard_id);
     return true;
 }
 
-void ClusterMetaStore::RollbackStaged() {
-    std::unique_lock<std::shared_mutex> lock(mtx_);
+bool ClusterMetaStore::Batch::RemoveShard(ShardId id) {
+    if (done_ || !store_->shard_table_) return false;
+    // Refuse while any live graph (committed adjusted by this batch) lives
+    // there, or a graph is staged onto it in this same batch (R8-aware).
+    for (const auto& kv : batch_puts_) {
+        if (kv.second.shard_id == id && kv.second.State() != PlacementState::DELETED) return false;
+    }
+    {
+        // If any committed graph on id is NOT deleted in this batch, refuse.
+        // Iterate committed index (shared lock) and consult batch_deletes_.
+        std::shared_lock<std::shared_mutex> lock(store_->mtx_);
+        for (GraphId gid = 0; gid < static_cast<GraphId>(store_->placements_.size()); gid++) {
+            const auto& p = store_->placements_[gid];
+            if (p.shard_id != id || p.State() == PlacementState::DELETED) continue;
+            uint32_t len = 0;
+            const char* data = store_->NameOf(gid, &len);
+            std::string name(data, len);
+            if (batch_deletes_.count(name)) continue;
+            auto itp = batch_puts_.find(name);
+            if (itp != batch_puts_.end()) {
+                // Moved away in this batch?
+                if (itp->second.shard_id != id ||
+                    itp->second.State() == PlacementState::DELETED)
+                    continue;
+            }
+            return false;
+        }
+    }
+    std::string key = EncodeShardKey(id);
+    bool removed = store_->shard_table_->DeleteKey(*kv_, Value::ConstRef(key));
+    if (!removed) return false;
+    staged_version_ += 1;
+    if (store_->meta_table_) {
+        store_->meta_table_->SetValue(*kv_, Value::ConstRef(std::string(kVersionKey)),
+                                      EncodeVersion(staged_version_));
+    }
+    Pending op;
+    op.type = PendingType::REMOVE_SHARD;
+    op.shard_id = id;
+    op.version = staged_version_;
+    pending_.push_back(std::move(op));
+    batch_shards_.erase(id);
+    batch_shard_removed_[id] = true;
+    return true;
+}
+
+bool ClusterMetaStore::Batch::SetShardState(ShardId id, ShardState state) {
+    if (done_) return false;
+    ShardInfo base;
+    if (!GetShard(id, &base)) return false;
+    staged_version_ += 1;
+    ShardInfo updated = base;
+    updated.state = state;
+    updated.config_version = staged_version_;
+    fma_common::BinaryBuffer buf;
+    updated.Serialize(buf);
+    std::string key = EncodeShardKey(id);
+    store_->shard_table_->SetValue(*kv_, Value::ConstRef(key),
+                                   Value(buf.GetBuf(), buf.GetSize()));
+    if (store_->meta_table_) {
+        store_->meta_table_->SetValue(*kv_, Value::ConstRef(std::string(kVersionKey)),
+                                      EncodeVersion(staged_version_));
+    }
+    Pending op;
+    op.type = PendingType::SHARD_STATE;
+    op.shard = updated;  // R10: publish the full descriptor incl. config_version
+    op.version = staged_version_;
+    pending_.push_back(std::move(op));
+    batch_shards_[id] = updated;
+    return true;
+}
+
+bool ClusterMetaStore::Batch::PutGraphPlacement(const std::string& name, ShardId shard,
+                                                PlacementState state,
+                                                PlacementVersion* out_version,
+                                                uint64_t* out_uid) {
+    if (done_ || !store_->graph_table_) return false;
+    staged_version_ += 1;
+    GraphPlacement p;
+    p.shard_id = shard;
+    p.SetState(state);
+    p.placement_version = staged_version_;
+    GraphPlacement existing;
+    bool is_new = true;
+    bool had = FindPlacementForWrite(name, &existing, &is_new);
+    if (had) {
+        p.unique_id = existing.unique_id;
+        if (p.unique_id == 0) {
+            // Staged placeholder without UID (should not happen); allocate.
+            std::unique_lock<std::shared_mutex> lock(store_->mtx_);
+            p.unique_id = ++store_->next_uid_;
+            uint64_t uid = store_->next_uid_;
+            lock.unlock();
+            if (store_->meta_table_) {
+                store_->meta_table_->SetValue(*kv_, Value::ConstRef(std::string(kNextUidKey)),
+                                              EncodeU64(uid));
+            }
+        }
+    } else {
+        auto bu = batch_uids_.find(name);
+        if (bu != batch_uids_.end()) {
+            p.unique_id = bu->second;
+        } else {
+            std::unique_lock<std::shared_mutex> lock(store_->mtx_);
+            p.unique_id = ++store_->next_uid_;
+            uint64_t uid = store_->next_uid_;
+            lock.unlock();
+            if (store_->meta_table_) {
+                store_->meta_table_->SetValue(*kv_, Value::ConstRef(std::string(kNextUidKey)),
+                                              EncodeU64(uid));
+            }
+        }
+    }
+
+    std::string encoded;
+    EncodePlacement(p, &encoded);
+    store_->graph_table_->SetValue(*kv_, Value::ConstRef(name),
+                                   Value(encoded.data(), encoded.size()));
+    if (store_->meta_table_) {
+        store_->meta_table_->SetValue(*kv_, Value::ConstRef(std::string(kVersionKey)),
+                                      EncodeVersion(staged_version_));
+    }
+    Pending op;
+    op.type = PendingType::PUT_GRAPH;
+    op.name = name;
+    op.placement = p;
+    op.version = staged_version_;
+    pending_.push_back(std::move(op));
+    batch_puts_[name] = p;
+    batch_uids_[name] = p.unique_id;
+    batch_deletes_.erase(name);
+    if (out_version) *out_version = p.placement_version;
+    if (out_uid) *out_uid = p.unique_id;
+    return true;
+}
+
+bool ClusterMetaStore::Batch::DeleteGraphPlacement(const std::string& name) {
+    if (done_) return false;
+    // Batch-aware existence (R8): deletable if committed live or staged put.
+    bool exists = false;
+    if (batch_puts_.count(name)) {
+        exists = true;
+    } else if (!batch_deletes_.count(name)) {
+        exists = store_->HasGraph(name);
+    }
+    if (!exists) return false;
+    bool removed = store_->graph_table_->DeleteKey(*kv_, Value::ConstRef(name));
+    if (!removed) {
+        // Deleting a name that exists only as staged-put in this batch: the
+        // durable row was written by this same txn, so DeleteKey should have
+        // found it. If the backend reports missing, still stage the delete so
+        // publication converges (tolerates backends without read-your-writes).
+        // Fall through and stage.
+    }
+    staged_version_ += 1;
+    if (store_->meta_table_) {
+        store_->meta_table_->SetValue(*kv_, Value::ConstRef(std::string(kVersionKey)),
+                                      EncodeVersion(staged_version_));
+    }
+    Pending op;
+    op.type = PendingType::DELETE_GRAPH;
+    op.name = name;
+    op.version = staged_version_;
+    pending_.push_back(std::move(op));
+    batch_puts_.erase(name);
+    batch_deletes_.insert(name);
+    // R3: drop the staged UID so a later recreate in this batch allocates a
+    // fresh incarnation UID instead of reusing the deleted one.
+    batch_uids_.erase(name);
+    return true;
+}
+
+bool ClusterMetaStore::Batch::SetVersion(ConfigVersion v) {
+    if (done_ || !store_->meta_table_) return false;
+    staged_version_ = v;
+    store_->meta_table_->SetValue(*kv_, Value::ConstRef(std::string(kVersionKey)),
+                                  EncodeVersion(staged_version_));
+    Pending op;
+    op.type = PendingType::SET_VERSION;
+    op.version = v;
+    pending_.push_back(std::move(op));
+    return true;
+}
+
+bool ClusterMetaStore::Batch::Commit() {
+    if (done_) return committed_;
+    // 1) Durable commit. On failure nothing is published (R1).
+    try {
+        kv_->Commit();
+    } catch (...) {
+        pending_.clear();
+        done_ = true;
+        committed_ = false;
+        if (writer_guard_.owns_lock()) writer_guard_.unlock();
+        return false;
+    }
+    // 2) In-memory publication, allocation-failure-safe: pre-reserve, then
+    // apply; on allocation failure reload committed state (fail closed).
+    try {
+        std::unique_lock<std::shared_mutex> lock(store_->mtx_);
+        size_t new_names = 0;
+        size_t arena_growth = 0;
+        for (auto& op : pending_) {
+            if (op.type == PendingType::PUT_GRAPH) {
+                GraphId id = 0;
+                if (!store_->IndexFind(op.name, &id)) {
+                    new_names++;
+                    arena_growth += sizeof(uint32_t) + op.name.size();
+                }
+            }
+        }
+        if (new_names > 0) {
+            store_->placements_.reserve(store_->placements_.size() + new_names);
+            store_->name_offset_.reserve(store_->name_offset_.size() + new_names);
+            store_->name_arena_.reserve(store_->name_arena_.size() + arena_growth);
+            size_t need = store_->name_offset_.size() + new_names;
+            size_t buckets = store_->bucket_.empty() ? 8 : store_->bucket_.size();
+            while (need * 4 >= buckets * 3) buckets *= 2;
+            if (buckets != store_->bucket_.size()) {
+                std::vector<uint32_t> nb(buckets, 0);
+                // Rehash happens in IndexResize; reserve bucket capacity here.
+                store_->bucket_.reserve(buckets);
+            }
+        }
+        for (auto& op : pending_) {
+            switch (op.type) {
+            case PendingType::PUT_GRAPH:
+                store_->ApplyPutGraph(op.name, op.placement);
+                break;
+            case PendingType::DELETE_GRAPH:
+                store_->ApplyDeleteGraph(op.name, op.version);
+                break;
+            case PendingType::REGISTER_SHARD:
+                store_->shards_[op.shard.shard_id] = op.shard;
+                break;
+            case PendingType::REMOVE_SHARD:
+                store_->shards_.erase(op.shard_id);
+                break;
+            case PendingType::SHARD_STATE:
+                // R10: publish the complete descriptor, not just .state.
+                store_->shards_[op.shard.shard_id] = op.shard;
+                break;
+            case PendingType::SET_VERSION:
+                break;
+            }
+        }
+        store_->version_ = staged_version_;
+    } catch (...) {
+        // Fail closed: reload committed (durable) state so memory cannot be
+        // partially published.
+        try {
+            auto rtxn = store_->store_->CreateReadTxn();
+            std::unique_lock<std::shared_mutex> lock(store_->mtx_);
+            store_->Reload(*rtxn);
+        } catch (...) {
+        }
+        pending_.clear();
+        done_ = true;
+        committed_ = false;
+        if (writer_guard_.owns_lock()) writer_guard_.unlock();
+        return false;
+    }
     pending_.clear();
-    staged_version_ = version_;
-}
-
-bool ClusterMetaStore::HasStaged() const {
-    std::shared_lock<std::shared_mutex> lock(mtx_);
-    return !pending_.empty();
-}
-
-size_t ClusterMetaStore::StagedCount() const {
-    std::shared_lock<std::shared_mutex> lock(mtx_);
-    return pending_.size();
+    done_ = true;
+    committed_ = true;
+    if (writer_guard_.owns_lock()) writer_guard_.unlock();
+    return true;
 }
 
 size_t ClusterMetaStore::MemoryFootprint() const {
@@ -595,6 +847,9 @@ size_t ClusterMetaStore::MemoryFootprint() const {
         bytes += sizeof(ShardInfo) + kv.second.name.capacity();
         for (const auto& e : kv.second.endpoints) bytes += sizeof(std::string) + e.capacity();
     }
+    // NOTE (R9): this is the committed index only; per-Batch staging,
+    // hash overhead beyond capacity, and tombstones are accounted separately
+    // in the memory-honesty follow-up.
     return bytes;
 }
 

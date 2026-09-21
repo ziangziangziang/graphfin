@@ -57,12 +57,17 @@ intra-graph sharding. The 24–72 h acceptance result is pending the running soa
 
 ## 3. Architecture decisions (for review)
 
-### 3.1 Transaction-scoped catalog publication (finding 1)
-`ClusterMetaStore` mutators write durable tables and **stage**; the in-memory
-index is published only by `CommitStaged()` (after `txn->Commit()`) and
-discarded by `RollbackStaged()`. Readers never observe uncommitted placements.
-Trade-off: callers must pair every mutating batch with commit-then-publish
-(the unit tests do); there is no implicit publication.
+### 3.1 Transaction-owned catalog batch (REVIEW R1/R2/R10 fixed)
+All mutations go through `ClusterMetaStore::Batch` (and `MigrationManager::Batch`
+for migration records). A Batch owns one `KvTransaction`, holds the store-wide
+writer lock from construction until `Commit()`/`Abort()`, stages
+transaction-locally (never store-global), writes durable rows, then publishes to
+memory only after the durable commit succeeds — one `Commit()` entry point with
+RAII abort. Readers observe committed state only; an aborted batch publishes
+nothing. `SetShardState` publishes the full shard descriptor including the bumped
+`config_version` (R10). Regressions: `StagedBatchesAreTransactionOwned`,
+`ShardStatePublishesFullDescriptor`, `AbortLeavesNoVisibleMigration`,
+`BatchSeesOwnWritesForValidation`.
 
 ### 3.2 Single authoritative mutation order per shard (finding 2)
 `docs/architecture/09-write-path-audit.md` §6 records the decision: a
@@ -83,22 +88,46 @@ router mutex; the cache is hard-capped (default 64k, drop-wholesale). Shard
 registration/state changes stamp a fresh `config_version` so warm entries
 invalidate.
 
-### 3.5 Receiver-side fencing (review requirement)
-`ClusterControl::FenceAt(shard, name, expected)` rejects when the receiver does
-not host the graph **or** the sender is behind the authoritative version, and
-always reports the current version for retry routing. **Not yet wired** into
-the per-shard server write path — that is the 4C.2 integration step.
+### 3.5 Ownership guard at the receiver (REVIEW R4 fixed at the control layer)
+`Fence`/`FenceAt(shard, name, expected_uid, expected_version)` accept only an
+exact incarnation + epoch match on the authoritative owner in ACTIVE serving
+state, and always report the authoritative `(uid, version)` for retry. Stale
+epochs, future epochs (catalog lag refreshes, never jumps ahead), wrong UIDs,
+wrong shards, missing graphs, and non-ACTIVE placements all fail closed. A
+partitioned source holding old metadata presents a non-equal tuple and cannot
+pass. `ClusterRequestHandler::Handle` carries the UID end-to-end (recreate →
+`REJECT_STALE`). **Not yet wired** into the per-shard server write path — that
+is the 4C.2 integration step. Regressions: `FenceRejectsStaleFutureWrongShardAndNonActive`,
+`RecreatedIncarnationAndFutureEpochRejected`.
 
-### 3.6 Immutable graph identity
-`GraphPlacement` grew 16 → 24 B for a persisted, never-reused `unique_id`.
-`GraphId` remains a dense, process-local index. Routing, migration, and fencing
-key on `unique_id`.
+### 3.6 Immutable graph identity (REVIEW R3 fixed)
+`GraphPlacement` is 24 B with a persisted, never-reused `unique_id`; `GraphId`
+remains a dense, process-local index. Every new incarnation — cross-batch,
+same-batch delete/recreate, and across restarts — allocates a fresh UID
+(`RecreateAllocatesFreshUid`, `RecreateRetiresOldIncarnation`,
+`CacheInvalidatedByRecreate`). `RouteTarget` carries the UID; the router cache
+is keyed to the incarnation; `Validate` and the fence compare UID + version.
 
-### 3.7 Memory posture
-Catalog index ~6 MiB at 100k graphs (asserted < 100 B/graph); router cache
-capped; refcounts optionally compact (`-DLGRAPH_COMPACT_REFCOUNT=1`, ~60 KiB →
-~7.5 KiB per open graph). The web console streams from disk (no RAM lever).
-`lmdb_max_dbs` is lazily faulted (~50 KiB resident impact).
+### 3.7 Attempt-bound moves (REVIEW R7 fixed at the control/state-machine layer)
+`CompleteMove`/`AbortMove` compare-and-set against the `(uid, MOVING version)`
+attempt tuple: mismatch returns `STALE_PLACEMENT`, so a delayed completion or
+stale abort from one attempt can never cut over or cancel a later attempt.
+Applied attempts replay idempotently (`MoveCompletionIsAttemptBound`).
+`MigrationManager` transitions accept an `expected_id`, the migration-id
+allocator is persisted independently of prunable records (never reused:
+`AttemptBindingAndAllocatorSurvivesPrune`), and post-cutover states must go
+through `ROLLBACK` instead of jumping terminally to `FAILED`. `MOVING` remains
+an offline prototype (not routable for the duration); online copy/catch-up is
+future work. Server-side fencing enforcement for cutoverVs queued writes is
+covered by `FenceRejectsStaleFutureWrongShardAndNonActive`.
+
+### 3.8 Memory posture (partial estimate; R9 remains)
+`MemoryFootprint()` measures the committed index only (placements + names +
+buckets + shards; asserted < 100 B/graph at 20k graphs). It excludes per-Batch
+staging, hash overhead beyond capacity, tombstones, and migration records.
+100k-graph RSS/churn measurement with staging/tombstone accounting is the R9
+follow-up, not claimed here. Router cache capped; refcounts optionally compact
+(`-DLGRAPH_COMPACT_REFCOUNT=1`).
 
 ---
 
@@ -106,7 +135,7 @@ capped; refcounts optionally compact (`-DLGRAPH_COMPACT_REFCOUNT=1`, ~60 KiB →
 
 | Artifact | Result | Where |
 |---|---|---|
-| Cluster unit tests (7 suites) | **34/34 pass** | `unit_test --gtest_filter='TestClusterMetaStore.*:TestShardManager.*:TestRouter.*:TestClusterControl.*:TestMigrationManager.*:TestRequestRouter.*:TestGalaxy.OpenGraphAdmissionBound'`, compact `-O0` build on `tugraph/tugraph-compile-centos7` |
+| Cluster unit tests (7 suites) | **syntax-checked; full run pending** (was 34/34; +11 new R1–R4/R7/R8/R10 regressions: `StagedBatchesAreTransactionOwned`, `ShardStatePublishesFullDescriptor`, `AbortLeavesNoVisibleMigration`, `BatchSeesOwnWritesForValidation`, `RecreateAllocatesFreshUid`, `RecreateRetiresOldIncarnation`, `FenceRejectsStaleFutureWrongShardAndNonActive`, `MoveCompletionIsAttemptBound`, `AttemptBindingAndAllocatorSurvivesPrune`, `CacheInvalidatedByRecreate`, `RecreatedIncarnationAndFutureEpochRejected`) | `g++ -fsyntax-only` clean on all cluster sources + 6 test files in `tugraph-compile-arm64:local`; `unit_test` build/run is the merge gate |
 | HA chaos suite (13 tests incl. fixture) | **11/11 pass ×6 consecutive full runs** | `test/integration/test_ha_chaos.py` via `~/run-ha-test.sh` |
 | 3-node soak | **300 kills / 300 acked / 0 failed** | `~/soak-long.log` |
 | 3-shard soak | **404 kills, all counters reconciled** | `~/test-queue.log` (`QUEUE DONE`, all stage exits 0) |

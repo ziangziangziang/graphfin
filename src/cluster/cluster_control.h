@@ -47,9 +47,9 @@ const char* ToString(ControlStatus s);
  * version is behind the authoritative placement, because router-side version
  * checks alone cannot stop an obsolete destination from accepting writes.
  *
- * It performs no I/O of its own; callers own the KvTransaction and must call
- * ClusterMetaStore::CommitStaged() after a successful commit (see
- * cluster_meta_store.h).
+  * It performs no I/O of its own; callers own the ClusterMetaStore::Batch
+  * (which owns the KvTransaction) and commit via Batch::Commit() (see
+  * cluster_meta_store.h).
  */
 class ClusterControl {
  public:
@@ -57,9 +57,9 @@ class ClusterControl {
 
     // ---- shards ----
 
-    /** Register/replace a shard (validated). */
-    ControlStatus RegisterShard(KvTransaction& txn, const ShardInfo& info);
-    ControlStatus RemoveShard(KvTransaction& txn, ShardId id);
+    /** Register/replace a shard (validated). Takes the store Batch (R1). */
+    ControlStatus RegisterShard(ClusterMetaStore::Batch& batch, const ShardInfo& info);
+    ControlStatus RemoveShard(ClusterMetaStore::Batch& batch, ShardId id);
     std::vector<ShardInfo> ListShards() const;
 
     // ---- graph lifecycle ----
@@ -67,32 +67,42 @@ class ClusterControl {
     /**
      * Create a logical graph and place it on a healthy shard chosen by the
      * configured placement strategy. Fails with NO_HEALTHY_SHARD if none is
-     * available.
+     * available. Batch-aware: sees own writes (R8).
      */
-    ControlStatus CreateGraph(KvTransaction& txn, const std::string& name, int64_t now_ms,
-                              PlacementVersion* out_version = nullptr,
+    ControlStatus CreateGraph(ClusterMetaStore::Batch& batch, const std::string& name,
+                              int64_t now_ms, PlacementVersion* out_version = nullptr,
                               uint64_t* out_uid = nullptr);
-    ControlStatus DeleteGraph(KvTransaction& txn, const std::string& name);
+    ControlStatus DeleteGraph(ClusterMetaStore::Batch& batch, const std::string& name);
 
     /**
-     * Begin a migration: mark the graph MOVING on its current shard. The
-     * graph stops routing (MOVING is not ACTIVE) while data moves; the
-     * destination must be an existing, ONLINE, healthy shard different from
-     * the current one.
+     * Begin a migration: mark the graph MOVING on its current shard. Offline
+     * prototype: the graph stops routing (MOVING is not ACTIVE) for the
+     * duration of the move. The destination must be an existing, ONLINE,
+     * healthy shard different from the current one.
      */
-    ControlStatus BeginMove(KvTransaction& txn, const std::string& name, ShardId dst,
-                            int64_t now_ms, PlacementVersion* out_version = nullptr);
+    ControlStatus BeginMove(ClusterMetaStore::Batch& batch, const std::string& name, ShardId dst,
+                            int64_t now_ms, PlacementVersion* out_version = nullptr,
+                            uint64_t* out_uid = nullptr);
     /**
-     * Complete a migration: flip a MOVING graph to ACTIVE on `dst`. The caller
-     * performs data transfer/validation first; this is the atomic placement
-     * cutover that makes the destination writable and the source stale.
+     * Complete a migration: flip a MOVING graph to ACTIVE on `dst` (R7).
+     * Compare-and-set against the attempt tuple: the caller passes the UID
+     * and the MOVING placement version observed at Begin; mismatch returns
+     * STALE_PLACEMENT so a delayed completion from an aborted attempt can
+     * never complete a later attempt. Repeating an already-applied cutover
+     * (ACTIVE on dst, same UID) returns OK idempotently.
      */
-    ControlStatus CompleteMove(KvTransaction& txn, const std::string& name, ShardId dst,
+    ControlStatus CompleteMove(ClusterMetaStore::Batch& batch, const std::string& name,
+                               ShardId dst, uint64_t expected_uid,
+                               PlacementVersion expected_version,
                                PlacementVersion* out_version = nullptr);
     /**
-     * Abort a migration: return a MOVING graph to ACTIVE on its current shard.
+     * Abort a migration: return a MOVING graph to ACTIVE on its current
+     * shard (R7). Bound to the attempt like CompleteMove; a stale abort for
+     * an older version never cancels a newer move. Already-aborted (ACTIVE,
+     * same UID) returns OK idempotently without mutating.
      */
-    ControlStatus AbortMove(KvTransaction& txn, const std::string& name,
+    ControlStatus AbortMove(ClusterMetaStore::Batch& batch, const std::string& name,
+                            uint64_t expected_uid, PlacementVersion expected_version,
                             PlacementVersion* out_version = nullptr);
 
     /** Current placement of a graph. */
@@ -106,22 +116,31 @@ class ClusterControl {
     // ---- receiver-side fencing ----
 
     /**
-     * Accept or reject an operation forwarded to a shard. `expected` is the
-     * placement version the sender routed with; the shard rejects (returns
-     * false) when its authoritative placement is newer, i.e. the sender is
-     * stale. This must be checked at the receiving shard's write boundary.
+     * Ownership guard for the receiving shard's write boundary (R3/R4).
+     * Accepts only when the authoritative placement matches the sender's
+     * incarnation AND epoch exactly, lives on the receiving shard (FenceAt),
+     * and is in ACTIVE serving state. Rejects stale versions, future
+     * versions (catalog lag must refresh, never jump ahead), wrong UIDs
+     * (recreate), wrong shards, missing graphs, and non-ACTIVE placements.
+     * `current_*` always receive the authoritative values when the graph is
+     * found, so the caller can route the retry correctly. A partitioned
+     * source holding old metadata cannot pass: it presents an old
+     * (uid, version) tuple that never equals the authoritative one.
      */
-    bool Fence(const std::string& name, PlacementVersion expected,
-               PlacementVersion* current = nullptr) const;
+    bool Fence(const std::string& name, uint64_t expected_uid,
+               PlacementVersion expected_version,
+               PlacementVersion* current_version = nullptr,
+               uint64_t* current_uid = nullptr) const;
 
     /**
-     * Destination-aware receiver-side fence: the operation arrived at `shard`.
-     * Rejects when the shard does not host the graph OR when the sender is
-     * behind the authoritative placement. `current` receives the authoritative
-     * version so the caller can route the retry correctly.
+     * Destination-aware ownership guard: the operation arrived at `shard`.
+     * Same admission rule as Fence, plus the authoritative owner must equal
+     * `shard`.
      */
-    bool FenceAt(ShardId shard, const std::string& name, PlacementVersion expected,
-                 PlacementVersion* current = nullptr) const;
+    bool FenceAt(ShardId shard, const std::string& name, uint64_t expected_uid,
+                 PlacementVersion expected_version,
+                 PlacementVersion* current_version = nullptr,
+                 uint64_t* current_uid = nullptr) const;
 
     // ---- admin surface ----
 

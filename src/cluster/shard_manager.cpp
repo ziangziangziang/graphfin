@@ -55,7 +55,7 @@ ShardManager::PlacementStrategy ShardManager::GetStrategy() const {
     return config_.strategy;
 }
 
-bool ShardManager::RegisterShard(KvTransaction& txn, const ShardInfo& info,
+bool ShardManager::RegisterShard(ClusterMetaStore::Batch& batch, const ShardInfo& info,
                                  std::string* error) {
     if (info.shard_id == INVALID_SHARD_ID) {
         if (error) *error = "invalid shard id";
@@ -75,7 +75,7 @@ bool ShardManager::RegisterShard(KvTransaction& txn, const ShardInfo& info,
             return false;
         }
     }
-    if (!store_->RegisterShard(txn, info)) {
+    if (!batch.RegisterShard(info)) {
         if (error) *error = "failed to persist shard";
         return false;
     }
@@ -84,15 +84,16 @@ bool ShardManager::RegisterShard(KvTransaction& txn, const ShardInfo& info,
     return true;
 }
 
-bool ShardManager::DeregisterShard(KvTransaction& txn, ShardId id) {
-    if (!store_->RemoveShard(txn, id)) return false;
+bool ShardManager::DeregisterShard(ClusterMetaStore::Batch& batch, ShardId id) {
+    if (!batch.RemoveShard(id)) return false;
     std::lock_guard<std::mutex> l(mtx_);
     last_heartbeat_ms_.erase(id);
     return true;
 }
 
-bool ShardManager::SetShardState(KvTransaction& txn, ShardId id, ShardState state) {
-    return store_->SetShardState(txn, id, state);
+bool ShardManager::SetShardState(ClusterMetaStore::Batch& batch, ShardId id,
+                                ShardState state) {
+    return batch.SetShardState(id, state);
 }
 
 void ShardManager::Heartbeat(ShardId id) {
