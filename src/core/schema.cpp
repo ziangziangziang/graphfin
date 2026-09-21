@@ -1000,6 +1000,10 @@ void CheckSeriesFieldSpec(const _detail::FieldExtractorBase& f,
     std::set<std::string> seen;
     for (const auto& m : spec.series_spec.measures) {
         if (m.name.empty()) reject("measure names must not be empty");
+        // Points are handed back as maps keyed by measure with the timestamp
+        // under "ts": a measure of that name would be silently dropped by the
+        // map insert, so it is rejected at declaration time instead.
+        if (m.name == "ts") reject("measure name [ts] is reserved for the timestamp");
         series::MeasureType ignored = series::MeasureType::DOUBLE;
         if (!series::ToMeasureType(m.type, &ignored)) {
             reject("measure [" + m.name + "] must be DOUBLE or INT64, not " +

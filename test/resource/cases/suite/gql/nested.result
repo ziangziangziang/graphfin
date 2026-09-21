@@ -1,0 +1,12 @@
+# Nested values keep their types through the result path: a string that looks
+# like JSON stays a string.
+#
+# Map literals are not covered here: on this parser path `{...}` arrives as an
+# MkRecord node, which the planner does not support (pre-existing limitation,
+# unrelated to the result conversion pinned here). Map *results* are covered
+# by series.test, which returns them from functions rather than literals.
+RETURN ['[]', '{}'] AS xs;
+[{"xs":["[]","{}"]}]
+
+RETURN [1, '[]', null] AS mixed;
+[{"mixed":[1,"[]",null]}]

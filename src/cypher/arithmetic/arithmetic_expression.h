@@ -395,6 +395,31 @@ struct BuiltinFunction {
     static cypher::FieldData NativeGetEdgeField(RTContext *ctx, const Record &record,
                                                 const std::vector<ArithExprNode> &args);
 
+    /* Time-series reads (PROJECT.md S2).
+     *
+     * These take the element and the field NAME rather than the property value,
+     * which is what lets a series stay out of the record: there are no bytes to
+     * hand to a function. Timestamps may be given as DATETIME or as INT64
+     * microseconds since the epoch, and the bounds are inclusive. */
+    static cypher::FieldData SeriesRange(RTContext *ctx, const Record &record,
+                                         const std::vector<ArithExprNode> &args);
+    static cypher::FieldData SeriesAt(RTContext *ctx, const Record &record,
+                                      const std::vector<ArithExprNode> &args);
+    static cypher::FieldData SeriesLatest(RTContext *ctx, const Record &record,
+                                          const std::vector<ArithExprNode> &args);
+    static cypher::FieldData SeriesEarliest(RTContext *ctx, const Record &record,
+                                            const std::vector<ArithExprNode> &args);
+    static cypher::FieldData SeriesCount(RTContext *ctx, const Record &record,
+                                         const std::vector<ArithExprNode> &args);
+    static cypher::FieldData SeriesMean(RTContext *ctx, const Record &record,
+                                        const std::vector<ArithExprNode> &args);
+    static cypher::FieldData SeriesMin(RTContext *ctx, const Record &record,
+                                       const std::vector<ArithExprNode> &args);
+    static cypher::FieldData SeriesMax(RTContext *ctx, const Record &record,
+                                       const std::vector<ArithExprNode> &args);
+    static cypher::FieldData SeriesSum(RTContext *ctx, const Record &record,
+                                       const std::vector<ArithExprNode> &args);
+
     /* Internal functions */
     static const std::string INTL_TO_PATH;
     static const std::string INTL_TO_LIST;
@@ -489,7 +514,7 @@ struct ArithOperandNode {
             case Entry::RELP_SNAPSHOT:
                 if (!variadic.entity_prop.empty()) {
                     return Entry(
-                        cypher::FieldData(entry.GetEntityField(ctx, variadic.entity_prop)));
+                        entry.GetEntityField(ctx, variadic.entity_prop));
                 }
                 return entry;
             case Entry::VAR_LEN_RELP:
@@ -627,6 +652,32 @@ struct ArithOpNode {
 
         /* native API-like functions */
         ae_registered_funcs.emplace("native.getedgefield", BuiltinFunction::NativeGetEdgeField);
+
+        /* Time-series reads. Registered twice on purpose: the Cypher grammar
+         * builds a dotted name by concatenating a namespace, so series.range
+         * resolves here, but the vendored ISO-GQL lexer has no dot in an
+         * identifier (GqlLexer.g4 IDENTIFIER_EXTEND is ID_Continue | Sc | '#'),
+         * so on that parser path the name is unreachable. The underscore alias
+         * is what the GQL path calls, and PROJECT.md asks for exactly this pair
+         * when the dotted form does not lex. */
+        ae_registered_funcs.emplace("series.range", BuiltinFunction::SeriesRange);
+        ae_registered_funcs.emplace("series_range", BuiltinFunction::SeriesRange);
+        ae_registered_funcs.emplace("series.at", BuiltinFunction::SeriesAt);
+        ae_registered_funcs.emplace("series_at", BuiltinFunction::SeriesAt);
+        ae_registered_funcs.emplace("series.latest", BuiltinFunction::SeriesLatest);
+        ae_registered_funcs.emplace("series_latest", BuiltinFunction::SeriesLatest);
+        ae_registered_funcs.emplace("series.earliest", BuiltinFunction::SeriesEarliest);
+        ae_registered_funcs.emplace("series_earliest", BuiltinFunction::SeriesEarliest);
+        ae_registered_funcs.emplace("series.count", BuiltinFunction::SeriesCount);
+        ae_registered_funcs.emplace("series_count", BuiltinFunction::SeriesCount);
+        ae_registered_funcs.emplace("series.mean", BuiltinFunction::SeriesMean);
+        ae_registered_funcs.emplace("series_mean", BuiltinFunction::SeriesMean);
+        ae_registered_funcs.emplace("series.min", BuiltinFunction::SeriesMin);
+        ae_registered_funcs.emplace("series_min", BuiltinFunction::SeriesMin);
+        ae_registered_funcs.emplace("series.max", BuiltinFunction::SeriesMax);
+        ae_registered_funcs.emplace("series_max", BuiltinFunction::SeriesMax);
+        ae_registered_funcs.emplace("series.sum", BuiltinFunction::SeriesSum);
+        ae_registered_funcs.emplace("series_sum", BuiltinFunction::SeriesSum);
         /* internal functions */
         ae_registered_funcs.emplace(BuiltinFunction::INTL_TO_PATH, BuiltinFunction::_ToPath);
         ae_registered_funcs.emplace(BuiltinFunction::INTL_TO_LIST, BuiltinFunction::_ToList);

@@ -34,7 +34,17 @@
  * JSON. Cypher renders a map as {key:value} with unquoted keys and a missing value
  * as NUL, so a map - and any array containing one - always arrived as an opaque
  * string. Converting here keeps the nesting, and the result model already stores
- * LIST/MAP columns as json. */
+ * LIST/MAP columns as json.
+ *
+ * Scalars go through CypherScalarToResultJson rather than FieldDataToJson: that
+ * helper parses a STRING that happens to contain a JSON array or object into that
+ * container, which is right for stored property text but wrong for a typed nested
+ * value - RETURN ['[]', '{}'] has to come back as two strings, not as [] and {}. */
+inline nlohmann::json CypherScalarToResultJson(const lgraph::FieldData &scalar) {
+    if (scalar.type == lgraph::FieldType::STRING) return nlohmann::json(scalar.AsString());
+    return lgraph_rfc::FieldDataToJson(scalar);
+}
+
 inline nlohmann::json CypherValueToResultJson(const cypher::FieldData &v) {
     switch (v.type) {
     case cypher::FieldData::ARRAY:
@@ -60,7 +70,7 @@ inline nlohmann::json CypherValueToResultJson(const cypher::FieldData &v) {
     default:
         // Same scalar conventions as everywhere else in the result path: a
         // DATETIME renders as its string, a missing value as json null.
-        return lgraph_rfc::FieldDataToJson(v.scalar);
+        return CypherScalarToResultJson(v.scalar);
     }
 }
 

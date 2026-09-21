@@ -633,3 +633,40 @@ TEST_F(TestSeriesStore, EncodingRejectsInconsistentBuckets) {
     EXPECT_FALSE(SeriesStore::DecodeBucket(tampered.data(), tampered.size(), cols, &decoded));
     EXPECT_FALSE(SeriesStore::DecodeBucket(encoded.data(), encoded.size() / 2, cols, &decoded));
 }
+
+TEST_F(TestSeriesStore, FailedSplitLeavesStoredBucketsUntouched) {
+    SeriesSession session(dir_);
+    const ElementKey v = ElementKey::FromVertex(9);
+    const std::vector<MeasureColumn> cols = OhlcColumns();
+
+    // Four points in one bucket under the generous policy.
+    for (int i = 0; i < 4; ++i) {
+        ASSERT_TRUE(session.series().Upsert(session.txn(), v, 0, i * kUsPerDay, Point5(i), cols,
+                                             kDefaultPolicy));
+    }
+    session.Commit();
+    EXPECT_EQ(session.series().Table()->GetKeyCount(session.txn()), 1u);
+
+    // A fifth point under a policy that forces a split no half can satisfy: no
+    // single point fits in one byte, so every half fails to encode. The upsert
+    // reports false and must leave the stored bucket alone, so the caller can
+    // still commit the transaction with its original data intact.
+    BucketPolicy impossible;
+    impossible.max_points = 2;
+    impossible.max_bytes = 1;
+    EXPECT_FALSE(session.series().Upsert(session.txn(), v, 0, 4 * kUsPerDay, Point5(4), cols,
+                                          impossible));
+
+    EXPECT_EQ(session.series().Table()->GetKeyCount(session.txn()), 1u);
+    std::vector<Point> points;
+    ASSERT_TRUE(session.series().Range(session.txn(), v, 0, kMinTs, kMaxTs, cols, &points));
+    ASSERT_EQ(points.size(), 4u);
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_EQ(points[i].ts, i * kUsPerDay);
+        EXPECT_DOUBLE_EQ(points[i].values[0].d, static_cast<double>(i));
+    }
+    session.Commit();
+    EXPECT_EQ(session.series().Table()->GetKeyCount(session.txn()), 1u);
+    ASSERT_TRUE(session.series().Range(session.txn(), v, 0, kMinTs, kMaxTs, cols, &points));
+    EXPECT_EQ(points.size(), 4u);
+}

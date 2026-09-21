@@ -1,0 +1,47 @@
+# Time-series reads on the GQL parser path (PROJECT.md S2).
+#
+# Same fixture as the Cypher suite: every Person has three daily points from
+# 2024-01-01 with close 10/11/12 and volume 100/200/300, and Vanessa Redgrave
+# has a null close on the middle day.
+#
+# The names here are the underscore aliases. The vendored ISO-GQL lexer builds
+# an identifier from ID_Continue | Sc | '#', which has no dot, so the dotted
+# spelling cannot be tokenised by this parser at all - see the expected syntax
+# error at the end, which pins that.
+
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN p.prices AS summary;
+[{"summary":{"count":3,"first":"2024-01-01 00:00:00","last":"2024-01-03 00:00:00","measures":["close","volume"]}}]
+
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series_count(p, 'prices') AS n;
+[{"n":3}]
+
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series_range(p, 'prices', datetime('2024-01-01 00:00:00'), datetime('2024-01-03 00:00:00')) AS points;
+[{"points":[{"close":10.0,"ts":"2024-01-01 00:00:00","volume":100},{"close":11.0,"ts":"2024-01-02 00:00:00","volume":200},{"close":12.0,"ts":"2024-01-03 00:00:00","volume":300}]}]
+
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series_at(p, 'prices', datetime('2024-01-02 00:00:00')) AS point;
+[{"point":{"close":11.0,"ts":"2024-01-02 00:00:00","volume":200}}]
+
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series_latest(p, 'prices') AS point, series_earliest(p, 'prices') AS first_point;
+[{"first_point":{"close":10.0,"ts":"2024-01-01 00:00:00","volume":100},"point":{"close":12.0,"ts":"2024-01-03 00:00:00","volume":300}}]
+
+MATCH (p:Person {name:'Vanessa Redgrave'}) RETURN series_at(p, 'prices', datetime('2024-01-02 00:00:00')) AS point;
+[{"point":{"close":null,"ts":"2024-01-02 00:00:00","volume":200}}]
+
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series_mean(p, 'prices', 'close') AS mean, series_min(p, 'prices', 'close') AS min, series_max(p, 'prices', 'close') AS max, series_sum(p, 'prices', 'close') AS sum;
+[{"max":12.0,"mean":11.0,"min":10.0,"sum":33.0}]
+
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN p.prices.measures AS names;
+[{"names":["close","volume"]}]
+
+# Roy Redgrave's volumes cannot be summed in INT64: min/max/mean stay
+# well-defined, the sum refuses instead of wrapping.
+MATCH (p:Person {name:'Roy Redgrave'}) RETURN series_min(p, 'prices', 'volume') AS min, series_max(p, 'prices', 'volume') AS max, series_mean(p, 'prices', 'volume') AS mean;
+[{"max":9223372036854775707,"mean":6.148914691236517e+18,"min":300}]
+
+-- error
+MATCH (p:Person {name:'Roy Redgrave'}) RETURN series_sum(p, 'prices', 'volume') AS sum;
+[InputError] Series sum of measure [volume] overflows INT64; narrow the window or aggregate fewer points
+
+-- error
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series.range(p, 'prices', datetime('2024-01-01 00:00:00'), datetime('2024-01-03 00:00:00')) AS points;
+line1:60 mismatched input '(' expecting {<EOF>, ';'}

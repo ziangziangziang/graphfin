@@ -76,6 +76,15 @@ class SeriesStore {
     KvTable* Table() const { return table_.get(); }
 
     /**
+     * Buckets decoded since construction or the last reset. Test
+     * instrumentation for the read-complexity contract: a point lookup must
+     * decode O(1) buckets no matter how long the series is, while a summary
+     * legitimately walks the whole history. Not used on any production path.
+     */
+    size_t DecodeCount() const { return decode_count_; }
+    void ResetDecodeCount() { decode_count_ = 0; }
+
+    /**
      * Writes one point: appends it, or overwrites the values of the point that
      * already sits at `ts` (idempotent correction/restatement).
      *
@@ -127,6 +136,18 @@ class SeriesStore {
     void DeleteField(KvTransaction& txn, const ElementKey& elem, uint16_t field_id) const;
     void DeleteElement(KvTransaction& txn, const ElementKey& elem) const;
 
+    /**
+     * Re-keys every bucket of one field from one field id to another, used
+     * when a schema edit compacts record positions around a surviving series
+     * field. Runs inside the caller's transaction, so it is atomic with the
+     * schema change itself.
+     */
+    void MigrateField(KvTransaction& txn, const ElementKey& elem, uint16_t from_field,
+                      uint16_t to_field) const;
+
+    /** Drops every series bucket of the graph. Used when all vertices are cleared. */
+    void DeleteAll(KvTransaction& txn) const { table_->Drop(txn); }
+
     // --- key and value codecs, exposed for tests and for the import path ---
 
     /** The element's key prefix, i.e. its key with no field id and no bucket. */
@@ -165,14 +186,24 @@ class SeriesStore {
     bool FindScanStart(KvTransaction& txn, const std::string& field_prefix, int64_t t0,
                        std::string* key, bool* found) const;
 
-    /** Encodes and stores a bucket, splitting it in half if it does not fit. */
+    /** Encodes and stores a bucket, splitting it in half if it does not fit.
+     *  Replacement buckets are all encoded before anything is written, so a
+     *  false return leaves the transaction unchanged. */
     bool WriteBucket(KvTransaction& txn, const std::string& field_prefix, const Bucket& bucket,
                      const std::vector<MeasureColumn>& columns, const BucketPolicy& policy) const;
+
+    /** Encodes the bucket and every half it splits into, collecting the
+     *  (key, value) pairs without touching storage. */
+    bool CollectWriteBuckets(const std::string& field_prefix, const Bucket& bucket,
+                             const std::vector<MeasureColumn>& columns,
+                             const BucketPolicy& policy,
+                             std::vector<std::pair<std::string, std::string>>* out) const;
 
     /** Stores every bucket of the element whose field prefix matches. */
     void DeleteByPrefix(KvTransaction& txn, const std::string& prefix) const;
 
     std::unique_ptr<KvTable> table_;
+    mutable size_t decode_count_ = 0;
 };
 
 }  // namespace series

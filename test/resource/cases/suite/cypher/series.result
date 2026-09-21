@@ -1,0 +1,98 @@
+# Time-series reads (PROJECT.md S2).
+#
+# The YAGO fixture gives every Person three daily points from 2024-01-01:
+# close 10/11/12 and volume 100/200/300. Vanessa Redgrave has a null close on
+# the middle day, so the null path is covered here too.
+
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN p.prices AS summary;
+[{"summary":{"count":3,"first":"2024-01-01 00:00:00","last":"2024-01-03 00:00:00","measures":["close","volume"]}}]
+
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series.count(p, 'prices') AS n;
+[{"n":3}]
+
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series.count(p, 'prices', datetime('2024-01-02 00:00:00'), datetime('2024-01-02 00:00:00')) AS n;
+[{"n":1}]
+
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series.range(p, 'prices', datetime('2024-01-01 00:00:00'), datetime('2024-01-03 00:00:00')) AS points;
+[{"points":[{"close":10.0,"ts":"2024-01-01 00:00:00","volume":100},{"close":11.0,"ts":"2024-01-02 00:00:00","volume":200},{"close":12.0,"ts":"2024-01-03 00:00:00","volume":300}]}]
+
+# The bounds are inclusive, so a single-instant window returns that one point.
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series.range(p, 'prices', datetime('2024-01-02 00:00:00'), datetime('2024-01-02 00:00:00')) AS points;
+[{"points":[{"close":11.0,"ts":"2024-01-02 00:00:00","volume":200}]}]
+
+# A window with no points is an empty list, not an error.
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series.range(p, 'prices', datetime('2030-01-01 00:00:00'), datetime('2030-01-02 00:00:00')) AS points;
+[{"points":[]}]
+
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series.at(p, 'prices', datetime('2024-01-02 00:00:00')) AS point;
+[{"point":{"close":11.0,"ts":"2024-01-02 00:00:00","volume":200}}]
+
+# No point at that instant: null rather than an empty map, so it is distinguishable.
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series.at(p, 'prices', datetime('2030-01-01 00:00:00')) AS point;
+[{"point":null}]
+
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series.latest(p, 'prices') AS point, series.earliest(p, 'prices') AS first_point;
+[{"first_point":{"close":10.0,"ts":"2024-01-01 00:00:00","volume":100},"point":{"close":12.0,"ts":"2024-01-03 00:00:00","volume":300}}]
+
+# A null measure stays null in the map rather than being dropped.
+MATCH (p:Person {name:'Vanessa Redgrave'}) RETURN series.at(p, 'prices', datetime('2024-01-02 00:00:00')) AS point;
+[{"point":{"close":null,"ts":"2024-01-02 00:00:00","volume":200}}]
+
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series.mean(p, 'prices', 'close') AS mean, series.min(p, 'prices', 'close') AS min, series.max(p, 'prices', 'close') AS max, series.sum(p, 'prices', 'close') AS sum;
+[{"max":12.0,"mean":11.0,"min":10.0,"sum":33.0}]
+
+# An integer measure aggregates to integers, except the mean which is fractional.
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series.mean(p, 'prices', 'volume') AS mean, series.min(p, 'prices', 'volume') AS min, series.max(p, 'prices', 'volume') AS max, series.sum(p, 'prices', 'volume') AS sum;
+[{"max":300,"mean":200.0,"min":100,"sum":600}]
+
+# A null measure does not take part in an aggregate.
+MATCH (p:Person {name:'Vanessa Redgrave'}) RETURN series.mean(p, 'prices', 'close') AS mean, series.count(p, 'prices') AS n;
+[{"mean":11.0,"n":3}]
+
+# The dot cannot be expressed by the GQL lexer, so the underscore alias is
+# registered as well; on this parser path both names must behave identically.
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series_range(p, 'prices', datetime('2024-01-01 00:00:00'), datetime('2024-01-03 00:00:00')) AS points;
+[{"points":[{"close":10.0,"ts":"2024-01-01 00:00:00","volume":100},{"close":11.0,"ts":"2024-01-02 00:00:00","volume":200},{"close":12.0,"ts":"2024-01-03 00:00:00","volume":300}]}]
+
+-- error
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series.count(p, 'name') AS n;
+[InputError] Vertex 0 has no time series field [name]
+
+-- error
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series.count(p, 'nope') AS n;
+[InputError] Vertex 0 has no time series field [nope]
+
+-- error
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series.mean(p, 'prices', 'nope') AS m;
+[InputError] Series field [prices] has no measure [nope]
+
+-- error
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series.range(p, 'prices') AS points;
+[CypherException] CypherException: There are errors in the number of arguments or the type of arguments of function SeriesRange.
+
+# Members of a returned map stay accessible through WITH, including the
+# measures list (non-scalars used to be rejected here).
+MATCH (p:Person {name:'Rachel Kempson'}) WITH p.prices AS s RETURN s.count AS n, s.first AS first, s.last AS last, s.measures AS names;
+[{"first":"2024-01-01 00:00:00","last":"2024-01-03 00:00:00","n":3,"names":["close","volume"]}]
+
+MATCH (p:Person {name:'Rachel Kempson'}) WITH series.at(p, 'prices', datetime('2024-01-02 00:00:00')) AS point RETURN point.close AS close, point.volume AS volume;
+[{"close":11.0,"volume":200}]
+
+# Roy Redgrave's volumes cannot be summed in INT64: min/max/mean stay
+# well-defined, the sum refuses instead of wrapping.
+MATCH (p:Person {name:'Roy Redgrave'}) RETURN series.min(p, 'prices', 'volume') AS min, series.max(p, 'prices', 'volume') AS max, series.mean(p, 'prices', 'volume') AS mean;
+[{"max":9223372036854775707,"mean":6.148914691236517e+18,"min":300}]
+
+-- error
+MATCH (p:Person {name:'Roy Redgrave'}) RETURN series.sum(p, 'prices', 'volume') AS sum;
+[InputError] Series sum of measure [volume] overflows INT64; narrow the window or aggregate fewer points
+
+-- error
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series.count(p, 'name') AS n;
+[InputError] Vertex 0 has no time series field [name]
+
+# A series has no bytes in the record, so the ordinary property API refuses it
+# rather than storing something the store will never read back.
+-- error
+MATCH (p:Person {name:'Rachel Kempson'}) SET p.prices = 'x';
+[InputError] Field [prices] of label [Person] is a time series: it has no value in the record. Write its points with series.append or series.set instead.

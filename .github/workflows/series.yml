@@ -1,0 +1,76 @@
+name: series-gate
+
+# Time-series acceptance gate (REVIEW.md P2-8).
+#
+# Unlike phase0-baseline.yml, which records upstream results and always exits
+# 0, this workflow FAILS on any series test failure, crash, or missing output.
+# It triggers on the branches development actually happens on (the repo tracks
+# master/performance/timeseries, not main) and on manual dispatch.
+
+on:
+  push:
+    branches:
+      - master
+      - performance
+      - timeseries
+  pull_request:
+    branches:
+      - master
+      - performance
+      - timeseries
+  workflow_dispatch:
+
+env:
+  PHASE0_BASE_IMAGE: tugraph/tugraph-compile-centos7:latest
+  PHASE0_COMPILE_IMAGE: tugraph-compile-amd64:phase0
+  PHASE0_PLATFORM: linux/amd64
+  PHASE0_SKIP_IMAGE_PIN: "1"
+  PHASE0_DOCKER_EXTRA: "--cpus=4 --memory=6g"
+
+jobs:
+  series:
+    name: build + series acceptance gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Free disk space
+        run: |
+          df -h
+          sudo apt-get remove -y '^dotnet-.*' '^llvm-.*' 'php.*' \
+            azure-cli google-chrome-stable firefox powershell mono-devel || true
+          sudo apt-get autoremove -y || true
+          sudo apt-get clean || true
+          rm -rf /usr/share/dotnet/ /opt/hostedtoolcache || true
+          df -h
+
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          submodules: 'true'
+
+      - name: Build Phase 0 compile image
+        run: |
+          docker build -f ci/phase0/env/Dockerfile.phase0 \
+            --build-arg BASE_IMAGE="${PHASE0_BASE_IMAGE}" \
+            -t "${PHASE0_COMPILE_IMAGE}" .
+
+      - name: Environment preflight
+        run: ci/phase0/doctor.sh
+
+      - name: Build and run the series gate
+        # Fails the job on REJECT. CLEAN=1: the gate certifies a from-scratch
+        # build, not whatever was cached on the runner.
+        run: CLEAN=1 JOBS=2 ci/phase0/run_series_tests.sh
+
+      - name: Upload gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: series-gate-results
+          path: |
+            phase0-results/series.log
+            phase0-results/series.xml
+            phase0-results/series-summary.json
+            phase0-logs/
+          if-no-files-found: warn
+          retention-days: 90

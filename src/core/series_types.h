@@ -125,6 +125,29 @@ struct Bucket {
     int64_t LastTs() const { return timestamps.empty() ? first_ts : timestamps.back(); }
 };
 
+/** A measure as the read API needs it: its name and how to read a value. */
+struct MeasureRef {
+    std::string name;
+    MeasureType type = MeasureType::DOUBLE;
+};
+
+/**
+ * Header-only state of one series field: how many points it holds, where it
+ * starts and ends, and what its measures are called.
+ *
+ * Everything here comes from a bucket header plus one bucket end, so it is what
+ * a summary can report without materialising the series - and it is also how a
+ * caller learns a field's measure names, which the encoded buckets do not carry
+ * (they store measure indices, not names).
+ */
+struct SeriesSummary {
+    size_t count = 0;
+    bool has_points = false;
+    int64_t first_ts = 0;  // microseconds; valid only if has_points
+    int64_t last_ts = 0;   // microseconds; valid only if has_points
+    std::vector<MeasureRef> measures;
+};
+
 /**
  * The identity of the element a series hangs off, as it appears in the KV key.
  * A vertex is addressed by its vid; an edge by the fields KeyPacker puts in an

@@ -473,9 +473,10 @@ bool SeriesStore::FindScanStart(KvTransaction& txn, const std::string& field_pre
     return true;
 }
 
-bool SeriesStore::WriteBucket(KvTransaction& txn, const std::string& field_prefix,
-                             const Bucket& bucket, const std::vector<MeasureColumn>& columns,
-                             const BucketPolicy& policy) const {
+bool SeriesStore::CollectWriteBuckets(
+    const std::string& field_prefix, const Bucket& bucket,
+    const std::vector<MeasureColumn>& columns, const BucketPolicy& policy,
+    std::vector<std::pair<std::string, std::string>>* out) const {
     std::string key = field_prefix;
     AppendBeTimestamp(&key, bucket.first_ts);
 
@@ -484,21 +485,33 @@ bool SeriesStore::WriteBucket(KvTransaction& txn, const std::string& field_prefi
     if (within_point_cap) {
         std::string encoded;
         if (EncodeBucket(bucket, columns, policy, &encoded)) {
-            table_->SetValue(txn, Value::ConstRef(key), Value::ConstRef(encoded), true);
+            out->emplace_back(std::move(key), std::move(encoded));
             return true;
         }
     }
     // Either the point cap or the byte cap was reached. Split in half and store
     // both halves; the left half keeps this key because it still starts at the
-    // same timestamp. A failure here may have stored the left half already, so
-    // the caller has to treat false as fatal for the transaction.
+    // same timestamp. Nothing is written until every replacement bucket is
+    // known to fit, so a false return leaves the caller's transaction
+    // untouched and safe to abort or to continue using.
     if (bucket.PointCount() < 2) return false;
     const size_t mid = bucket.PointCount() / 2;
     Bucket left;
     Bucket right;
     SplitBucket(bucket, mid, &left, &right);
-    return WriteBucket(txn, field_prefix, left, columns, policy) &&
-           WriteBucket(txn, field_prefix, right, columns, policy);
+    return CollectWriteBuckets(field_prefix, left, columns, policy, out) &&
+           CollectWriteBuckets(field_prefix, right, columns, policy, out);
+}
+
+bool SeriesStore::WriteBucket(KvTransaction& txn, const std::string& field_prefix,
+                              const Bucket& bucket, const std::vector<MeasureColumn>& columns,
+                              const BucketPolicy& policy) const {
+    std::vector<std::pair<std::string, std::string>> pending;
+    if (!CollectWriteBuckets(field_prefix, bucket, columns, policy, &pending)) return false;
+    for (const auto& kv : pending) {
+        table_->SetValue(txn, Value::ConstRef(kv.first), Value::ConstRef(kv.second), true);
+    }
+    return true;
 }
 
 void SeriesStore::DeleteByPrefix(KvTransaction& txn, const std::string& prefix) const {
@@ -530,6 +543,7 @@ bool SeriesStore::Upsert(KvTransaction& txn, const ElementKey& elem, uint16_t fi
     Bucket bucket;
     if (found) {
         const Value stored = table_->GetValue(txn, Value::ConstRef(key), true);
+        ++decode_count_;
         // Fails if the stored bucket's measures do not match `columns`, e.g.
         // after the label's series measures were redefined.
         if (!DecodeBucket(stored.Data(), stored.Size(), columns, &bucket)) return false;
@@ -588,6 +602,7 @@ bool SeriesStore::Range(KvTransaction& txn, const ElementKey& elem, uint16_t fie
         if (!fma_common::StartsWith(bucket_key, field_prefix)) break;
         const Value stored = it->GetValue();
         Bucket bucket;
+        ++decode_count_;
         if (!DecodeBucket(stored.Data(), stored.Size(), columns, &bucket)) return false;
         if (bucket.first_ts > t1) break;
         for (size_t p = 0; p < bucket.PointCount(); ++p) {
@@ -620,6 +635,7 @@ bool SeriesStore::Count(KvTransaction& txn, const ElementKey& elem, uint16_t fie
         if (!fma_common::StartsWith(bucket_key, field_prefix)) break;
         const Value stored = it->GetValue();
         int64_t first_ts = 0;
+        ++decode_count_;
         if (!DecodeBucketTimestamps(stored.Data(), stored.Size(), &first_ts, &timestamps)) {
             return false;
         }
@@ -653,6 +669,7 @@ bool SeriesStore::Latest(KvTransaction& txn, const ElementKey& elem, uint16_t fi
 
     const Value stored = table_->GetValue(txn, Value::ConstRef(key));
     Bucket bucket;
+    ++decode_count_;
     if (!DecodeBucket(stored.Data(), stored.Size(), columns, &bucket)) return false;
     if (bucket.PointCount() == 0) return true;
     *point = MakePoint(bucket, bucket.PointCount() - 1);
@@ -673,6 +690,7 @@ bool SeriesStore::Earliest(KvTransaction& txn, const ElementKey& elem, uint16_t 
 
     const Value stored = table_->GetValue(txn, Value::ConstRef(key));
     Bucket bucket;
+    ++decode_count_;
     if (!DecodeBucket(stored.Data(), stored.Size(), columns, &bucket)) return false;
     if (bucket.PointCount() == 0) return true;
     *point = MakePoint(bucket, 0);
@@ -692,6 +710,31 @@ void SeriesStore::DeleteField(KvTransaction& txn, const ElementKey& elem, uint16
     std::string field_prefix;
     MakeFieldPrefix(elem, field_id, &field_prefix);
     DeleteByPrefix(txn, field_prefix);
+}
+
+void SeriesStore::MigrateField(KvTransaction& txn, const ElementKey& elem, uint16_t from_field,
+                               uint16_t to_field) const {
+    if (from_field == to_field) return;
+    std::string from_prefix;
+    std::string to_prefix;
+    MakeFieldPrefix(elem, from_field, &from_prefix);
+    MakeFieldPrefix(elem, to_field, &to_prefix);
+    // The two prefixes differ in the field-id bytes, so they are disjoint. Keys
+    // are still collected before anything is written, so the cursor walk cannot
+    // observe its own output.
+    std::vector<std::pair<std::string, std::string>> moves;
+    const Value from_val = Value::ConstRef(from_prefix);
+    for (auto it = table_->GetClosestIterator(txn, from_val); it->IsValid(); it->Next()) {
+        const std::string key = it->GetKey().AsString();
+        if (!fma_common::StartsWith(key, from_prefix)) break;
+        std::string dst = to_prefix;
+        dst.append(key.data() + from_prefix.size(), key.size() - from_prefix.size());
+        moves.emplace_back(std::move(dst), it->GetValue().AsString());
+    }
+    for (const auto& kv : moves) {
+        table_->SetValue(txn, Value::ConstRef(kv.first), Value::ConstRef(kv.second), true);
+    }
+    DeleteByPrefix(txn, from_prefix);
 }
 
 void SeriesStore::DeleteElement(KvTransaction& txn, const ElementKey& elem) const {

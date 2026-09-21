@@ -223,3 +223,364 @@ TEST_F(TestSeriesTransaction, ClearSeriesAndRefuseOrdinaryWrites) {
                          WriteNotAllowed);
     UT_EXPECT_THROW_CODE(rtxn.ClearVertexSeries(v, "prices"), WriteNotAllowed);
 }
+
+namespace {
+
+FieldSpec IntSeriesField(const std::string& name) {
+    FieldSpec f(name, FieldType::BLOB, true);
+    f.series = true;
+    f.series_spec.measures = {SeriesMeasureSpec{"v", FieldType::INT64}};
+    return f;
+}
+
+void AddTwoSeriesLabel(LightningGraph& db, const std::string& label, bool fast_alter) {
+    VertexOptions vo("id");
+    vo.fast_alter_schema = fast_alter;
+    UT_ASSERT(db.AddLabel(label,
+                          std::vector<FieldSpec>{FieldSpec("id", FieldType::INT64, false),
+                                                 IntSeriesField("prices"),
+                                                 IntSeriesField("quotes")},
+                          true, vo));
+}
+
+std::vector<MeasureValue> IntPoint(int64_t v) { return {MeasureValue::Int64(v)}; }
+
+}  // namespace
+
+TEST_F(TestSeriesTransaction, DeletingASeriesFieldLeavesSiblingSeriesIntact) {
+    for (bool fast_alter : {false, true}) {
+        const std::string dir =
+            fast_alter ? "./testdb_series_txn_delfield_fast" : "./testdb_series_txn_delfield";
+        AutoCleanDir cleaner(dir);
+        DBConfig conf;
+        conf.dir = dir;
+        LightningGraph db(conf);
+        AddTwoSeriesLabel(db, "Company", fast_alter);
+
+        auto txn = db.CreateWriteTxn();
+        VertexId v = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                                   std::vector<std::string>{"1"});
+        const int64_t ts = 1234567890000000LL;
+        ASSERT_TRUE(txn.SetVertexSeriesPoint(v, "prices", ts, IntPoint(11)));
+        ASSERT_TRUE(txn.SetVertexSeriesPoint(v, "quotes", ts, IntPoint(22)));
+        txn.Commit();
+
+        size_t n_modified = 0;
+        ASSERT_TRUE(db.AlterLabelDelFields("Company", {"prices"}, true, &n_modified));
+
+        auto rtxn = db.CreateReadTxn();
+        auto it = rtxn.GetVertexIterator();
+        ASSERT_TRUE(it.IsValid());
+        VertexId rv = it.GetId();
+        // The surviving field still returns its own data, not the deleted
+        // field's: this is the P1-1 misassociation repro (returned 11 before).
+        std::vector<series::Point> points;
+        ASSERT_TRUE(rtxn.GetVertexSeriesRange(rv, "quotes", kMinTs, kMaxTs, &points));
+        ASSERT_EQ(points.size(), 1u);
+        EXPECT_EQ(points[0].values[0].i, 22);
+        // The deleted field is gone, with its buckets.
+        EXPECT_FALSE(rtxn.GetVertexSeriesRange(rv, "prices", kMinTs, kMaxTs, &points));
+        EXPECT_EQ(SeriesKeyCount(db, rtxn), 1u);
+    }
+}
+
+TEST_F(TestSeriesTransaction, DeletingAPrecedingFieldMigratesSurvivingSeries) {
+    const std::string dir = "./testdb_series_txn_delguard";
+    AutoCleanDir cleaner(dir);
+    DBConfig conf;
+    conf.dir = dir;
+    LightningGraph db(conf);
+    VertexOptions vo("id");  // packed layout: field ids are positional
+    UT_ASSERT(db.AddLabel("Company",
+                          std::vector<FieldSpec>{FieldSpec("id", FieldType::INT64, false),
+                                                 FieldSpec("note", FieldType::STRING, true),
+                                                 IntSeriesField("prices")},
+                          true, vo));
+
+    auto txn = db.CreateWriteTxn();
+    VertexId v = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                               std::vector<std::string>{"1"});
+    ASSERT_TRUE(txn.SetVertexSeriesPoint(v, "prices", 0, IntPoint(11)));
+    txn.Commit();
+
+    // Deleting "note" compacts "prices" from id 2 to id 1: its buckets move
+    // with it in the same transaction instead of being orphaned or handed to
+    // another field.
+    size_t n_modified = 0;
+    ASSERT_TRUE(db.AlterLabelDelFields("Company", {"note"}, true, &n_modified));
+
+    auto rtxn = db.CreateReadTxn();
+    std::vector<series::Point> points;
+    ASSERT_TRUE(rtxn.GetVertexSeriesRange(v, "prices", kMinTs, kMaxTs, &points));
+    ASSERT_EQ(points.size(), 1u);
+    EXPECT_EQ(points[0].values[0].i, 11);
+    EXPECT_EQ(SeriesKeyCount(db, rtxn), 1u);
+}
+
+TEST_F(TestSeriesTransaction, RedefiningSeriesMeasuresIsRejected) {
+    const std::string dir = "./testdb_series_txn_modguard";
+    AutoCleanDir cleaner(dir);
+    DBConfig conf;
+    conf.dir = dir;
+    LightningGraph db(conf);
+    AddTwoSeriesLabel(db, "Company", false);
+
+    auto txn = db.CreateWriteTxn();
+    VertexId v = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                               std::vector<std::string>{"1"});
+    ASSERT_TRUE(txn.SetVertexSeriesPoint(v, "prices", 0, IntPoint(11)));
+    txn.Commit();
+
+    // Buckets are decoded with the schema's measure set, so a redefinition
+    // would orphan or misdecode them.
+    FieldSpec redefined = IntSeriesField("prices");
+    redefined.series_spec.measures = {SeriesMeasureSpec{"v2", FieldType::INT64}};
+    UT_EXPECT_THROW_CODE(db.AlterLabelModFields("Company", {redefined}, true, nullptr),
+                         InputError);
+    FieldSpec unflagged("prices", FieldType::BLOB, true);
+    UT_EXPECT_THROW_CODE(db.AlterLabelModFields("Company", {unflagged}, true, nullptr),
+                         InputError);
+
+    auto rtxn = db.CreateReadTxn();
+    std::vector<series::Point> points;
+    ASSERT_TRUE(rtxn.GetVertexSeriesRange(v, "prices", kMinTs, kMaxTs, &points));
+    ASSERT_EQ(points.size(), 1u);
+    EXPECT_EQ(points[0].values[0].i, 11);
+}
+
+TEST_F(TestSeriesTransaction, DropAllVertexClearsSeries) {
+    const std::string dir = "./testdb_series_txn_dropall";
+    AutoCleanDir cleaner(dir);
+    DBConfig conf;
+    conf.dir = dir;
+    LightningGraph db(conf);
+    AddCompanyLabel(db);
+
+    auto txn = db.CreateWriteTxn();
+    VertexId v = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                               std::vector<std::string>{"1"});
+    ASSERT_TRUE(txn.SetVertexSeriesPoint(v, "prices", 0, OnePoint(1, 1, 1)));
+    ASSERT_GT(SeriesKeyCount(db, txn), 0u);
+    txn.Commit();
+
+    db.DropAllVertex();
+    auto rtxn = db.CreateReadTxn();
+    EXPECT_EQ(SeriesKeyCount(db, rtxn), 0u);
+}
+
+TEST_F(TestSeriesTransaction, DelLabelClearsSeries) {
+    const std::string dir = "./testdb_series_txn_dellabel";
+    AutoCleanDir cleaner(dir);
+    DBConfig conf;
+    conf.dir = dir;
+    LightningGraph db(conf);
+    AddCompanyLabel(db);
+
+    auto txn = db.CreateWriteTxn();
+    VertexId v = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                               std::vector<std::string>{"1"});
+    ASSERT_TRUE(txn.SetVertexSeriesPoint(v, "prices", 0, OnePoint(1, 1, 1)));
+    ASSERT_GT(SeriesKeyCount(db, txn), 0u);
+    txn.Commit();
+
+    size_t n_modified = 0;
+    ASSERT_TRUE(db.DelLabel("Company", true, &n_modified));
+    auto rtxn = db.CreateReadTxn();
+    EXPECT_EQ(SeriesKeyCount(db, rtxn), 0u);
+}
+
+TEST_F(TestSeriesTransaction, DeletingAVertexCleansIncidentEdgeSeries) {
+    const std::string dir = "./testdb_series_txn_incedge";
+    AutoCleanDir cleaner(dir);
+    DBConfig conf;
+    conf.dir = dir;
+    LightningGraph db(conf);
+    AddCompanyLabel(db);
+    // An edge label with a single series field: in the packed layout its field
+    // id is 0, which the count check below pins by reading the point back.
+    UT_ASSERT(db.AddLabel("link", std::vector<FieldSpec>{IntSeriesField("w")}, false,
+                          EdgeOptions()));
+
+    auto txn = db.CreateWriteTxn();
+    VertexId v0 = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                                std::vector<std::string>{"1"});
+    VertexId v1 = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                                std::vector<std::string>{"2"});
+    EdgeUid euid =
+        txn.AddEdge(v0, v1, std::string("link"), std::vector<std::string>{},
+                    std::vector<std::string>{});
+    // No edge-level transaction API exists yet (S3), so write the bucket
+    // through the store the transaction owns.
+    std::vector<MeasureColumn> cols{MeasureColumn{MeasureType::INT64}};
+    ASSERT_TRUE(db.GetSeriesStore()->Upsert(txn.GetTxn(), ElementKey::FromEdge(euid), 0, 0,
+                                            IntPoint(7), cols, BucketPolicy()));
+    size_t edge_count = 0;
+    ASSERT_TRUE(db.GetSeriesStore()->Count(txn.GetTxn(), ElementKey::FromEdge(euid), 0, kMinTs,
+                                           kMaxTs, cols, &edge_count));
+    EXPECT_EQ(edge_count, 1u);
+
+    // Vertex deletion only reaches incident edges through its callback, never
+    // through DeleteEdge: their buckets have to go there too.
+    ASSERT_TRUE(txn.DeleteVertex(v0));
+    ASSERT_TRUE(db.GetSeriesStore()->Count(txn.GetTxn(), ElementKey::FromEdge(euid), 0, kMinTs,
+                                           kMaxTs, cols, &edge_count));
+    EXPECT_EQ(edge_count, 0u);
+    txn.Commit();
+}
+
+TEST_F(TestSeriesTransaction, NarrowLookupsDoNotScanUnrelatedHistory) {
+    const std::string dir = "./testdb_series_txn_scan";
+    AutoCleanDir cleaner(dir);
+    DBConfig conf;
+    conf.dir = dir;
+    LightningGraph db(conf);
+    AddCompanyLabel(db);  // bucket_max_points = 4, so 30 points span ~8 buckets
+
+    auto txn = db.CreateWriteTxn();
+    VertexId v = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                               std::vector<std::string>{"1"});
+    for (int i = 0; i < 30; ++i) {
+        ASSERT_TRUE(txn.SetVertexSeriesPoint(v, "prices", i * kUsPerDay,
+                                             OnePoint(100.0 + i, 101.0 + i, 1000 + i)));
+    }
+    const size_t buckets = SeriesKeyCount(db, txn);
+    ASSERT_GT(buckets, 4u);
+
+    auto* store = db.GetSeriesStore();
+    std::vector<series::Point> points;
+    series::Point point;
+    size_t count = 0;
+
+    // A single-point lookup decodes its bucket plus the next bucket's header
+    // (to prove the range ends), however long the history behind it is.
+    store->ResetDecodeCount();
+    ASSERT_TRUE(txn.GetVertexSeriesRange(v, "prices", 15 * kUsPerDay, 15 * kUsPerDay, &points));
+    ASSERT_EQ(points.size(), 1u);
+    EXPECT_DOUBLE_EQ(points[0].values[0].d, 115.0);
+    EXPECT_LE(store->DecodeCount(), 3u);
+
+    // Latest/earliest read one bucket end each.
+    store->ResetDecodeCount();
+    ASSERT_TRUE(txn.GetVertexSeriesLatest(v, "prices", &point));
+    EXPECT_EQ(point.ts, 29 * kUsPerDay);
+    EXPECT_LE(store->DecodeCount(), 1u);
+
+    store->ResetDecodeCount();
+    ASSERT_TRUE(txn.GetVertexSeriesEarliest(v, "prices", &point));
+    EXPECT_EQ(point.ts, 0);
+    EXPECT_LE(store->DecodeCount(), 1u);
+
+    // A narrow count only walks the buckets the window touches.
+    store->ResetDecodeCount();
+    ASSERT_TRUE(
+        txn.GetVertexSeriesCount(v, "prices", 10 * kUsPerDay, 12 * kUsPerDay, &count));
+    EXPECT_EQ(count, 3u);
+    EXPECT_LE(store->DecodeCount(), buckets);
+
+    // The summary is the documented exception: count/first/last genuinely
+    // need the whole history, and the decode count shows it.
+    store->ResetDecodeCount();
+    series::SeriesSummary summary;
+    ASSERT_TRUE(txn.ProbeVertexSeries(v, "prices", &summary));
+    EXPECT_EQ(summary.count, 30u);
+    EXPECT_GE(store->DecodeCount(), buckets);
+    txn.Commit();
+}
+
+namespace {
+
+void AddLinkLabel(LightningGraph& db) {
+    UT_ASSERT(db.AddLabel("link", std::vector<FieldSpec>{IntSeriesField("w")}, false,
+                          EdgeOptions()));
+}
+
+}  // namespace
+
+TEST_F(TestSeriesTransaction, EdgeSeriesRoundTripCorrectAndClear) {
+    const std::string dir = "./testdb_series_txn_edge";
+    AutoCleanDir cleaner(dir);
+    DBConfig conf;
+    conf.dir = dir;
+    LightningGraph db(conf);
+    AddCompanyLabel(db);
+    AddLinkLabel(db);
+
+    auto txn = db.CreateWriteTxn();
+    VertexId v0 = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                                std::vector<std::string>{"1"});
+    VertexId v1 = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                                std::vector<std::string>{"2"});
+    EdgeUid euid = txn.AddEdge(v0, v1, std::string("link"), std::vector<std::string>{},
+                               std::vector<std::string>{});
+    for (int i = 0; i < 3; ++i) {
+        ASSERT_TRUE(txn.SetEdgeSeriesPoint(euid, "w", i * kUsPerDay, IntPoint(10 + i)));
+    }
+    // In-place correction of one point.
+    ASSERT_TRUE(txn.SetEdgeSeriesPoint(euid, "w", kUsPerDay, IntPoint(99)));
+
+    std::vector<series::Point> points;
+    ASSERT_TRUE(txn.GetEdgeSeriesRange(euid, "w", kMinTs, kMaxTs, &points));
+    ASSERT_EQ(points.size(), 3u);
+    EXPECT_EQ(points[1].values[0].i, 99);
+
+    size_t count = 0;
+    ASSERT_TRUE(txn.GetEdgeSeriesCount(euid, "w", kMinTs, kMaxTs, &count));
+    EXPECT_EQ(count, 3u);
+    series::Point point;
+    ASSERT_TRUE(txn.GetEdgeSeriesLatest(euid, "w", &point));
+    EXPECT_EQ(point.ts, 2 * kUsPerDay);
+    ASSERT_TRUE(txn.GetEdgeSeriesEarliest(euid, "w", &point));
+    EXPECT_EQ(point.ts, 0);
+
+    series::SeriesSummary summary;
+    ASSERT_TRUE(txn.ProbeEdgeSeries(euid, "w", &summary));
+    EXPECT_EQ(summary.count, 3u);
+    EXPECT_TRUE(summary.has_points);
+    ASSERT_EQ(summary.measures.size(), 1u);
+    EXPECT_EQ(summary.measures[0].name, "v");
+
+    // Missing edges and ordinary fields read as absent, not as errors.
+    const EdgeUid no_such_edge(euid.dst, euid.src, euid.lid, euid.tid, euid.eid);
+    EXPECT_FALSE(txn.GetEdgeSeriesRange(no_such_edge, "w", kMinTs, kMaxTs, &points));
+    EXPECT_FALSE(txn.ClearEdgeSeries(euid, "no_such_field"));
+
+    ASSERT_TRUE(txn.ClearEdgeSeries(euid, "w"));
+    ASSERT_TRUE(txn.GetEdgeSeriesCount(euid, "w", kMinTs, kMaxTs, &count));
+    EXPECT_EQ(count, 0u);
+    txn.Commit();
+}
+
+TEST_F(TestSeriesTransaction, RepeatUpsertIsByteIdentical) {
+    const std::string dir = "./testdb_series_txn_idem";
+    AutoCleanDir cleaner(dir);
+    DBConfig conf;
+    conf.dir = dir;
+    LightningGraph db(conf);
+    AddCompanyLabel(db);
+
+    auto txn = db.CreateWriteTxn();
+    VertexId v = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                               std::vector<std::string>{"1"});
+    for (int i = 0; i < 6; ++i) {
+        ASSERT_TRUE(txn.SetVertexSeriesPoint(v, "prices", i * kUsPerDay,
+                                             OnePoint(100.0 + i, 101.0 + i, 1000 + i)));
+    }
+    auto snapshot = [&]() {
+        std::vector<std::pair<std::string, std::string>> kvs;
+        auto it = db.GetSeriesStore()->Table()->GetIterator(txn.GetTxn());
+        it->GotoFirstKey();
+        for (; it->IsValid(); it->Next()) {
+            kvs.emplace_back(it->GetKey().AsString(), it->GetValue().AsString());
+        }
+        return kvs;
+    };
+    const auto before = snapshot();
+    ASSERT_FALSE(before.empty());
+    // Repeating every write verbatim must store exactly the same bytes.
+    for (int i = 0; i < 6; ++i) {
+        ASSERT_TRUE(txn.SetVertexSeriesPoint(v, "prices", i * kUsPerDay,
+                                             OnePoint(100.0 + i, 101.0 + i, 1000 + i)));
+    }
+    EXPECT_EQ(snapshot(), before);
+    txn.Commit();
+}

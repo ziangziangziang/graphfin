@@ -146,6 +146,24 @@ class BuiltinProcedure {
     static void DbCreateEdgeLabel(RTContext *ctx, const Record *record, const VEC_EXPR &args,
                                   const VEC_STR &yield_items, std::vector<Record> *records);
 
+    static void DbCreateSeriesField(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                                    const VEC_STR &yield_items, std::vector<Record> *records);
+
+    static void DbCreateEdgeSeriesField(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                                        const VEC_STR &yield_items, std::vector<Record> *records);
+
+    static void DbDropSeriesField(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                                  const VEC_STR &yield_items, std::vector<Record> *records);
+
+    static void SeriesAppend(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                             const VEC_STR &yield_items, std::vector<Record> *records);
+
+    static void SeriesSet(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                          const VEC_STR &yield_items, std::vector<Record> *records);
+
+    static void SeriesClear(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                            const VEC_STR &yield_items, std::vector<Record> *records);
+
     static void DbAddVertexIndex(RTContext *ctx, const Record *record, const VEC_EXPR &args,
                                  const VEC_STR &yield_items, std::vector<Record> *records);
 
@@ -695,6 +713,79 @@ static std::vector<Procedure> global_procedures = {
               Procedure::SIG_SPEC{{"type_name", {0, lgraph_api::LGraphType::STRING}},
                                   {"field_specs", {1, lgraph_api::LGraphType::LIST}}},
               Procedure::SIG_SPEC{{"", {0, lgraph_api::LGraphType::NUL}}}, false, true),
+
+    Procedure("db.createSeriesField", BuiltinProcedure::DbCreateSeriesField,
+              Procedure::SIG_SPEC{{"label", {0, lgraph_api::LGraphType::STRING}},
+                                  {"field", {1, lgraph_api::LGraphType::STRING}},
+                                  {"measures", {2, lgraph_api::LGraphType::LIST}},
+                                  {"options", {3, lgraph_api::LGraphType::MAP}}},
+              Procedure::SIG_SPEC{{"field", {0, lgraph_api::LGraphType::STRING}}}, false, true),
+
+    Procedure("db.createEdgeSeriesField", BuiltinProcedure::DbCreateEdgeSeriesField,
+              Procedure::SIG_SPEC{{"label", {0, lgraph_api::LGraphType::STRING}},
+                                  {"field", {1, lgraph_api::LGraphType::STRING}},
+                                  {"measures", {2, lgraph_api::LGraphType::LIST}},
+                                  {"options", {3, lgraph_api::LGraphType::MAP}}},
+              Procedure::SIG_SPEC{{"field", {0, lgraph_api::LGraphType::STRING}}}, false, true),
+
+    Procedure("db.dropSeriesField", BuiltinProcedure::DbDropSeriesField,
+              Procedure::SIG_SPEC{{"label_type", {0, lgraph_api::LGraphType::STRING}},
+                                  {"label", {1, lgraph_api::LGraphType::STRING}},
+                                  {"field", {2, lgraph_api::LGraphType::STRING}}},
+              Procedure::SIG_SPEC{{"field", {0, lgraph_api::LGraphType::STRING}}}, false, true),
+
+    Procedure("series.append", BuiltinProcedure::SeriesAppend,
+              Procedure::SIG_SPEC{{"element", {0, lgraph_api::LGraphType::ANY}},
+                                  {"field", {1, lgraph_api::LGraphType::STRING}},
+                                  {"point", {2, lgraph_api::LGraphType::MAP}}},
+              Procedure::SIG_SPEC{{"written", {0, lgraph_api::LGraphType::INTEGER}}}, false,
+              false),
+
+    Procedure("series_append", BuiltinProcedure::SeriesAppend,
+              Procedure::SIG_SPEC{{"element", {0, lgraph_api::LGraphType::ANY}},
+                                  {"field", {1, lgraph_api::LGraphType::STRING}},
+                                  {"point", {2, lgraph_api::LGraphType::MAP}}},
+              Procedure::SIG_SPEC{{"written", {0, lgraph_api::LGraphType::INTEGER}}}, false,
+              false),
+
+    Procedure("series.update", BuiltinProcedure::SeriesSet,
+              Procedure::SIG_SPEC{{"element", {0, lgraph_api::LGraphType::ANY}},
+                                  {"field", {1, lgraph_api::LGraphType::STRING}},
+                                  {"measure", {2, lgraph_api::LGraphType::STRING}},
+                                  {"ts", {3, lgraph_api::LGraphType::ANY}},
+                                  {"value", {4, lgraph_api::LGraphType::ANY}}},
+              Procedure::SIG_SPEC{{"written", {0, lgraph_api::LGraphType::INTEGER}}}, false,
+              false),
+
+    Procedure("series_update", BuiltinProcedure::SeriesSet,
+              Procedure::SIG_SPEC{{"element", {0, lgraph_api::LGraphType::ANY}},
+                                  {"field", {1, lgraph_api::LGraphType::STRING}},
+                                  {"measure", {2, lgraph_api::LGraphType::STRING}},
+                                  {"ts", {3, lgraph_api::LGraphType::ANY}},
+                                  {"value", {4, lgraph_api::LGraphType::ANY}}},
+              Procedure::SIG_SPEC{{"written", {0, lgraph_api::LGraphType::INTEGER}}}, false,
+              false),
+
+    Procedure("series_set", BuiltinProcedure::SeriesSet,
+              Procedure::SIG_SPEC{{"element", {0, lgraph_api::LGraphType::ANY}},
+                                  {"field", {1, lgraph_api::LGraphType::STRING}},
+                                  {"measure", {2, lgraph_api::LGraphType::STRING}},
+                                  {"ts", {3, lgraph_api::LGraphType::ANY}},
+                                  {"value", {4, lgraph_api::LGraphType::ANY}}},
+              Procedure::SIG_SPEC{{"written", {0, lgraph_api::LGraphType::INTEGER}}}, false,
+              false),
+
+    Procedure("series.clear", BuiltinProcedure::SeriesClear,
+              Procedure::SIG_SPEC{{"element", {0, lgraph_api::LGraphType::ANY}},
+                                  {"field", {1, lgraph_api::LGraphType::STRING}}},
+              Procedure::SIG_SPEC{{"cleared", {0, lgraph_api::LGraphType::INTEGER}}}, false,
+              false),
+
+    Procedure("series_clear", BuiltinProcedure::SeriesClear,
+              Procedure::SIG_SPEC{{"element", {0, lgraph_api::LGraphType::ANY}},
+                                  {"field", {1, lgraph_api::LGraphType::STRING}}},
+              Procedure::SIG_SPEC{{"cleared", {0, lgraph_api::LGraphType::INTEGER}}}, false,
+              false),
 
     Procedure("db.addIndex", BuiltinProcedure::DbAddVertexIndex,
               Procedure::SIG_SPEC{{"label_name", {0, lgraph_api::LGraphType::STRING}},

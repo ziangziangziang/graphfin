@@ -1,0 +1,25 @@
+# S3 DDL on the GQL parser path.
+#
+# Map and list literals cannot be expressed here (`{...}` arrives as an
+# unsupported MkRecord node), and neither can CREATE, so point writes stay
+# Cypher-only. What this path covers is scalar-argument DDL - dropping a
+# series field and every validation error around it - plus the underscore
+# read aliases, which series.test covers.
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series_count(p, 'prices') AS n;
+
+CALL db.dropSeriesField('vertex', 'Person', 'prices') YIELD field RETURN field;
+
+-- error
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series_count(p, 'prices') AS n;
+
+-- error
+CALL db.dropSeriesField('vertex', 'Person', 'name') YIELD field RETURN field;
+
+-- error
+CALL db.dropSeriesField('vertex', 'Nope', 'prices') YIELD field RETURN field;
+
+-- error
+CALL db.dropSeriesField('verte', 'Person', 'prices') YIELD field RETURN field;
+
+-- error
+CALL db.dropSeriesField('edge', 'HAS_CHILD', 'nope') YIELD field RETURN field;

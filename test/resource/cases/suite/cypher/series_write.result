@@ -1,0 +1,83 @@
+# S3: the whole time-series workflow through Cypher only.
+#
+# A fresh label is declared, points are written, one measure is corrected
+# without losing the others, repeats are idempotent, and everything is
+# deleted cleanly - first the vertex side, then the edge side.
+
+CALL db.createVertexLabel('Company', 'id', 'id', 'INT64', false);
+[]
+
+CALL db.createSeriesField('Company', 'prices', [{name:'close', type:'DOUBLE'}, {name:'volume', type:'INT64'}], {bucket_max_points:1000}) YIELD field RETURN field;
+[{"field":"prices"}]
+
+CREATE (c:Company {id:1});
+[{"<SUMMARY>":"created 1 vertices, created 0 edges."}]
+
+MATCH (c:Company {id:1}) CALL series.append(c, 'prices', {ts: datetime('2024-01-02 00:00:00'), close: 11.0, volume: 200}) YIELD written RETURN written;
+[{"written":1}]
+
+MATCH (c:Company {id:1}) RETURN series.at(c, 'prices', datetime('2024-01-02 00:00:00')) AS point;
+[{"point":{"close":11.0,"ts":"2024-01-02 00:00:00","volume":200}}]
+
+# Correct one measure; the other survives.
+MATCH (c:Company {id:1}) CALL series.update(c, 'prices', 'close', datetime('2024-01-02 00:00:00'), 11.5) YIELD written RETURN written;
+[{"written":1}]
+
+MATCH (c:Company {id:1}) RETURN series.at(c, 'prices', datetime('2024-01-02 00:00:00')) AS point;
+[{"point":{"close":11.5,"ts":"2024-01-02 00:00:00","volume":200}}]
+
+# Repeating the same write changes nothing.
+MATCH (c:Company {id:1}) CALL series.append(c, 'prices', {ts: datetime('2024-01-02 00:00:00'), close: 11.5, volume: 200}) YIELD written RETURN written;
+[{"written":1}]
+
+MATCH (c:Company {id:1}) RETURN series.at(c, 'prices', datetime('2024-01-02 00:00:00')) AS point;
+[{"point":{"close":11.5,"ts":"2024-01-02 00:00:00","volume":200}}]
+
+MATCH (c:Company {id:1}) CALL series.clear(c, 'prices') YIELD cleared RETURN cleared;
+[{"cleared":1}]
+
+MATCH (c:Company {id:1}) RETURN series.count(c, 'prices') AS n;
+[{"n":0}]
+
+CALL db.dropSeriesField('vertex', 'Company', 'prices') YIELD field RETURN field;
+[{"field":"prices"}]
+
+-- error
+MATCH (c:Company {id:1}) RETURN series.count(c, 'prices') AS n;
+[InputError] Vertex 21 has no time series field [prices]
+
+-- error
+CALL db.dropSeriesField('vertex', 'Company', 'id') YIELD field RETURN field;
+[InputError] Field [id] of label [Company] is not a time series
+
+# The edge side: same workflow on an edge series.
+CALL db.createEdgeLabel('HOLDS', '[]');
+[]
+
+CALL db.createEdgeSeriesField('HOLDS', 'w', [{name:'v', type:'INT64'}], {}) YIELD field RETURN field;
+[{"field":"w"}]
+
+CREATE (c:Company {id:2});
+[{"<SUMMARY>":"created 1 vertices, created 0 edges."}]
+
+MATCH (a:Company {id:1}), (b:Company {id:2}) CREATE (a)-[h:HOLDS]->(b);
+[{"<SUMMARY>":"created 0 vertices, created 1 edges."}]
+
+MATCH (a:Company {id:1})-[h:HOLDS]->(b:Company {id:2}) CALL series.append(h, 'w', {ts: datetime('2024-01-03 00:00:00'), v: 7}) YIELD written RETURN written;
+[{"written":1}]
+
+MATCH (a:Company {id:1})-[h:HOLDS]->(b:Company {id:2}) RETURN series.at(h, 'w', datetime('2024-01-03 00:00:00')) AS point;
+[{"point":{"ts":"2024-01-03 00:00:00","v":7}}]
+
+MATCH (a:Company {id:1})-[h:HOLDS]->(b:Company {id:2}) RETURN h.w AS summary;
+[{"summary":{"count":1,"first":"2024-01-03 00:00:00","last":"2024-01-03 00:00:00","measures":["v"]}}]
+
+MATCH (a:Company {id:1})-[h:HOLDS]->(b:Company {id:2}) CALL series.clear(h, 'w') YIELD cleared RETURN cleared;
+[{"cleared":1}]
+
+CALL db.dropSeriesField('edge', 'HOLDS', 'w') YIELD field RETURN field;
+[{"field":"w"}]
+
+-- error
+MATCH (a:Company {id:1})-[h:HOLDS]->(b:Company {id:2}) RETURN series.count(h, 'w') AS n;
+[InputError] Edge 21_22_6_0_0 has no time series field [w]

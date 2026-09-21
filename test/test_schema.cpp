@@ -318,6 +318,11 @@ TEST_P(TestSchema, RejectsInvalidSeriesFields) {
     empty_measure_name.series_spec.measures = {SeriesMeasureSpec{"", FieldType::DOUBLE}};
     rejects(empty_measure_name);
 
+    // "ts" keys the timestamp in every returned point map.
+    FieldSpec reserved_measure_name = MakeSeriesField();
+    reserved_measure_name.series_spec.measures = {SeriesMeasureSpec{"ts", FieldType::DOUBLE}};
+    rejects(reserved_measure_name);
+
     FieldSpec too_many = MakeSeriesField();
     too_many.series_spec.measures.clear();
     for (size_t i = 0; i <= _detail::MAX_SERIES_MEASURES; ++i) {
