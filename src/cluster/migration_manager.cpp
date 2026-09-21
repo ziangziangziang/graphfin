@@ -216,6 +216,34 @@ bool MigrationManager::Prune(KvTransaction& txn, uint64_t graph_uid) {
     return true;
 }
 
+bool MigrationManager::ReportProgress(KvTransaction& txn, uint64_t graph_uid, double fraction,
+                                        uint64_t bytes_delta) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (!table_) return false;
+    auto it = migrations_.find(graph_uid);
+    if (it == migrations_.end()) return false;
+    Record& r = it->second;
+    if (fraction < 0.0) fraction = 0.0;
+    if (fraction > 1.0) fraction = 1.0;
+    r.progress = fraction;
+    r.bytes_transferred += bytes_delta;
+    r.updated_ms = Now();
+    PersistLocked(txn, r);
+    return true;
+}
+
+bool MigrationManager::RecordFailure(KvTransaction& txn, uint64_t graph_uid, bool retried) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (!table_) return false;
+    auto it = migrations_.find(graph_uid);
+    if (it == migrations_.end()) return false;
+    it->second.failures += 1;
+    if (retried) it->second.retries += 1;
+    it->second.updated_ms = Now();
+    PersistLocked(txn, it->second);
+    return true;
+}
+
 bool MigrationManager::Get(uint64_t graph_uid, Record* out) const {
     std::lock_guard<std::mutex> lock(mtx_);
     auto it = migrations_.find(graph_uid);
@@ -238,6 +266,70 @@ std::vector<MigrationManager::Record> MigrationManager::ListActive() const {
 
 size_t MigrationManager::ActiveCount() const {
     return ListActive().size();
+}
+
+std::vector<RebalanceMove> PlanRebalanceMoves(const std::vector<RebalanceInput>& shards,
+                                              size_t max_moves) {
+    struct Node {
+        ShardId shard = INVALID_SHARD_ID;
+        long long graphs = 0;
+        uint32_t weight = 1;
+        double disk = 0.0;
+    };
+    std::vector<Node> v;
+    v.reserve(shards.size());
+    for (const auto& s : shards) {
+        Node n;
+        n.shard = s.shard;
+        n.graphs = static_cast<long long>(s.graphs);
+        n.weight = s.weight == 0 ? 1 : s.weight;
+        n.disk = s.disk_used;
+        v.push_back(n);
+    }
+    auto load = [](const Node& n) { return (double)n.graphs / (double)n.weight; };
+    auto peak = [&]() {
+        double p = 0.0;
+        for (const auto& n : v) p = std::max(p, load(n));
+        return p;
+    };
+
+    std::vector<RebalanceMove> moves;
+    while (moves.size() < max_moves && v.size() >= 2) {
+        // Source: highest load with at least one graph (ties: lowest shard).
+        // Destination: lowest load among the rest (ties: lowest shard).
+        size_t si = v.size(), di = v.size();
+        for (size_t i = 0; i < v.size(); i++) {
+            if (v[i].graphs <= 0) continue;
+            if (si == v.size() || load(v[i]) > load(v[si]) ||
+                (load(v[i]) == load(v[si]) &&
+                 (v[i].disk > v[si].disk ||
+                  (v[i].disk == v[si].disk && v[i].shard < v[si].shard)))) {
+                si = i;
+            }
+        }
+        if (si == v.size()) break;
+        for (size_t i = 0; i < v.size(); i++) {
+            if (i == si) continue;
+            if (di == v.size() || load(v[i]) < load(v[di]) ||
+                (load(v[i]) == load(v[di]) &&
+                 (v[i].disk < v[di].disk ||
+                  (v[i].disk == v[di].disk && v[i].shard < v[di].shard)))) {
+                di = i;
+            }
+        }
+        if (di == v.size()) break;
+
+        double before = peak();
+        v[si].graphs--;
+        v[di].graphs++;
+        if (peak() >= before) {
+            v[si].graphs++;  // revert: no strict improvement
+            v[di].graphs--;
+            break;
+        }
+        moves.push_back({v[si].shard, v[di].shard});
+    }
+    return moves;
 }
 
 }  // namespace cluster

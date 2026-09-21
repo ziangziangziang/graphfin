@@ -76,6 +76,12 @@ class MigrationManager {
         int64_t started_ms = 0;
         int64_t updated_ms = 0;
         std::string error;  // failure reason, if FAILED
+        // Progress/metrics (PROJECT.md §8). Persisted with the record so an
+        // interrupted migration resumes with its accounting intact.
+        uint64_t bytes_transferred = 0;
+        double progress = 0.0;  // 0..1 fraction of the data phase
+        uint32_t failures = 0;
+        uint32_t retries = 0;
 
         template <typename StreamT>
         size_t Serialize(StreamT& stream) const {
@@ -89,6 +95,10 @@ class MigrationManager {
             n += fma_common::BinaryWrite(stream, started_ms);
             n += fma_common::BinaryWrite(stream, updated_ms);
             n += fma_common::BinaryWrite(stream, error);
+            n += fma_common::BinaryWrite(stream, bytes_transferred);
+            n += fma_common::BinaryWrite(stream, progress);
+            n += fma_common::BinaryWrite(stream, failures);
+            n += fma_common::BinaryWrite(stream, retries);
             return n;
         }
 
@@ -106,6 +116,10 @@ class MigrationManager {
             n += fma_common::BinaryRead(stream, updated_ms);
             n += fma_common::BinaryRead(stream, error);
             state = static_cast<MigrationState>(st);
+            n += fma_common::BinaryRead(stream, bytes_transferred);
+            n += fma_common::BinaryRead(stream, progress);
+            n += fma_common::BinaryRead(stream, failures);
+            n += fma_common::BinaryRead(stream, retries);
             return n;
         }
     };
@@ -138,11 +152,41 @@ class MigrationManager {
     std::vector<Record> ListActive() const;
     size_t ActiveCount() const;
 
+    /** Record data-phase progress (0..1) and bytes moved. */
+    bool ReportProgress(KvTransaction& txn, uint64_t graph_uid, double fraction,
+                        uint64_t bytes_delta);
+    /** Record a failure; `retried` bumps the retry counter as well. */
+    bool RecordFailure(KvTransaction& txn, uint64_t graph_uid, bool retried);
+
     /** Override the clock (milliseconds) for deterministic tests. */
     void SetClock(std::function<int64_t()> clock);
 
     static bool IsTerminal(MigrationState s);
     static bool CanTransition(MigrationState from, MigrationState to);
+
+/** One shard's load snapshot for rebalancing. */
+struct RebalanceInput {
+    ShardId shard = INVALID_SHARD_ID;
+    size_t graphs = 0;
+    uint32_t weight = 1;    // 0 treated as 1; drain semantics are out of scope
+    double disk_used = 0.0;  // 0..1, currently a deterministic tiebreak only
+};
+
+/** One suggested unit of rebalancing: move a single graph src -> dst. */
+struct RebalanceMove {
+    ShardId src = INVALID_SHARD_ID;
+    ShardId dst = INVALID_SHARD_ID;
+};
+
+/**
+ * Greedy rebalancer: repeatedly move one graph from the highest-loaded shard
+ * (graphs/weight) to the lowest-loaded *different* shard while it strictly
+ * reduces the peak load, up to max_moves. Pure function — deterministic,
+ * tie-breaks by lowest shard id. Runs against the live counts; the caller
+ * applies moves via the migration lifecycle (Begin/Advance).
+ */
+std::vector<RebalanceMove> PlanRebalanceMoves(const std::vector<RebalanceInput>& shards,
+                                              size_t max_moves);
 
  private:
     void PersistLocked(KvTransaction& txn, const Record& r);
