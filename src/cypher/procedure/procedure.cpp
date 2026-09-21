@@ -1612,16 +1612,35 @@ int64_t ParseSeriesTimestamp(const cypher::FieldData &v, const std::string &proc
     if (v.type != cypher::FieldData::SCALAR) {
         throw lgraph::CypherException(proc + ": timestamp must be a DATETIME or INT64");
     }
-    if (v.scalar.IsDateTime()) return v.scalar.AsDateTime().MicroSecondsSinceEpoch();
-    if (v.IsInteger()) return v.scalar.integer();
-    throw lgraph::CypherException(proc + ": timestamp must be a DATETIME or INT64");
+    int64_t ts = 0;
+    if (v.scalar.IsDateTime()) {
+        ts = v.scalar.AsDateTime().MicroSecondsSinceEpoch();
+    } else if (v.IsInteger()) {
+        ts = v.scalar.integer();
+    } else {
+        throw lgraph::CypherException(proc + ": timestamp must be a DATETIME or INT64");
+    }
+    // Stored timestamps must be readable back as DATETIME; unbounded
+    // range-query sentinels are not valid stored points.
+    if (!lgraph::series::IsValidSeriesTimestamp(ts)) {
+        throw lgraph::CypherException(proc + ": timestamp out of DATETIME range");
+    }
+    return ts;
 }
 
 lgraph::series::MeasureValue ParseSeriesMeasureValue(const cypher::FieldData &v,
                                                      lgraph::series::MeasureType type,
                                                      const std::string &measure,
                                                      const std::string &proc) {
-    if (v.type != cypher::FieldData::SCALAR || v.scalar.is_null()) {
+    // An explicit null scalar means "no value" under the full-point replacement
+    // contract. Containers (LIST/MAP) are type errors and must be rejected
+    // before any mutation: mapping them to null would silently overwrite the
+    // stored value.
+    if (v.type != cypher::FieldData::SCALAR) {
+        throw lgraph::CypherException(proc + ": value for measure '" + measure +
+                                      "' must match its declared type");
+    }
+    if (v.scalar.is_null()) {
         return lgraph::series::MeasureValue::Null();
     }
     if (type == lgraph::series::MeasureType::DOUBLE) {
@@ -1655,19 +1674,42 @@ void CreateSeriesFieldImpl(RTContext *ctx, const cypher::VEC_EXPR &args, bool is
     lgraph::FieldSpec spec(field, lgraph::FieldType::BLOB, true);
     spec.series = true;
     spec.series_spec.measures = std::move(measures);
-    spec.series_spec.bucket_max_points =
-        static_cast<uint32_t>(ParseSeriesOptionInt(args[3].constant, "bucket_max_points", 1000,
-                                                   proc));
-    spec.series_spec.bucket_max_span_us =
-        static_cast<uint64_t>(ParseSeriesOptionInt(args[3].constant, "bucket_max_span_us", 0,
-                                                   proc));
-    spec.series_spec.bucket_max_bytes =
-        static_cast<uint32_t>(ParseSeriesOptionInt(args[3].constant, "bucket_max_bytes",
-                                                   1 << 20, proc));
-    if (spec.series_spec.bucket_max_points == 0 || spec.series_spec.bucket_max_bytes == 0) {
-        throw lgraph::CypherException(proc + ": bucket_max_points and bucket_max_bytes "
-                                      "must be positive");
+    // Validate option keys first so misspellings cannot silently select
+    // defaults. Ranges are checked on the signed value before any narrowing
+    // conversion: casting first would wrap 2^32+1 to 1 or -1 to UINT64_MAX.
+    for (const auto &kv : *args[3].constant.map) {
+        if (kv.first != "bucket_max_points" && kv.first != "bucket_max_span_us" &&
+            kv.first != "bucket_max_bytes") {
+            throw lgraph::CypherException(proc + ": unknown option '" + kv.first +
+                                          "', expected bucket_max_points, "
+                                          "bucket_max_span_us or bucket_max_bytes");
+        }
     }
+    const int64_t opt_points =
+        ParseSeriesOptionInt(args[3].constant, "bucket_max_points", 1000, proc);
+    const int64_t opt_span =
+        ParseSeriesOptionInt(args[3].constant, "bucket_max_span_us", 0, proc);
+    const int64_t opt_bytes =
+        ParseSeriesOptionInt(args[3].constant, "bucket_max_bytes", 1 << 20, proc);
+    // Operational limits, mirrored in CheckSeriesFieldSpec so direct API DDL
+    // cannot bypass them. Points are bounded by rewrite cost, bytes by the
+    // 16 MiB property cap, span by the signed timestamp domain.
+    static const int64_t kMaxSeriesPoints = 1000000;
+    static const int64_t kMaxSeriesBytes = 16 << 20;
+    if (opt_points <= 0 || opt_points > kMaxSeriesPoints) {
+        throw lgraph::CypherException(
+            proc + ": bucket_max_points must be in [1, 1000000]");
+    }
+    if (opt_bytes <= 0 || opt_bytes > kMaxSeriesBytes) {
+        throw lgraph::CypherException(
+            proc + ": bucket_max_bytes must be in [1, 16777216]");
+    }
+    if (opt_span < 0) {
+        throw lgraph::CypherException(proc + ": bucket_max_span_us must be >= 0");
+    }
+    spec.series_spec.bucket_max_points = static_cast<uint32_t>(opt_points);
+    spec.series_spec.bucket_max_span_us = static_cast<uint64_t>(opt_span);
+    spec.series_spec.bucket_max_bytes = static_cast<uint32_t>(opt_bytes);
     /* close the previous txn first, in case of nested transaction */
     if (ctx->txn_) ctx->txn_->Abort();
     size_t n_modified = 0;

@@ -532,6 +532,9 @@ bool SeriesStore::Upsert(KvTransaction& txn, const ElementKey& elem, uint16_t fi
                          const std::vector<MeasureColumn>& columns, const BucketPolicy& policy) {
     const size_t n_measures = columns.size();
     if (n_measures == 0 || values.size() != n_measures) return false;
+    // Stored timestamps must round-trip through DATETIME on read; the
+    // unbounded kMinTs/kMaxTs sentinels are range bounds, not valid points.
+    if (!IsValidSeriesTimestamp(ts)) return false;
 
     std::string field_prefix;
     MakeFieldPrefix(elem, field_id, &field_prefix);
@@ -543,12 +546,13 @@ bool SeriesStore::Upsert(KvTransaction& txn, const ElementKey& elem, uint16_t fi
     Bucket bucket;
     if (found) {
         const Value stored = table_->GetValue(txn, Value::ConstRef(key), true);
-        ++decode_count_;
+        decode_count_.fetch_add(1, std::memory_order_relaxed);
         // Fails if the stored bucket's measures do not match `columns`, e.g.
         // after the label's series measures were redefined.
         if (!DecodeBucket(stored.Data(), stored.Size(), columns, &bucket)) return false;
         if (policy.max_span_us > 0 && ts > bucket.LastTs() &&
-            static_cast<uint64_t>(ts - bucket.first_ts) > policy.max_span_us) {
+            static_cast<uint64_t>(ts) - static_cast<uint64_t>(bucket.first_ts) >
+                policy.max_span_us) {
             // Stretching this bucket would break the span cap: start a new one.
             // No bucket can exist at exactly ts, or the lookup would have
             // returned it.
@@ -602,7 +606,7 @@ bool SeriesStore::Range(KvTransaction& txn, const ElementKey& elem, uint16_t fie
         if (!fma_common::StartsWith(bucket_key, field_prefix)) break;
         const Value stored = it->GetValue();
         Bucket bucket;
-        ++decode_count_;
+        decode_count_.fetch_add(1, std::memory_order_relaxed);
         if (!DecodeBucket(stored.Data(), stored.Size(), columns, &bucket)) return false;
         if (bucket.first_ts > t1) break;
         for (size_t p = 0; p < bucket.PointCount(); ++p) {
@@ -635,7 +639,7 @@ bool SeriesStore::Count(KvTransaction& txn, const ElementKey& elem, uint16_t fie
         if (!fma_common::StartsWith(bucket_key, field_prefix)) break;
         const Value stored = it->GetValue();
         int64_t first_ts = 0;
-        ++decode_count_;
+        decode_count_.fetch_add(1, std::memory_order_relaxed);
         if (!DecodeBucketTimestamps(stored.Data(), stored.Size(), &first_ts, &timestamps)) {
             return false;
         }
@@ -669,7 +673,7 @@ bool SeriesStore::Latest(KvTransaction& txn, const ElementKey& elem, uint16_t fi
 
     const Value stored = table_->GetValue(txn, Value::ConstRef(key));
     Bucket bucket;
-    ++decode_count_;
+    decode_count_.fetch_add(1, std::memory_order_relaxed);
     if (!DecodeBucket(stored.Data(), stored.Size(), columns, &bucket)) return false;
     if (bucket.PointCount() == 0) return true;
     *point = MakePoint(bucket, bucket.PointCount() - 1);
@@ -690,7 +694,7 @@ bool SeriesStore::Earliest(KvTransaction& txn, const ElementKey& elem, uint16_t 
 
     const Value stored = table_->GetValue(txn, Value::ConstRef(key));
     Bucket bucket;
-    ++decode_count_;
+    decode_count_.fetch_add(1, std::memory_order_relaxed);
     if (!DecodeBucket(stored.Data(), stored.Size(), columns, &bucket)) return false;
     if (bucket.PointCount() == 0) return true;
     *point = MakePoint(bucket, 0);

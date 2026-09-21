@@ -79,6 +79,17 @@ struct BucketPolicy {
 static const int64_t kMinTs = std::numeric_limits<int64_t>::min();
 static const int64_t kMaxTs = std::numeric_limits<int64_t>::max();
 
+/**
+ * Stored point timestamps must live in the DATETIME domain: query output
+ * always builds a DateTime from them, and values outside that range make
+ * normal reads throw. kMinTs/kMaxTs stay valid as unbounded range-query
+ * sentinels but are never valid stored timestamps.
+ */
+inline bool IsValidSeriesTimestamp(int64_t ts) {
+    return ts >= ::lgraph_api::MinMicroSecondsSinceEpochForDateTime() &&
+           ts <= ::lgraph_api::MaxMicroSecondsSinceEpochForDateTime();
+}
+
 /** One measure value at one point. */
 struct MeasureValue {
     bool is_null = true;

@@ -23,10 +23,13 @@ namespace cypher {
 namespace {
 
 /**
- * What `RETURN n.<series field>` reports: the point count and the two ends, read
- * from the bucket headers, plus the measure names - which the encoded buckets do
- * not carry, since they store measure indices. The points themselves are never
- * materialised; that is what keeps this cheap enough to be a property read.
+ * What `RETURN n.<series field>` reports: the point count and the two ends,
+ * scanned across the buckets (headers, plus the timestamp column where a range
+ * cuts a bucket), plus the measure names from the schema - which the encoded
+ * buckets do not carry, since they store measure indices. Cost is proportional
+ * to the series history: bucket headers carry no series-wide totals, so there
+ * is no header-only summary without new transactional metadata. The points
+ * themselves are never materialised.
  */
 cypher::FieldData SeriesSummaryToMap(const lgraph::series::SeriesSummary &s) {
     cypher::FieldData::CYPHER_FIELD_DATA_MAP m;

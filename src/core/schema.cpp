@@ -997,6 +997,15 @@ void CheckSeriesFieldSpec(const _detail::FieldExtractorBase& f,
     }
     if (spec.series_spec.bucket_max_points == 0) reject("bucket_max_points must be positive");
     if (spec.series_spec.bucket_max_bytes == 0) reject("bucket_max_bytes must be positive");
+    // Operational limits mirror the Cypher DDL validation so direct API calls
+    // cannot bypass them. Points bound the copy-on-write rewrite cost, bytes
+    // stay within the 16 MiB property cap.
+    if (spec.series_spec.bucket_max_points > 1000000) {
+        reject("bucket_max_points must not exceed 1000000");
+    }
+    if (spec.series_spec.bucket_max_bytes > (16u << 20)) {
+        reject("bucket_max_bytes must not exceed 16777216");
+    }
     std::set<std::string> seen;
     for (const auto& m : spec.series_spec.measures) {
         if (m.name.empty()) reject("measure names must not be empty");

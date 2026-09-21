@@ -1643,6 +1643,9 @@ bool Transaction::ProbeVertexSeries(VertexId id, const std::string& field,
 bool Transaction::SetVertexSeriesPoint(VertexId id, const std::string& field, int64_t ts,
                                        const std::vector<series::MeasureValue>& values) {
     ThrowIfReadOnlyTxn();
+    if (!series::IsValidSeriesTimestamp(ts)) {
+        THROW_CODE(InputError, "Series timestamp [{}] out of DATETIME range.", ts);
+    }
     VertexIterator it = GetVertexIterator(id);
     if (!it.IsValid()) return false;
     uint16_t field_id = 0;
@@ -1795,6 +1798,9 @@ bool Transaction::ResolveEdgeSeriesSchema(const EdgeUid& uid, const std::string&
 bool Transaction::SetEdgeSeriesPoint(const EdgeUid& uid, const std::string& field, int64_t ts,
                                      const std::vector<series::MeasureValue>& values) {
     ThrowIfReadOnlyTxn();
+    if (!series::IsValidSeriesTimestamp(ts)) {
+        THROW_CODE(InputError, "Series timestamp [{}] out of DATETIME range.", ts);
+    }
     uint16_t field_id = 0;
     std::vector<series::MeasureColumn> columns;
     series::BucketPolicy policy;

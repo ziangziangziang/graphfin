@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -79,10 +80,15 @@ class SeriesStore {
      * Buckets decoded since construction or the last reset. Test
      * instrumentation for the read-complexity contract: a point lookup must
      * decode O(1) buckets no matter how long the series is, while a summary
-     * legitimately walks the whole history. Not used on any production path.
+     * legitimately walks the whole history.
+     *
+     * Shared across all transactions on the graph, so the counter is atomic:
+     * concurrent readers each increment it. A global count cannot isolate one
+     * query while others run; quiesce writers/readers before asserting exact
+     * counts in tests.
      */
-    size_t DecodeCount() const { return decode_count_; }
-    void ResetDecodeCount() { decode_count_ = 0; }
+    size_t DecodeCount() const { return decode_count_.load(std::memory_order_relaxed); }
+    void ResetDecodeCount() { decode_count_.store(0, std::memory_order_relaxed); }
 
     /**
      * Writes one point: appends it, or overwrites the values of the point that
@@ -203,7 +209,7 @@ class SeriesStore {
     void DeleteByPrefix(KvTransaction& txn, const std::string& prefix) const;
 
     std::unique_ptr<KvTable> table_;
-    mutable size_t decode_count_ = 0;
+    mutable std::atomic<size_t> decode_count_{0};
 };
 
 }  // namespace series
