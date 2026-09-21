@@ -93,6 +93,22 @@ class ClusterControl {
     bool Fence(const std::string& name, PlacementVersion expected,
                PlacementVersion* current = nullptr) const;
 
+    /**
+     * Destination-aware receiver-side fence: the operation arrived at `shard`.
+     * Rejects when the shard does not host the graph OR when the sender is
+     * behind the authoritative placement. `current` receives the authoritative
+     * version so the caller can route the retry correctly.
+     */
+    bool FenceAt(ShardId shard, const std::string& name, PlacementVersion expected,
+                 PlacementVersion* current = nullptr) const;
+
+    // ---- admin surface ----
+
+    /** Graph names currently placed (non-deleted) on `shard`, sorted. */
+    std::vector<std::string> ListGraphsOnShard(ShardId shard) const;
+    /** All non-deleted graph names, sorted. */
+    std::vector<std::string> ListAllGraphs() const;
+
  private:
     ClusterMetaStore* store_;
     ShardManager* shards_;

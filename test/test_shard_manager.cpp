@@ -315,3 +315,28 @@ TEST_F(TestShardManager, DeregisterRefusedWhileGraphsRemain) {
     EXPECT_EQ(mgr.ShardCount(), 0u);
     EXPECT_EQ(mgr.LastHeartbeat(0), -1);
 }
+
+TEST_F(TestShardManager, StrategyListingRoundTrip) {
+    EXPECT_EQ(PlacementStrategyName(ShardManager::PlacementStrategy::LEAST_GRAPH_COUNT),
+              std::string("least_graph_count"));
+    EXPECT_EQ(PlacementStrategyName(ShardManager::PlacementStrategy::ROUND_ROBIN),
+              std::string("round_robin"));
+    EXPECT_EQ(PlacementStrategyName(ShardManager::PlacementStrategy::WEIGHTED_LEAST_LOAD),
+              std::string("weighted_least_load"));
+    auto all = PlacementStrategies();
+    EXPECT_EQ(all.size(), 3u);
+
+    AutoCleanDir cleaner("./test_shard_mgr_strategy");
+    auto store = std::make_unique<LMDBKvStore>("./test_shard_mgr_strategy");
+    auto ms = std::make_unique<ClusterMetaStore>();
+    {
+        auto txn = store->CreateWriteTxn(false);
+        ms->Init(store.get(), *txn, true);
+        txn->Commit();
+        ms->CommitStaged();
+    }
+    ShardManager mgr(ms.get());
+    EXPECT_EQ(mgr.GetStrategy(), ShardManager::PlacementStrategy::LEAST_GRAPH_COUNT);
+    mgr.SetStrategy(ShardManager::PlacementStrategy::ROUND_ROBIN);
+    EXPECT_EQ(mgr.GetStrategy(), ShardManager::PlacementStrategy::ROUND_ROBIN);
+}

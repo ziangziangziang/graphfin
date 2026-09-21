@@ -12,6 +12,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
 
+#include <algorithm>
 #include <memory>
 #include <string>
 
@@ -165,4 +166,90 @@ TEST_F(TestClusterControl, CreatePlaceResolveFence) {
         txn->Commit();
         f.ms->CommitStaged();
     }
+}
+
+// T4.2 — forwarded-write fencing end to end (in the test harness the caller
+// models "the router", the destination models "the receiving shard").
+TEST_F(TestClusterControl, ForwardedWriteIsFencedByTheReceiver) {
+    AutoCleanDir cleaner("./test_cluster_control_fence");
+    Fixture f;
+    f.Init("./test_cluster_control_fence");
+
+    {
+        auto txn = f.store->CreateWriteTxn(false);
+        EXPECT_EQ(f.control->RegisterShard(*txn, MakeShard(0)), ControlStatus::OK);
+        EXPECT_EQ(f.control->RegisterShard(*txn, MakeShard(1)), ControlStatus::OK);
+        txn->Commit();
+        f.ms->CommitStaged();
+    }
+
+    // Router resolves g1 (as routed, on shard S with version V).
+    PlacementVersion v1 = 0;
+    ShardId s = INVALID_SHARD_ID;
+    {
+        auto txn = f.store->CreateWriteTxn(false);
+        EXPECT_EQ(f.control->CreateGraph(*txn, "g1", f.now, &v1), ControlStatus::OK);
+        txn->Commit();
+        f.ms->CommitStaged();
+    }
+    RouteTarget routed;
+    EXPECT_EQ(f.control->Resolve("g1", f.now, &routed), RouteStatus::OK);
+    s = routed.shard_id;
+    const ShardId other = (s == 0) ? 1 : 0;
+
+    // Deliver the routed request at S with the version it was routed with.
+    EXPECT_TRUE(f.control->FenceAt(s, "g1", routed.version));
+
+    // Move the graph to the other shard (new version).
+    PlacementVersion v2 = 0;
+    {
+        auto txn = f.store->CreateWriteTxn(false);
+        f.ms->PutGraphPlacement(*txn, "g1", other, PlacementState::ACTIVE, &v2);
+        txn->Commit();
+        f.ms->CommitStaged();
+    }
+    EXPECT_GT(v2, v1);
+
+    // Replaying the old request at the NEW destination is rejected.
+    EXPECT_FALSE(f.control->FenceAt(other, "g1", routed.version));
+    // And at the OLD destination too — it no longer hosts the graph.
+    PlacementVersion cur = 0;
+    EXPECT_FALSE(f.control->FenceAt(s, "g1", routed.version, &cur));
+    EXPECT_EQ(cur, v2);
+
+    // A fresh resolve succeeds and its version is accepted on the new shard.
+    RouteTarget t2;
+    EXPECT_EQ(f.control->Resolve("g1", f.now, &t2), RouteStatus::OK);
+    EXPECT_EQ(t2.shard_id, other);
+    EXPECT_TRUE(f.control->FenceAt(other, "g1", t2.version));
+}
+
+// T4.3 — admin listing of what lives where.
+TEST_F(TestClusterControl, ListGraphsOnShard) {
+    AutoCleanDir cleaner("./test_cluster_control_list");
+    Fixture f;
+    f.Init("./test_cluster_control_list");
+    {
+        auto txn = f.store->CreateWriteTxn(false);
+        EXPECT_EQ(f.control->RegisterShard(*txn, MakeShard(0)), ControlStatus::OK);
+        EXPECT_EQ(f.control->RegisterShard(*txn, MakeShard(1)), ControlStatus::OK);
+        EXPECT_EQ(f.control->CreateGraph(*txn, "b", f.now), ControlStatus::OK);
+        EXPECT_EQ(f.control->CreateGraph(*txn, "a", f.now), ControlStatus::OK);
+        EXPECT_EQ(f.control->CreateGraph(*txn, "c", f.now), ControlStatus::OK);
+        txn->Commit();
+        f.ms->CommitStaged();
+    }
+    // All three were created in one batch, so each saw zero committed graphs and
+    // picked shard 0 (ties break to the lowest id). Counts only move on commit.
+    auto all = f.control->ListAllGraphs();
+    ASSERT_EQ(all.size(), 3u);
+    EXPECT_EQ(all[0], "a");
+    EXPECT_EQ(all[1], "b");
+    EXPECT_EQ(all[2], "c");
+    auto s0 = f.control->ListGraphsOnShard(0);
+    auto s1 = f.control->ListGraphsOnShard(1);
+    EXPECT_EQ(s0.size() + s1.size(), 3u);
+    EXPECT_TRUE(std::is_sorted(s0.begin(), s0.end()));
+    EXPECT_TRUE(std::is_sorted(s1.begin(), s1.end()));
+    EXPECT_TRUE(f.control->ListGraphsOnShard(7).empty());
 }

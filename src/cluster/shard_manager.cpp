@@ -50,6 +50,11 @@ void ShardManager::SetStrategy(PlacementStrategy strategy) {
     config_.strategy = strategy;
 }
 
+ShardManager::PlacementStrategy ShardManager::GetStrategy() const {
+    std::lock_guard<std::mutex> l(mtx_);
+    return config_.strategy;
+}
+
 bool ShardManager::RegisterShard(KvTransaction& txn, const ShardInfo& info,
                                  std::string* error) {
     if (info.shard_id == INVALID_SHARD_ID) {

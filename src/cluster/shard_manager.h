@@ -98,6 +98,7 @@ class ShardManager {
     /** Override the clock (milliseconds). Pass {} to restore the default. */
     void SetClock(std::function<int64_t()> clock);
     void SetStrategy(PlacementStrategy strategy);
+    PlacementStrategy GetStrategy() const;
 
  private:
     int64_t Now() const;
@@ -109,6 +110,23 @@ class ShardManager {
     uint64_t rr_cursor_ = 0;
     std::function<int64_t()> clock_;
 };
+
+/** All supported placement strategies (for admin listing). */
+inline std::vector<ShardManager::PlacementStrategy> PlacementStrategies() {
+    return {ShardManager::PlacementStrategy::LEAST_GRAPH_COUNT,
+            ShardManager::PlacementStrategy::ROUND_ROBIN,
+            ShardManager::PlacementStrategy::WEIGHTED_LEAST_LOAD};
+}
+
+/** Short name for a strategy (for admin/logging surfaces). */
+inline const char* PlacementStrategyName(ShardManager::PlacementStrategy s) {
+    switch (s) {
+    case ShardManager::PlacementStrategy::LEAST_GRAPH_COUNT: return "least_graph_count";
+    case ShardManager::PlacementStrategy::ROUND_ROBIN: return "round_robin";
+    case ShardManager::PlacementStrategy::WEIGHTED_LEAST_LOAD: return "weighted_least_load";
+    }
+    return "unknown";
+}
 
 }  // namespace cluster
 }  // namespace lgraph

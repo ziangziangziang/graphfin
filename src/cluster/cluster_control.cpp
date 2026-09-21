@@ -12,6 +12,8 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
 
+#include <algorithm>
+
 #include "cluster/cluster_control.h"
 
 namespace lgraph {
@@ -75,11 +77,38 @@ RouteStatus ClusterControl::Resolve(const std::string& name, int64_t now_ms, Rou
 bool ClusterControl::Fence(const std::string& name, PlacementVersion expected,
                            PlacementVersion* current) const {
     GraphPlacement p;
-    if (!store_->GetGraphPlacement(name, &p)) return false;
+    GraphId id = 0;
+    if (!store_->GetGraphPlacement(name, &p, &id)) return false;
+    return FenceAt(p.shard_id, name, expected, current);
+}
+
+bool ClusterControl::FenceAt(ShardId shard, const std::string& name,
+                             PlacementVersion expected, PlacementVersion* current) const {
+    GraphPlacement p;
+    GraphId id = 0;
+    if (!store_->GetGraphPlacement(name, &p, &id)) return false;
+    // The receiver must host the graph; otherwise the request belongs to
+    // another shard (or to no shard at all).
+    if (p.shard_id != shard) return false;
     if (current) *current = p.placement_version;
-    // Reject a sender that is behind the authoritative placement. A sender at
-    // the same (or a newer, e.g. mid-move) version is allowed.
     return expected >= p.placement_version;
+}
+
+std::vector<std::string> ClusterControl::ListGraphsOnShard(ShardId shard) const {
+    std::vector<std::string> out;
+    store_->ForEachGraph([&](GraphId, const std::string& name, const GraphPlacement& p) {
+        if (p.shard_id == shard) out.push_back(name);
+    });
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+std::vector<std::string> ClusterControl::ListAllGraphs() const {
+    std::vector<std::string> out;
+    store_->ForEachGraph(
+        [&](GraphId, const std::string& name, const GraphPlacement&) { out.push_back(name); });
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 }  // namespace cluster

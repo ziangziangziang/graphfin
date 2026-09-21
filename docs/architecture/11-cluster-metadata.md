@@ -57,7 +57,7 @@ to 100k+ graphs with a small, predictable resident cost.
 | Name→id | open-addressing table, 4-byte slots (`id+1`, 0=empty) | ~1 MiB |
 | Name offsets | `std::vector<uint32_t>` (id → arena offset) | 0.4 MiB |
 | Shards | tiny `unordered_map` | negligible |
-| **Total** | | **~5 MiB** |
+| **Total** | | **~6 MiB** |
 
 Contrast with a naive `unordered_map<std::string, GraphPlacementRecord>` plus
 per-entry node allocations, which costs well over 100 B/graph (tens of MiB at

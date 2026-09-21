@@ -108,6 +108,21 @@ class ClusterMetaStore {
     bool GetGraphName(GraphId id, std::string* out) const;
     size_t GraphCount() const;
 
+    /**
+     * Visit every non-DELETED graph: fn(GraphId, name, placement).
+     * Used by admin listing paths (Phase 4E). O(N); not for the hot path.
+     */
+    template <typename F>
+    void ForEachGraph(F&& fn) const {
+        std::shared_lock<std::shared_mutex> lock(mtx_);
+        for (GraphId id = 0; id < static_cast<GraphId>(placements_.size()); id++) {
+            if (placements_[id].State() == PlacementState::DELETED) continue;
+            uint32_t len = 0;
+            const char* data = NameOf(id, &len);
+            fn(id, std::string(data, len), placements_[id]);
+        }
+    }
+
     /** Number of graphs currently placed on `shard`. */
     size_t GraphCountOnShard(ShardId shard) const;
 
