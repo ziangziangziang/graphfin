@@ -255,10 +255,19 @@ struct FieldDataConvert {
         ret->Reserve(static_cast<int>(fds.size()));
 
         for (auto& h : header) {
-            if (lgraph_api::LGraphTypeIsField(h.second) || lgraph_api::LGraphTypeIsAny(h.second)) {
-                FromLGraphT(*fds.at(h.first)->v.fieldData, ret->Add());
+            // The plan header for function calls is ANY no matter what the
+            // value turns out to be, so a MAP/LIST cell (e.g. every series
+            // read) arrives here with an ANY header but a collection element.
+            // Dispatch on the element's own type: reading v.fieldData for a
+            // collection element is a wrong-union access that aborts on the
+            // unknown scalar type. Collections keep the long-standing
+            // LIST/MAP behavior of crossing as JSON text.
+            const auto elem = fds.at(h.first).get();
+            if (lgraph_api::LGraphTypeIsField(elem->type_) ||
+                elem->type_ == lgraph_api::LGraphType::ANY) {
+                FromLGraphT(*elem->v.fieldData, ret->Add());
             } else {
-                FromLGraphT(FieldData(fds.at(h.first)->ToString()), ret->Add());
+                FromLGraphT(FieldData(elem->ToString()), ret->Add());
             }
         }
     }
