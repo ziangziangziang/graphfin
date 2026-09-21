@@ -279,6 +279,20 @@ TEST_P(TestSchema, SeriesInfoIsOnlyWrittenWhenASeriesExists) {
     UT_EXPECT_TRUE(reloaded_series.GetFieldSpecsAsMap() == with_series.GetFieldSpecsAsMap());
 }
 
+TEST_P(TestSchema, NullDefaultSeriesFlagIsStrippedOnLoad) {
+    // Pre-R2-fix fast-alter databases persisted lazily added series fields
+    // with a null default flag that construction-time validation rejects.
+    // Load must strip the spurious flag instead of failing the reopen;
+    // non-null defaults stay rejected (see RejectsInvalidSeriesFields).
+    Schema s = MakeSchemaWith(GetParam(), MakeSeriesField());
+    s.GetFieldExtractor("prices")->SetDefaultValue(FieldData());
+    Schema reloaded;
+    reloaded.LoadSchema(s.StoreSchema());  // must not throw
+    const std::map<std::string, FieldSpec> specs = reloaded.GetFieldSpecsAsMap();
+    UT_EXPECT_TRUE(specs.at("prices").series);
+    UT_EXPECT_FALSE(specs.at("prices").set_default_value);
+}
+
 TEST_P(TestSchema, RejectsInvalidSeriesFields) {
     auto rejects = [this](const FieldSpec& f, const std::string& primary = "id") {
         UT_EXPECT_THROW_CODE(MakeSchemaWith(GetParam(), f, primary), InputError);

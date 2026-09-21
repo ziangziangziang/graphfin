@@ -81,3 +81,57 @@ CALL db.dropSeriesField('edge', 'HOLDS', 'w') YIELD field RETURN field;
 -- error
 MATCH (a:Company {id:1})-[h:HOLDS]->(b:Company {id:2}) RETURN series.count(h, 'w') AS n;
 [InputError] Edge 21_22_6_0_0 has no time series field [w]
+
+# Input-boundary regressions (R4-R6): malformed values are rejected before any
+# mutation, never stored as null; option ranges are validated before narrowing;
+# stored timestamps must fit the DATETIME domain.
+CALL db.createVertexLabel('ReviewC', 'id', 'id', 'INT64', false);
+[]
+
+CALL db.createSeriesField('ReviewC', 'prices', [{name:'close', type:'DOUBLE'}, {name:'volume', type:'INT64'}], {bucket_max_points:1000}) YIELD field RETURN field;
+[{"field":"prices"}]
+
+CREATE (c:ReviewC {id:1});
+[{"<SUMMARY>":"created 1 vertices, created 0 edges."}]
+
+MATCH (c:ReviewC {id:1}) CALL series.append(c, 'prices', {ts: datetime('2024-01-02 00:00:00'), close: 12.5, volume: 7}) YIELD written RETURN written;
+[{"written":1}]
+
+-- error
+MATCH (c:ReviewC {id:1}) CALL series.update(c, 'prices', 'close', datetime('2024-01-02 00:00:00'), [99]) YIELD written RETURN written;
+[CypherException] CypherException: series.update: value for measure 'close' must match its declared type
+
+MATCH (c:ReviewC {id:1}) RETURN series.at(c, 'prices', datetime('2024-01-02 00:00:00')) AS point;
+[{"point":{"close":12.5,"ts":"2024-01-02 00:00:00","volume":7}}]
+
+-- error
+MATCH (c:ReviewC {id:1}) CALL series.append(c, 'prices', {ts: datetime('2024-01-02 00:00:00'), close: {v:99}, volume: 7}) YIELD written RETURN written;
+[CypherException] CypherException: series.append: value for measure 'close' must match its declared type
+
+MATCH (c:ReviewC {id:1}) RETURN series.at(c, 'prices', datetime('2024-01-02 00:00:00')) AS point;
+[{"point":{"close":12.5,"ts":"2024-01-02 00:00:00","volume":7}}]
+
+-- error
+CALL db.createSeriesField('ReviewC', 'wrapped', [{name:'v', type:'INT64'}], {bucket_max_points:4294967297, bucket_max_bytes:-1, bucket_max_span_us:-1}) YIELD field RETURN field;
+[CypherException] CypherException: db.createSeriesField: bucket_max_points must be in [1, 1000000]
+
+-- error
+CALL db.createSeriesField('ReviewC', 'wrapped', [{name:'v', type:'INT64'}], {bucket_max_points:1000, bogus_opt:1}) YIELD field RETURN field;
+[CypherException] CypherException: db.createSeriesField: unknown option 'bogus_opt', expected bucket_max_points, bucket_max_span_us or bucket_max_bytes
+
+-- error
+MATCH (c:ReviewC {id:1}) CALL series.append(c, 'prices', {ts: 9223372036854775807, close: 1.0, volume: 1}) YIELD written RETURN written;
+[CypherException] CypherException: series.append: timestamp out of DATETIME range
+
+MATCH (c:ReviewC {id:1}) RETURN series.count(c, 'prices') AS n;
+[{"n":1}]
+
+# The rejected DDL above left no field behind: the name is still free.
+CALL db.createSeriesField('ReviewC', 'wrapped', [{name:'v', type:'INT64'}], {bucket_max_points:100}) YIELD field RETURN field;
+[{"field":"wrapped"}]
+
+CALL db.dropSeriesField('vertex', 'ReviewC', 'wrapped') YIELD field RETURN field;
+[{"field":"wrapped"}]
+
+CALL db.dropSeriesField('vertex', 'ReviewC', 'prices') YIELD field RETURN field;
+[{"field":"prices"}]

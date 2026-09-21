@@ -12,7 +12,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
 
+#include <atomic>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -583,4 +585,180 @@ TEST_F(TestSeriesTransaction, RepeatUpsertIsByteIdentical) {
     }
     EXPECT_EQ(snapshot(), before);
     txn.Commit();
+}
+
+TEST_F(TestSeriesTransaction, AddingFixedFieldThatWouldShiftSeriesIdsIsRejected) {
+    // R1: packed-layout ids are positional, but reopen regroups fixed-width
+    // fields before variable-width fields. Adding a fixed-width field behind a
+    // series field (BLOB = variable-width) would orphan its buckets on the
+    // next reopen, so the DDL is rejected before anything commits.
+    const std::string dir = "./testdb_series_txn_r1guard";
+    AutoCleanDir cleaner(dir);
+    DBConfig conf;
+    conf.dir = dir;
+    {
+        LightningGraph db(conf);
+        AddCompanyLabel(db);  // id INT64 (fixed) + prices series (variable)
+        auto txn = db.CreateWriteTxn();
+        VertexId v = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                                   std::vector<std::string>{"1"});
+        ASSERT_TRUE(txn.SetVertexSeriesPoint(v, "prices", 0, OnePoint(1.0, 2.0, 3)));
+        txn.Commit();
+
+        // A fixed-width field would sit before the series on reload: rejected.
+        size_t n_modified = 0;
+        UT_EXPECT_THROW_CODE(db.AlterLabelAddFields(
+                                 "Company", {FieldSpec("extra", FieldType::INT64, true)},
+                                 {FieldData()}, true, &n_modified),
+                             InputError);
+        // A variable-width field keeps the reload-canonical order: allowed, and
+        // the series still reads back afterwards and after a reopen.
+        ASSERT_TRUE(db.AlterLabelAddFields(
+            "Company", {FieldSpec("note", FieldType::STRING, true)}, {FieldData()}, true,
+            &n_modified));
+        auto rtxn = db.CreateReadTxn();
+        std::vector<series::Point> points;
+        ASSERT_TRUE(rtxn.GetVertexSeriesRange(v, "prices", kMinTs, kMaxTs, &points));
+        ASSERT_EQ(points.size(), 1u);
+        EXPECT_EQ(points[0].values[2].i, 3);
+    }
+    {
+        LightningGraph db(conf);
+        auto rtxn = db.CreateReadTxn();
+        auto it = rtxn.GetVertexIterator();
+        ASSERT_TRUE(it.IsValid());
+        std::vector<series::Point> points;
+        ASSERT_TRUE(
+            rtxn.GetVertexSeriesRange(it.GetId(), "prices", kMinTs, kMaxTs, &points));
+        ASSERT_EQ(points.size(), 1u);
+        EXPECT_EQ(points[0].values[2].i, 3);
+    }
+}
+
+TEST_F(TestSeriesTransaction, OrdinaryFieldCannotGainTheSeriesModifier) {
+    // A populated ordinary field must not silently become a series: its stored
+    // bytes would be hidden with no bucket migration.
+    const std::string dir = "./testdb_series_txn_noseriesflip";
+    AutoCleanDir cleaner(dir);
+    DBConfig conf;
+    conf.dir = dir;
+    LightningGraph db(conf);
+    UT_ASSERT(db.AddLabel("Company",
+                          std::vector<FieldSpec>{FieldSpec("id", FieldType::INT64, false),
+                                                 FieldSpec("note", FieldType::BLOB, true)},
+                          true, VertexOptions("id")));
+    FieldSpec as_series("note", FieldType::BLOB, true);
+    as_series.series = true;
+    as_series.series_spec.measures = {SeriesMeasureSpec{"v", FieldType::INT64}};
+    UT_EXPECT_THROW_CODE(db.AlterLabelModFields("Company", {as_series}, true, nullptr),
+                         InputError);
+}
+
+TEST_F(TestSeriesTransaction, FastAlterAddSeriesFieldSurvivesReopen) {
+    // R2: a series added to an existing fast-alter label must persist a schema
+    // that reopens. The lazy-add path used to stamp a default value that the
+    // reopen validator rejects.
+    const std::string dir = "./testdb_series_txn_r2fast";
+    AutoCleanDir cleaner(dir);
+    DBConfig conf;
+    conf.dir = dir;
+    {
+        LightningGraph db(conf);
+        VertexOptions vo("id");
+        vo.fast_alter_schema = true;
+        UT_ASSERT(db.AddLabel("Company", {FieldSpec("id", FieldType::INT64, false)}, true,
+                              vo));
+        size_t n_modified = 0;
+        ASSERT_TRUE(db.AlterLabelAddFields("Company", {IntSeriesField("prices")},
+                                           {FieldData()}, true, &n_modified));
+        auto txn = db.CreateWriteTxn();
+        VertexId v = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                                   std::vector<std::string>{"1"});
+        ASSERT_TRUE(txn.SetVertexSeriesPoint(v, "prices", 0, IntPoint(42)));
+        txn.Commit();
+    }
+    {
+        LightningGraph db(conf);
+        auto rtxn = db.CreateReadTxn();
+        auto it = rtxn.GetVertexIterator();
+        ASSERT_TRUE(it.IsValid());
+        std::vector<series::Point> points;
+        ASSERT_TRUE(
+            rtxn.GetVertexSeriesRange(it.GetId(), "prices", kMinTs, kMaxTs, &points));
+        ASSERT_EQ(points.size(), 1u);
+        EXPECT_EQ(points[0].values[0].i, 42);
+    }
+}
+
+TEST_F(TestSeriesTransaction, OutOfDateTimeRangeTimestampsAreRejected) {
+    // R6: stored timestamps must round-trip through DATETIME on read. The
+    // unbounded kMinTs/kMaxTs sentinels stay valid as range bounds but are
+    // never valid stored points.
+    const std::string dir = "./testdb_series_txn_tsbounds";
+    AutoCleanDir cleaner(dir);
+    DBConfig conf;
+    conf.dir = dir;
+    LightningGraph db(conf);
+    AddCompanyLabel(db);
+    auto txn = db.CreateWriteTxn();
+    VertexId v = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                               std::vector<std::string>{"1"});
+    UT_EXPECT_THROW_CODE(
+        txn.SetVertexSeriesPoint(v, "prices", std::numeric_limits<int64_t>::max(),
+                                 OnePoint(1.0, 1.0, 1)),
+        InputError);
+    UT_EXPECT_THROW_CODE(
+        txn.SetVertexSeriesPoint(v, "prices", std::numeric_limits<int64_t>::min(),
+                                 OnePoint(1.0, 1.0, 1)),
+        InputError);
+    ASSERT_TRUE(txn.SetVertexSeriesPoint(
+        v, "prices", lgraph_api::MaxMicroSecondsSinceEpochForDateTime(),
+        OnePoint(1.0, 1.0, 1)));
+    ASSERT_TRUE(txn.SetVertexSeriesPoint(
+        v, "prices", lgraph_api::MinMicroSecondsSinceEpochForDateTime(),
+        OnePoint(2.0, 2.0, 2)));
+    size_t count = 0;
+    ASSERT_TRUE(txn.GetVertexSeriesCount(v, "prices", kMinTs, kMaxTs, &count));
+    EXPECT_EQ(count, 2u);
+    txn.Commit();
+}
+
+TEST_F(TestSeriesTransaction, ConcurrentReadersShareTheStoreSafely) {
+    // R3: the decode counter is shared across transactions on one graph.
+    // Concurrent readers must not race on it (exercised under TSan).
+    const std::string dir = "./testdb_series_txn_concurrent";
+    AutoCleanDir cleaner(dir);
+    DBConfig conf;
+    conf.dir = dir;
+    LightningGraph db(conf);
+    AddCompanyLabel(db);
+    VertexId v = 0;
+    {
+        auto txn = db.CreateWriteTxn();
+        v = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                          std::vector<std::string>{"1"});
+        for (int i = 0; i < 8; ++i) {
+            ASSERT_TRUE(txn.SetVertexSeriesPoint(v, "prices", i * kUsPerDay,
+                                                 OnePoint(1.0 + i, 2.0 + i, i)));
+        }
+        txn.Commit();
+    }
+    constexpr int kReaders = 8;
+    constexpr int kIters = 25;
+    std::vector<std::thread> readers;
+    std::atomic<int> failures{0};
+    for (int r = 0; r < kReaders; ++r) {
+        readers.emplace_back([&]() {
+            for (int i = 0; i < kIters; ++i) {
+                auto rtxn = db.CreateReadTxn();
+                std::vector<series::Point> points;
+                if (!rtxn.GetVertexSeriesRange(v, "prices", kMinTs, kMaxTs, &points) ||
+                    points.size() != 8u) {
+                    failures.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        });
+    }
+    for (auto& t : readers) t.join();
+    EXPECT_EQ(failures.load(), 0);
 }

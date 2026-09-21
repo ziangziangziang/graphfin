@@ -57,3 +57,42 @@ CALL db.dropSeriesField('edge', 'HOLDS', 'w') YIELD field RETURN field;
 
 -- error
 MATCH (a:Company {id:1})-[h:HOLDS]->(b:Company {id:2}) RETURN series.count(h, 'w') AS n;
+
+# Input-boundary regressions (R4-R6): malformed values are rejected before any
+# mutation, never stored as null; option ranges are validated before narrowing;
+# stored timestamps must fit the DATETIME domain.
+CALL db.createVertexLabel('ReviewC', 'id', 'id', 'INT64', false);
+
+CALL db.createSeriesField('ReviewC', 'prices', [{name:'close', type:'DOUBLE'}, {name:'volume', type:'INT64'}], {bucket_max_points:1000}) YIELD field RETURN field;
+
+CREATE (c:ReviewC {id:1});
+
+MATCH (c:ReviewC {id:1}) CALL series.append(c, 'prices', {ts: datetime('2024-01-02 00:00:00'), close: 12.5, volume: 7}) YIELD written RETURN written;
+
+-- error
+MATCH (c:ReviewC {id:1}) CALL series.update(c, 'prices', 'close', datetime('2024-01-02 00:00:00'), [99]) YIELD written RETURN written;
+
+MATCH (c:ReviewC {id:1}) RETURN series.at(c, 'prices', datetime('2024-01-02 00:00:00')) AS point;
+
+-- error
+MATCH (c:ReviewC {id:1}) CALL series.append(c, 'prices', {ts: datetime('2024-01-02 00:00:00'), close: {v:99}, volume: 7}) YIELD written RETURN written;
+
+MATCH (c:ReviewC {id:1}) RETURN series.at(c, 'prices', datetime('2024-01-02 00:00:00')) AS point;
+
+-- error
+CALL db.createSeriesField('ReviewC', 'wrapped', [{name:'v', type:'INT64'}], {bucket_max_points:4294967297, bucket_max_bytes:-1, bucket_max_span_us:-1}) YIELD field RETURN field;
+
+-- error
+CALL db.createSeriesField('ReviewC', 'wrapped', [{name:'v', type:'INT64'}], {bucket_max_points:1000, bogus_opt:1}) YIELD field RETURN field;
+
+-- error
+MATCH (c:ReviewC {id:1}) CALL series.append(c, 'prices', {ts: 9223372036854775807, close: 1.0, volume: 1}) YIELD written RETURN written;
+
+MATCH (c:ReviewC {id:1}) RETURN series.count(c, 'prices') AS n;
+
+# The rejected DDL above left no field behind: the name is still free.
+CALL db.createSeriesField('ReviewC', 'wrapped', [{name:'v', type:'INT64'}], {bucket_max_points:100}) YIELD field RETURN field;
+
+CALL db.dropSeriesField('vertex', 'ReviewC', 'wrapped') YIELD field RETURN field;
+
+CALL db.dropSeriesField('vertex', 'ReviewC', 'prices') YIELD field RETURN field;
