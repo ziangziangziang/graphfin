@@ -13,12 +13,14 @@
  */
 
 #include <atomic>
+#include <chrono>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "gtest/gtest.h"
 
+#include "./ut_config.h"
 #include "core/lightning_graph.h"
 #include "core/series_store.h"
 #include "./test_tools.h"
@@ -690,6 +692,60 @@ TEST_F(TestSeriesTransaction, FastAlterAddSeriesFieldSurvivesReopen) {
     }
 }
 
+TEST_F(TestSeriesTransaction, DatabaseWithoutSeriesGainsItOnUpgrade) {
+    // Old-version compatibility in miniature: a database whose labels predate
+    // the series feature (ordinary fields only, no series table content) opens
+    // fine, gains the series table on first open, accepts a lazily added
+    // packed-layout series field, and keeps ordinary data plus points across
+    // a further reopen.
+    const std::string dir = "./testdb_series_txn_upgrade";
+    AutoCleanDir cleaner(dir);
+    DBConfig conf;
+    conf.dir = dir;
+    {
+        LightningGraph db(conf);
+        UT_ASSERT(db.AddLabel("Company",
+                              std::vector<FieldSpec>{
+                                  FieldSpec("id", FieldType::INT64, false),
+                                  FieldSpec("note", FieldType::STRING, true)},
+                              true, VertexOptions("id")));
+        auto txn = db.CreateWriteTxn();
+        txn.AddVertex(std::string("Company"), std::vector<std::string>{"id", "note"},
+                      std::vector<std::string>{"1", "old"});
+        txn.Commit();
+    }
+    {
+        LightningGraph db(conf);
+        size_t n_modified = 0;
+        ASSERT_TRUE(db.AlterLabelAddFields("Company", {IntSeriesField("prices")},
+                                           {FieldData()}, true, &n_modified));
+        auto txn = db.CreateWriteTxn();
+        VertexId v = txn.AddVertex(std::string("Company"),
+                                   std::vector<std::string>{"id", "note"},
+                                   std::vector<std::string>{"2", "new"});
+        ASSERT_TRUE(txn.SetVertexSeriesPoint(v, "prices", 3 * kUsPerDay, IntPoint(7)));
+        txn.Commit();
+    }
+    {
+        LightningGraph db(conf);
+        auto rtxn = db.CreateReadTxn();
+        size_t vertices = 0;
+        size_t points = 0;
+        for (auto it = rtxn.GetVertexIterator(); it.IsValid(); it.Next()) {
+            ++vertices;
+            std::vector<series::Point> pts;
+            ASSERT_TRUE(
+                rtxn.GetVertexSeriesRange(it.GetId(), "prices", kMinTs, kMaxTs, &pts));
+            points += pts.size();
+            if (!pts.empty()) {
+                EXPECT_EQ(pts[0].values[0].i, 7);
+            }
+        }
+        EXPECT_EQ(vertices, 2u);
+        EXPECT_EQ(points, 1u);
+    }
+}
+
 TEST_F(TestSeriesTransaction, OutOfDateTimeRangeTimestampsAreRejected) {
     // R6: stored timestamps must round-trip through DATETIME on read. The
     // unbounded kMinTs/kMaxTs sentinels stay valid as range bounds but are
@@ -721,6 +777,67 @@ TEST_F(TestSeriesTransaction, OutOfDateTimeRangeTimestampsAreRejected) {
     ASSERT_TRUE(txn.GetVertexSeriesCount(v, "prices", kMinTs, kMaxTs, &count));
     EXPECT_EQ(count, 2u);
     txn.Commit();
+}
+
+TEST_F(TestSeriesTransaction, PreSeriesReleaseFixtureUpgradesCleanly) {
+    // Genuine old-version compatibility: data.mdb under
+    // test/resource/data/preseries_db was written by lgraph_server at the
+    // pre-series merge base (ordinary labels only, no series table, no series
+    // schema block). The current build must open it, read every record, gain
+    // the series table on first open, accept lazily added series fields, and
+    // keep everything across a further reopen.
+    const std::string dir = "./testdb_series_txn_preseries";
+    AutoCleanDir cleaner(dir);
+    const std::string fixture =
+        lgraph::ut::TEST_RESOURCE_DIRECTORY + "/data/preseries_db/data.mdb";
+    fma_common::file_system::MkDir(dir);
+    UT_ASSERT(fma_common::FileSystem::GetFileSystem(fixture).CopyToLocal(
+        fixture, dir + "/data.mdb"));
+    DBConfig conf;
+    conf.dir = dir;
+    {
+        LightningGraph db(conf);
+        auto txn = db.CreateWriteTxn();
+        size_t vertices = 0;
+        int64_t id_sum = 0;
+        size_t edges = 0;
+        for (auto it = txn.GetVertexIterator(); it.IsValid(); it.Next()) {
+            ++vertices;
+            id_sum += txn.GetVertexField(it, std::string("id")).AsInt64();
+            EXPECT_FALSE(txn.GetVertexField(it, std::string("name")).is_null());
+            for (auto eit = txn.GetOutEdgeIterator(it.GetId()); eit.IsValid(); eit.Next()) {
+                ++edges;
+            }
+        }
+        EXPECT_EQ(vertices, 2u);
+        EXPECT_EQ(id_sum, 3);
+        EXPECT_EQ(edges, 1u);
+        txn.Commit();
+        size_t n_modified = 0;
+        ASSERT_TRUE(db.AlterLabelAddFields("Company", {IntSeriesField("prices")},
+                                           {FieldData()}, true, &n_modified));
+    }
+    VertexId v1 = 0;
+    {
+        LightningGraph db(conf);
+        auto txn = db.CreateWriteTxn();
+        for (auto it = txn.GetVertexIterator(); it.IsValid(); it.Next()) {
+            if (txn.GetVertexField(it, std::string("id")).AsInt64() == 1) v1 = it.GetId();
+        }
+        ASSERT_TRUE(txn.SetVertexSeriesPoint(v1, "prices", 5 * kUsPerDay, IntPoint(11)));
+        txn.Commit();
+    }
+    {
+        LightningGraph db(conf);
+        auto rtxn = db.CreateReadTxn();
+        size_t vertices = 0;
+        for (auto it = rtxn.GetVertexIterator(); it.IsValid(); it.Next()) ++vertices;
+        EXPECT_EQ(vertices, 2u);
+        std::vector<series::Point> points;
+        ASSERT_TRUE(rtxn.GetVertexSeriesRange(v1, "prices", kMinTs, kMaxTs, &points));
+        ASSERT_EQ(points.size(), 1u);
+        EXPECT_EQ(points[0].values[0].i, 11);
+    }
 }
 
 TEST_F(TestSeriesTransaction, ConcurrentReadersShareTheStoreSafely) {
@@ -761,4 +878,267 @@ TEST_F(TestSeriesTransaction, ConcurrentReadersShareTheStoreSafely) {
     }
     for (auto& t : readers) t.join();
     EXPECT_EQ(failures.load(), 0);
+}
+
+TEST_F(TestSeriesTransaction, ConcurrentReadersAndWriterOverlap) {
+    // TSan target: readers ranging/counting while a writer appends new points.
+    // The shared decode counter and bucket reads must stay race-free, and the
+    // writer's commits must never corrupt a concurrent read.
+    const std::string dir = "./testdb_series_txn_rw_overlap";
+    AutoCleanDir cleaner(dir);
+    DBConfig conf;
+    conf.dir = dir;
+    LightningGraph db(conf);
+    AddCompanyLabel(db);
+    VertexId v = 0;
+    {
+        auto txn = db.CreateWriteTxn();
+        v = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                          std::vector<std::string>{"1"});
+        for (int i = 0; i < 8; ++i) {
+            ASSERT_TRUE(txn.SetVertexSeriesPoint(v, "prices", i * kUsPerDay,
+                                                 OnePoint(1.0 + i, 2.0 + i, i)));
+        }
+        txn.Commit();
+    }
+    auto write_one_point = [&](int64_t ts, int64_t volume) {
+        for (int attempt = 0; attempt < 200; ++attempt) {
+            try {
+                auto txn = db.CreateWriteTxn();
+                const bool ok = txn.SetVertexSeriesPoint(
+                    v, "prices", ts, OnePoint(1.0 + volume, 2.0 + volume, volume));
+                txn.Commit();
+                return ok;
+            } catch (const LgraphException& e) {
+                if (e.code() != ErrorCode::TxnConflict) throw;
+            }
+        }
+        return false;
+    };
+    constexpr int kExtra = 64;
+    std::atomic<bool> writer_done{false};
+    std::atomic<int> failures{0};
+    std::thread writer([&]() {
+        for (int i = 0; i < kExtra; ++i) {
+            if (!write_one_point((8 + i) * kUsPerDay, 100 + i)) {
+                failures.fetch_add(1, std::memory_order_relaxed);
+                break;
+            }
+        }
+        writer_done.store(true, std::memory_order_release);
+    });
+    constexpr int kReaders = 4;
+    std::vector<std::thread> readers;
+    for (int r = 0; r < kReaders; ++r) {
+        readers.emplace_back([&]() {
+            while (!writer_done.load(std::memory_order_acquire)) {
+                auto rtxn = db.CreateReadTxn();
+                std::vector<series::Point> points;
+                size_t count = 0;
+                series::Point latest;
+                if (!rtxn.GetVertexSeriesRange(v, "prices", kMinTs, kMaxTs, &points) ||
+                    !rtxn.GetVertexSeriesCount(v, "prices", kMinTs, kMaxTs, &count) ||
+                    !rtxn.GetVertexSeriesLatest(v, "prices", &latest) ||
+                    points.size() != count || points.size() > 8u + kExtra) {
+                    failures.fetch_add(1, std::memory_order_relaxed);
+                    return;
+                }
+            }
+        });
+    }
+    writer.join();
+    for (auto& t : readers) t.join();
+    EXPECT_EQ(failures.load(), 0);
+    auto rtxn = db.CreateReadTxn();
+    size_t count = 0;
+    ASSERT_TRUE(rtxn.GetVertexSeriesCount(v, "prices", kMinTs, kMaxTs, &count));
+    EXPECT_EQ(count, 8u + kExtra);
+    series::Point latest;
+    ASSERT_TRUE(rtxn.GetVertexSeriesLatest(v, "prices", &latest));
+    EXPECT_EQ(latest.ts, (8 + kExtra - 1) * kUsPerDay);
+    EXPECT_EQ(latest.values[2].i, 100 + kExtra - 1);
+}
+
+TEST_F(TestSeriesTransaction, EightConcurrentWritersOnDistinctSeries) {
+    // S5: one single-writer series per thread, the expected production shape.
+    // No thread touches another's buckets, so every commit must succeed first
+    // try and every series must hold exactly its own points.
+    const std::string dir = "./testdb_series_txn_writers8";
+    AutoCleanDir cleaner(dir);
+    DBConfig conf;
+    conf.dir = dir;
+    LightningGraph db(conf);
+    AddCompanyLabel(db);
+    constexpr int kWriters = 8;
+    constexpr int kPoints = 50;
+    std::atomic<int> failures{0};
+    std::vector<std::thread> writers;
+    for (int w = 0; w < kWriters; ++w) {
+        writers.emplace_back([&, w]() {
+            try {
+                VertexId v = 0;
+                {
+                    auto txn = db.CreateWriteTxn();
+                    v = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                                      std::vector<std::string>{std::to_string(100 + w)});
+                    txn.Commit();
+                }
+                for (int batch = 0; batch < 5; ++batch) {
+                    auto txn = db.CreateWriteTxn();
+                    for (int i = 0; i < kPoints / 5; ++i) {
+                        const int p = batch * (kPoints / 5) + i;
+                        if (!txn.SetVertexSeriesPoint(v, "prices", p * kUsPerDay,
+                                                      OnePoint(w * 1000.0 + p, p, p))) {
+                            failures.fetch_add(1, std::memory_order_relaxed);
+                            return;
+                        }
+                    }
+                    txn.Commit();
+                }
+            } catch (const std::exception&) {
+                failures.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+    }
+    for (auto& t : writers) t.join();
+    EXPECT_EQ(failures.load(), 0);
+    // Every vertex holds exactly its own 50 points.
+    auto rtxn = db.CreateReadTxn();
+    size_t vertices = 0;
+    for (auto vit = rtxn.GetVertexIterator(); vit.IsValid(); vit.Next()) {
+        size_t count = 0;
+        ASSERT_TRUE(rtxn.GetVertexSeriesCount(vit.GetId(), "prices", kMinTs, kMaxTs, &count));
+        EXPECT_EQ(count, static_cast<size_t>(kPoints));
+        ++vertices;
+    }
+    EXPECT_EQ(vertices, static_cast<size_t>(kWriters));
+}
+
+TEST_F(TestSeriesTransaction, SameSeriesContentionRetriesToFullCoverage) {
+    // S5: several writers hammering one series conflict at LMDB level; each
+    // retries its point until the commit lands. Disjoint timestamp blocks keep
+    // the expected end state exact: every point present exactly once.
+    const std::string dir = "./testdb_series_txn_same_series";
+    AutoCleanDir cleaner(dir);
+    DBConfig conf;
+    conf.dir = dir;
+    LightningGraph db(conf);
+    AddCompanyLabel(db);
+    VertexId v = 0;
+    {
+        auto txn = db.CreateWriteTxn();
+        v = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                          std::vector<std::string>{"1"});
+        txn.Commit();
+    }
+    constexpr int kWriters = 4;
+    constexpr int kPerWriter = 40;
+    std::atomic<int> failures{0};
+    std::atomic<int64_t> commits{0};
+    std::atomic<int64_t> conflicts{0};
+    std::vector<std::thread> writers;
+    for (int w = 0; w < kWriters; ++w) {
+        writers.emplace_back([&, w]() {
+            try {
+                for (int i = 0; i < kPerWriter; ++i) {
+                    const int64_t p = w * kPerWriter + i;
+                    bool done = false;
+                    for (int attempt = 0; attempt < 500 && !done; ++attempt) {
+                        try {
+                            auto txn = db.CreateWriteTxn();
+                            const bool ok = txn.SetVertexSeriesPoint(
+                                v, "prices", p * kUsPerDay, OnePoint(p, p, p));
+                            txn.Commit();
+                            commits.fetch_add(1, std::memory_order_relaxed);
+                            done = ok;
+                        } catch (const LgraphException& e) {
+                            if (e.code() != ErrorCode::TxnConflict) throw;
+                            conflicts.fetch_add(1, std::memory_order_relaxed);
+                        }
+                    }
+                    if (!done) {
+                        failures.fetch_add(1, std::memory_order_relaxed);
+                        return;
+                    }
+                }
+            } catch (const std::exception&) {
+                failures.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+    }
+    for (auto& t : writers) t.join();
+    EXPECT_EQ(failures.load(), 0);
+    UT_LOG() << "Same-series contention: " << commits.load() << " commits, "
+             << conflicts.load() << " TxnConflict retries ("
+             << (100.0 * conflicts.load() /
+                 std::max<int64_t>(1, commits.load() + conflicts.load()))
+             << "% abort rate)";
+    auto rtxn = db.CreateReadTxn();
+    std::vector<series::Point> points;
+    ASSERT_TRUE(rtxn.GetVertexSeriesRange(v, "prices", kMinTs, kMaxTs, &points));
+    ASSERT_EQ(points.size(), static_cast<size_t>(kWriters * kPerWriter));
+    for (size_t i = 0; i < points.size(); ++i) {
+        EXPECT_EQ(points[i].ts, static_cast<int64_t>(i) * kUsPerDay);
+        EXPECT_EQ(points[i].values[2].i, static_cast<int64_t>(i));
+    }
+}
+
+TEST_F(TestSeriesTransaction, RealisticOhlcvWorkload) {
+    // S5: two trading years of daily bars for 500 symbols (250k points),
+    // written one transaction per symbol. Asserts exact point counts, spot
+    // values, single-bucket packing per symbol, and logs the stored
+    // bytes-per-point against the 32-byte raw width (8B ts + 3x8B measures).
+    const std::string dir = "./testdb_series_txn_ohlcv";
+    AutoCleanDir cleaner(dir);
+    DBConfig conf;
+    conf.dir = dir;
+    LightningGraph db(conf);
+    FieldSpec prices = SeriesField("prices");
+    prices.series_spec.bucket_max_points = 1000;
+    UT_ASSERT(db.AddLabel("Company",
+                          std::vector<FieldSpec>{FieldSpec("id", FieldType::INT64, false),
+                                                 prices},
+                          true, VertexOptions("id")));
+    constexpr int kSymbols = 500;
+    constexpr int kDays = 500;
+    const auto t0 = std::chrono::steady_clock::now();
+    for (int s = 0; s < kSymbols; ++s) {
+        auto txn = db.CreateWriteTxn();
+        VertexId v = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                                   std::vector<std::string>{std::to_string(s)});
+        for (int d = 0; d < kDays; ++d) {
+            ASSERT_TRUE(txn.SetVertexSeriesPoint(v, "prices", d * kUsPerDay,
+                                                 OnePoint(100.0 + s + d * 0.1,
+                                                          101.0 + s + d * 0.1, 1000 + d)));
+        }
+        txn.Commit();
+    }
+    const auto t1 = std::chrono::steady_clock::now();
+    auto rtxn = db.CreateReadTxn();
+    size_t vertices = 0;
+    for (auto vit = rtxn.GetVertexIterator(); vit.IsValid(); vit.Next()) {
+        size_t count = 0;
+        ASSERT_TRUE(rtxn.GetVertexSeriesCount(vit.GetId(), "prices", kMinTs, kMaxTs, &count));
+        EXPECT_EQ(count, static_cast<size_t>(kDays));
+        ++vertices;
+        if (vertices == 1 || vertices == kSymbols) {
+            series::Point latest;
+            ASSERT_TRUE(rtxn.GetVertexSeriesLatest(vit.GetId(), "prices", &latest));
+            EXPECT_EQ(latest.ts, (kDays - 1) * kUsPerDay);
+        }
+    }
+    EXPECT_EQ(vertices, static_cast<size_t>(kSymbols));
+    EXPECT_EQ(SeriesKeyCount(db, rtxn), static_cast<size_t>(kSymbols));  // one bucket each
+    size_t stored_bytes = 0;
+    {
+        auto it = db.GetSeriesStore()->Table()->GetIterator(rtxn.GetTxn());
+        it->GotoFirstKey();
+        for (; it->IsValid(); it->Next()) stored_bytes += it->GetValue().Size();
+    }
+    const double bytes_per_point =
+        static_cast<double>(stored_bytes) / (kSymbols * kDays);
+    UT_LOG() << "OHLCV: " << kSymbols * kDays << " points in "
+             << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()
+             << "ms, " << bytes_per_point << " stored bytes/point vs 32 raw";
+    EXPECT_LT(bytes_per_point, 32.0);
 }

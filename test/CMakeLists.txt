@@ -105,6 +105,7 @@ add_executable(unit_test
         test_series_encoding.cpp
         test_series_store.cpp
         test_series_transaction.cpp
+        test_series_bolt.cpp
         test_bolt_hydrator.cpp
         test_service.cpp
         test_snapshot.cpp
