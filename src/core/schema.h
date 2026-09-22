@@ -743,6 +743,18 @@ class Schema {
             s = BinaryReadSeriesInfoV3IntoFieldVec(buf, fds);
             bytes_read += s;
         }
+        // Recovery for databases written before the R2 fix: the fast-alter
+        // add-field path used to stamp a (null) default value on lazily added
+        // series fields, which construction-time validation rejects. A null
+        // default carries no value and the record keeps no bytes for a series
+        // field either way, so strip the spurious flag on load. Non-null
+        // defaults stay rejected by SetSchema below, and new DDL paths never
+        // set the flag (see LightningGraph::AlterLabelAddFields).
+        for (auto& fd : fds) {
+            if (fd.series && fd.set_default_value && fd.default_value.IsNull()) {
+                fd.set_default_value = false;
+            }
+        }
         SetSchema(is_vertex_, fds, primary_field_, temporal_field_, temporal_order_,
                   edge_constraints_);
         return bytes_read;

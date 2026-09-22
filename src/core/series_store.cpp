@@ -34,6 +34,14 @@ const uint32_t kBucketMagic = 0x31534254;  // "TSB1" as little-endian bytes
 const uint16_t kBucketFormatVersion = 1;
 const uint16_t kFlagHasNulls = 1;
 
+// Decode-time allocation bound: the header count is untrusted until the
+// timestamp block proves it can describe that many points, so allocations
+// below must never be sized by a raw u32. Schema caps bucket_max_points at
+// 1000000, hence no legitimate bucket is larger; anything above the bound is
+// rejected before any allocation. (Without this, count=UINT32_MAX would
+// attempt multi-GB vectors — a stored-corruption DoS.)
+const uint32_t kMaxDecodableBucketPoints = 1u << 20;
+
 const uint8_t kKeyKindVertex = 0x00;
 const uint8_t kKeyKindEdge = 0x01;
 
@@ -335,7 +343,7 @@ bool SeriesStore::DecodeBucket(const char* data, size_t len,
     if (!r.ReadU32(&magic) || magic != kBucketMagic) return false;
     if (!r.ReadU16(&version) || version != kBucketFormatVersion) return false;
     if (!r.ReadU16(&flags) || (flags & ~kFlagHasNulls) != 0) return false;
-    if (!r.ReadU32(&count) || count == 0) return false;
+    if (!r.ReadU32(&count) || count == 0 || count > kMaxDecodableBucketPoints) return false;
     if (!r.ReadU16(&n_measures) || n_measures == 0) return false;
     if (n_measures > columns.size()) return false;
     out->measure_ids.resize(n_measures);
@@ -410,7 +418,7 @@ bool SeriesStore::DecodeBucketTimestamps(const char* data, size_t len, int64_t* 
     if (!r.ReadU32(&magic) || magic != kBucketMagic) return false;
     if (!r.ReadU16(&version) || version != kBucketFormatVersion) return false;
     if (!r.ReadU16(&flags) || (flags & ~kFlagHasNulls) != 0) return false;
-    if (!r.ReadU32(&count) || count == 0) return false;
+    if (!r.ReadU32(&count) || count == 0 || count > kMaxDecodableBucketPoints) return false;
     if (!r.ReadU16(&n_measures) || n_measures == 0) return false;
     if (!r.Skip(static_cast<size_t>(n_measures) * 2)) return false;
     if (!r.ReadI64(first_ts)) return false;
@@ -532,6 +540,12 @@ bool SeriesStore::Upsert(KvTransaction& txn, const ElementKey& elem, uint16_t fi
                          const std::vector<MeasureColumn>& columns, const BucketPolicy& policy) {
     const size_t n_measures = columns.size();
     if (n_measures == 0 || values.size() != n_measures) return false;
+    // Stored timestamps must round-trip through DATETIME on read; the
+    // unbounded kMinTs/kMaxTs sentinels are range bounds, not valid points.
+    if (!IsValidSeriesTimestamp(ts)) return false;
+    // Non-finite doubles serialize as JSON null while staying non-null in the
+    // engine (R8); new writes refuse them (legacy bytes still decode).
+    if (!MeasureValuesAreStorable(values, columns)) return false;
 
     std::string field_prefix;
     MakeFieldPrefix(elem, field_id, &field_prefix);
@@ -543,12 +557,13 @@ bool SeriesStore::Upsert(KvTransaction& txn, const ElementKey& elem, uint16_t fi
     Bucket bucket;
     if (found) {
         const Value stored = table_->GetValue(txn, Value::ConstRef(key), true);
-        ++decode_count_;
+        decode_count_.fetch_add(1, std::memory_order_relaxed);
         // Fails if the stored bucket's measures do not match `columns`, e.g.
         // after the label's series measures were redefined.
         if (!DecodeBucket(stored.Data(), stored.Size(), columns, &bucket)) return false;
         if (policy.max_span_us > 0 && ts > bucket.LastTs() &&
-            static_cast<uint64_t>(ts - bucket.first_ts) > policy.max_span_us) {
+            static_cast<uint64_t>(ts) - static_cast<uint64_t>(bucket.first_ts) >
+                policy.max_span_us) {
             // Stretching this bucket would break the span cap: start a new one.
             // No bucket can exist at exactly ts, or the lookup would have
             // returned it.
@@ -602,7 +617,7 @@ bool SeriesStore::Range(KvTransaction& txn, const ElementKey& elem, uint16_t fie
         if (!fma_common::StartsWith(bucket_key, field_prefix)) break;
         const Value stored = it->GetValue();
         Bucket bucket;
-        ++decode_count_;
+        decode_count_.fetch_add(1, std::memory_order_relaxed);
         if (!DecodeBucket(stored.Data(), stored.Size(), columns, &bucket)) return false;
         if (bucket.first_ts > t1) break;
         for (size_t p = 0; p < bucket.PointCount(); ++p) {
@@ -635,7 +650,7 @@ bool SeriesStore::Count(KvTransaction& txn, const ElementKey& elem, uint16_t fie
         if (!fma_common::StartsWith(bucket_key, field_prefix)) break;
         const Value stored = it->GetValue();
         int64_t first_ts = 0;
-        ++decode_count_;
+        decode_count_.fetch_add(1, std::memory_order_relaxed);
         if (!DecodeBucketTimestamps(stored.Data(), stored.Size(), &first_ts, &timestamps)) {
             return false;
         }
@@ -669,7 +684,7 @@ bool SeriesStore::Latest(KvTransaction& txn, const ElementKey& elem, uint16_t fi
 
     const Value stored = table_->GetValue(txn, Value::ConstRef(key));
     Bucket bucket;
-    ++decode_count_;
+    decode_count_.fetch_add(1, std::memory_order_relaxed);
     if (!DecodeBucket(stored.Data(), stored.Size(), columns, &bucket)) return false;
     if (bucket.PointCount() == 0) return true;
     *point = MakePoint(bucket, bucket.PointCount() - 1);
@@ -690,7 +705,7 @@ bool SeriesStore::Earliest(KvTransaction& txn, const ElementKey& elem, uint16_t 
 
     const Value stored = table_->GetValue(txn, Value::ConstRef(key));
     Bucket bucket;
-    ++decode_count_;
+    decode_count_.fetch_add(1, std::memory_order_relaxed);
     if (!DecodeBucket(stored.Data(), stored.Size(), columns, &bucket)) return false;
     if (bucket.PointCount() == 0) return true;
     *point = MakePoint(bucket, 0);

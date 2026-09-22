@@ -161,6 +161,9 @@ class BuiltinProcedure {
     static void SeriesSet(RTContext *ctx, const Record *record, const VEC_EXPR &args,
                           const VEC_STR &yield_items, std::vector<Record> *records);
 
+    static void SeriesUpdateCas(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                                const VEC_STR &yield_items, std::vector<Record> *records);
+
     static void SeriesClear(RTContext *ctx, const Record *record, const VEC_EXPR &args,
                             const VEC_STR &yield_items, std::vector<Record> *records);
 
@@ -772,6 +775,26 @@ static std::vector<Procedure> global_procedures = {
                                   {"measure", {2, lgraph_api::LGraphType::STRING}},
                                   {"ts", {3, lgraph_api::LGraphType::ANY}},
                                   {"value", {4, lgraph_api::LGraphType::ANY}}},
+              Procedure::SIG_SPEC{{"written", {0, lgraph_api::LGraphType::INTEGER}}}, false,
+              false),
+
+    Procedure("series.update_cas", BuiltinProcedure::SeriesUpdateCas,
+              Procedure::SIG_SPEC{{"element", {0, lgraph_api::LGraphType::ANY}},
+                                  {"field", {1, lgraph_api::LGraphType::STRING}},
+                                  {"measure", {2, lgraph_api::LGraphType::STRING}},
+                                  {"ts", {3, lgraph_api::LGraphType::ANY}},
+                                  {"expected", {4, lgraph_api::LGraphType::ANY}},
+                                  {"value", {5, lgraph_api::LGraphType::ANY}}},
+              Procedure::SIG_SPEC{{"written", {0, lgraph_api::LGraphType::INTEGER}}}, false,
+              false),
+
+    Procedure("series_update_cas", BuiltinProcedure::SeriesUpdateCas,
+              Procedure::SIG_SPEC{{"element", {0, lgraph_api::LGraphType::ANY}},
+                                  {"field", {1, lgraph_api::LGraphType::STRING}},
+                                  {"measure", {2, lgraph_api::LGraphType::STRING}},
+                                  {"ts", {3, lgraph_api::LGraphType::ANY}},
+                                  {"expected", {4, lgraph_api::LGraphType::ANY}},
+                                  {"value", {5, lgraph_api::LGraphType::ANY}}},
               Procedure::SIG_SPEC{{"written", {0, lgraph_api::LGraphType::INTEGER}}}, false,
               false),
 

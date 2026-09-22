@@ -41,31 +41,12 @@
 
 #define LGRAPH_PSORT(...) __gnu_parallel::stable_sort(__VA_ARGS__)
 #endif
-#include "core/version.h"
 
-#ifndef GIT_BRANCH
-#define GIT_BRANCH "unknown"
-#endif
-
-#ifndef GIT_COMMIT_HASH
-#define GIT_COMMIT_HASH "unknown"
-#endif
-
-#ifndef WEB_GIT_COMMIT_HASH
-#define WEB_GIT_COMMIT_HASH "unknown"
-#endif
-
-#ifndef CXX_COMPILER_ID
-#define CXX_COMPILER_ID "unknown"
-#endif
-
-#ifndef CXX_COMPILER_VERSION
-#define CXX_COMPILER_VERSION "unknown"
-#endif
-
-#ifndef PYTHON_LIB_VERSION
-#define PYTHON_LIB_VERSION "unknown"
-#endif
+// NOTE: build metadata (git hash, compiler versions) used to live here via
+// core/version.h, which is regenerated on every commit and invalidated ~239
+// translation units each time. It now lives behind lgraph::version::*
+// accessors (core/version_info.h), whose single implementation file is the
+// only TU including the generated header. Do not include version.h here.
 
 #ifndef LGRAPH_PYTHON_PLUGIN_LIFETIME_S
 #define LGRAPH_PYTHON_PLUGIN_LIFETIME_S 12 * 60 * 60
@@ -133,11 +114,6 @@ static const char* const EDGE_COUNT_PREFIX = "_edge_count_";
 // store property data in a separate kv table
 static const char* const VERTEX_PROPERTY_TABLE_PREFIX = "_vertex_property_";
 static const char* const EDGE_PROPERTY_TABLE_PREFIX = "_edge_property_";
-
-// version info
-static const int VER_MAJOR = LGRAPH_VERSION_MAJOR;
-static const int VER_MINOR = LGRAPH_VERSION_MINOR;
-static const int VER_PATCH = LGRAPH_VERSION_PATCH;
 
 // limits
 static const size_t MAX_NUM_USERS = 65536;

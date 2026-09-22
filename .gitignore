@@ -64,6 +64,7 @@ restful/server/build/
 server/united_server
 *.pem
 build
+build-*/
 *.ttl
 release/doc/*.html
 src/restful/server/resource/

@@ -16,6 +16,7 @@
 // Created by wt on 19-1-10.
 //
 
+#include <cmath>
 #include <regex>
 #include <tuple>
 
@@ -29,6 +30,7 @@
 #include "restful/server/json_convert.h"
 #include "cypher/graph/common.h"
 #include "cypher/procedure/procedure.h"
+#include "core/version_info.h"
 #include "cypher/procedure/utils.h"
 #include "butil/endpoint.h"
 #include "cypher/monitor/memory_monitor_allocator.h"
@@ -1612,20 +1614,50 @@ int64_t ParseSeriesTimestamp(const cypher::FieldData &v, const std::string &proc
     if (v.type != cypher::FieldData::SCALAR) {
         throw lgraph::CypherException(proc + ": timestamp must be a DATETIME or INT64");
     }
-    if (v.scalar.IsDateTime()) return v.scalar.AsDateTime().MicroSecondsSinceEpoch();
-    if (v.IsInteger()) return v.scalar.integer();
-    throw lgraph::CypherException(proc + ": timestamp must be a DATETIME or INT64");
+    int64_t ts = 0;
+    if (v.scalar.IsDateTime()) {
+        ts = v.scalar.AsDateTime().MicroSecondsSinceEpoch();
+    } else if (v.IsInteger()) {
+        ts = v.scalar.integer();
+    } else {
+        throw lgraph::CypherException(proc + ": timestamp must be a DATETIME or INT64");
+    }
+    // Stored timestamps must be readable back as DATETIME; unbounded
+    // range-query sentinels are not valid stored points.
+    if (!lgraph::series::IsValidSeriesTimestamp(ts)) {
+        throw lgraph::CypherException(proc + ": timestamp out of DATETIME range");
+    }
+    return ts;
 }
 
 lgraph::series::MeasureValue ParseSeriesMeasureValue(const cypher::FieldData &v,
                                                      lgraph::series::MeasureType type,
                                                      const std::string &measure,
                                                      const std::string &proc) {
-    if (v.type != cypher::FieldData::SCALAR || v.scalar.is_null()) {
+    // An explicit null scalar means "no value" under the full-point replacement
+    // contract. Containers (LIST/MAP) are type errors and must be rejected
+    // before any mutation: mapping them to null would silently overwrite the
+    // stored value.
+    if (v.type != cypher::FieldData::SCALAR) {
+        throw lgraph::CypherException(proc + ": value for measure '" + measure +
+                                      "' must match its declared type");
+    }
+    if (v.scalar.is_null()) {
         return lgraph::series::MeasureValue::Null();
     }
     if (type == lgraph::series::MeasureType::DOUBLE) {
-        if (v.IsReal()) return lgraph::series::MeasureValue::Double(v.scalar.AsDouble());
+        // Non-finite doubles serialize as JSON null while staying non-null in
+        // the engine, silently conflating values with missing observations
+        // (R8). Reject at the public boundary; previously stored bytes still
+        // decode (codec round-trips them bit-exactly).
+        if (v.IsReal()) {
+            const double d = v.scalar.AsDouble();
+            if (!std::isfinite(d)) {
+                throw lgraph::CypherException(proc + ": value for measure '" + measure +
+                                              "' must be a finite number");
+            }
+            return lgraph::series::MeasureValue::Double(d);
+        }
         if (v.IsInteger()) {
             return lgraph::series::MeasureValue::Double(static_cast<double>(v.scalar.integer()));
         }
@@ -1655,19 +1687,42 @@ void CreateSeriesFieldImpl(RTContext *ctx, const cypher::VEC_EXPR &args, bool is
     lgraph::FieldSpec spec(field, lgraph::FieldType::BLOB, true);
     spec.series = true;
     spec.series_spec.measures = std::move(measures);
-    spec.series_spec.bucket_max_points =
-        static_cast<uint32_t>(ParseSeriesOptionInt(args[3].constant, "bucket_max_points", 1000,
-                                                   proc));
-    spec.series_spec.bucket_max_span_us =
-        static_cast<uint64_t>(ParseSeriesOptionInt(args[3].constant, "bucket_max_span_us", 0,
-                                                   proc));
-    spec.series_spec.bucket_max_bytes =
-        static_cast<uint32_t>(ParseSeriesOptionInt(args[3].constant, "bucket_max_bytes",
-                                                   1 << 20, proc));
-    if (spec.series_spec.bucket_max_points == 0 || spec.series_spec.bucket_max_bytes == 0) {
-        throw lgraph::CypherException(proc + ": bucket_max_points and bucket_max_bytes "
-                                      "must be positive");
+    // Validate option keys first so misspellings cannot silently select
+    // defaults. Ranges are checked on the signed value before any narrowing
+    // conversion: casting first would wrap 2^32+1 to 1 or -1 to UINT64_MAX.
+    for (const auto &kv : *args[3].constant.map) {
+        if (kv.first != "bucket_max_points" && kv.first != "bucket_max_span_us" &&
+            kv.first != "bucket_max_bytes") {
+            throw lgraph::CypherException(proc + ": unknown option '" + kv.first +
+                                          "', expected bucket_max_points, "
+                                          "bucket_max_span_us or bucket_max_bytes");
+        }
     }
+    const int64_t opt_points =
+        ParseSeriesOptionInt(args[3].constant, "bucket_max_points", 1000, proc);
+    const int64_t opt_span =
+        ParseSeriesOptionInt(args[3].constant, "bucket_max_span_us", 0, proc);
+    const int64_t opt_bytes =
+        ParseSeriesOptionInt(args[3].constant, "bucket_max_bytes", 1 << 20, proc);
+    // Operational limits, mirrored in CheckSeriesFieldSpec so direct API DDL
+    // cannot bypass them. Points are bounded by rewrite cost, bytes by the
+    // 16 MiB property cap, span by the signed timestamp domain.
+    static const int64_t kMaxSeriesPoints = 1000000;
+    static const int64_t kMaxSeriesBytes = 16 << 20;
+    if (opt_points <= 0 || opt_points > kMaxSeriesPoints) {
+        throw lgraph::CypherException(
+            proc + ": bucket_max_points must be in [1, 1000000]");
+    }
+    if (opt_bytes <= 0 || opt_bytes > kMaxSeriesBytes) {
+        throw lgraph::CypherException(
+            proc + ": bucket_max_bytes must be in [1, 16777216]");
+    }
+    if (opt_span < 0) {
+        throw lgraph::CypherException(proc + ": bucket_max_span_us must be >= 0");
+    }
+    spec.series_spec.bucket_max_points = static_cast<uint32_t>(opt_points);
+    spec.series_spec.bucket_max_span_us = static_cast<uint64_t>(opt_span);
+    spec.series_spec.bucket_max_bytes = static_cast<uint32_t>(opt_bytes);
     /* close the previous txn first, in case of nested transaction */
     if (ctx->txn_) ctx->txn_->Abort();
     size_t n_modified = 0;
@@ -1856,6 +1911,96 @@ void BuiltinProcedure::SeriesSet(RTContext *ctx, const Record *record, const VEC
     r.AddConstant(lgraph::FieldData(static_cast<int64_t>(1)));
     records->emplace_back(r.Snapshot());
     FillProcedureYieldItem("series.update", yield_items, records);
+}
+
+void BuiltinProcedure::SeriesUpdateCas(RTContext *ctx, const Record *record,
+                                       const VEC_EXPR &args,
+                                       const VEC_STR &yield_items,
+                                       std::vector<Record> *records) {
+    // R7: compare-and-set for replay-safe correction under concurrent mutable
+    // ingestion. Applies only when the stored value equals `expected`
+    // (null matches a missing point or a stored null); otherwise yields
+    // written=0 and mutates nothing, so a replayed request loses to an
+    // intervening correction instead of silently undoing it. Provisional
+    // until the M5 revision model lands; unconditional series.update keeps
+    // its contract for ordered exclusive writers.
+    CYPHER_ARG_CHECK(args.size() == 6,
+                     "e.g. series.update_cas(node, 'prices', 'close', "
+                     "datetime('2024-01-02'), 11.5, 12.5)");
+    CYPHER_ARG_CHECK(args[1].IsString() && args[2].IsString(),
+                     "field and measure must be strings");
+    CheckProcedureYieldItem("series.update_cas", yield_items);
+    CYPHER_DB_PROCEDURE_GRAPH_CHECK();
+    SeriesProcElement elem;
+    ExtractSeriesProcElement(args[0], "series.update_cas", &elem);
+    const std::string field = args[1].constant.scalar.AsString();
+    const std::string measure = args[2].constant.scalar.AsString();
+    const int64_t ts = ParseSeriesTimestamp(args[3].constant, "series.update_cas");
+    auto txn = ctx->txn_->GetTxn();
+    uint16_t field_id = 0;
+    std::vector<lgraph::series::MeasureColumn> columns;
+    lgraph::series::BucketPolicy policy;
+    std::vector<lgraph::series::MeasureRef> measures;
+    const bool resolved = elem.is_edge
+                              ? txn->ResolveEdgeSeriesSchema(elem.euid, field, &field_id,
+                                                             &columns, &policy, &measures)
+                              : txn->ResolveVertexSeriesSchema(elem.vid, field, &field_id,
+                                                               &columns, &policy, &measures);
+    if (!resolved) {
+        THROW_CODE(InputError, "Element has no time series field [{}]", field);
+    }
+    size_t idx = measures.size();
+    for (size_t i = 0; i < measures.size(); ++i) {
+        if (measures[i].name == measure) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx == measures.size()) {
+        THROW_CODE(InputError, "Series field [{}] has no measure [{}]", field, measure);
+    }
+    const lgraph::series::MeasureValue expected = ParseSeriesMeasureValue(
+        args[4].constant, measures[idx].type, measure, "series.update_cas");
+    const lgraph::series::MeasureValue updated = ParseSeriesMeasureValue(
+        args[5].constant, measures[idx].type, measure, "series.update_cas");
+    std::vector<lgraph::series::Point> points;
+    const bool read = elem.is_edge
+                          ? txn->GetEdgeSeriesRange(elem.euid, field, ts, ts, &points)
+                          : txn->GetVertexSeriesRange(elem.vid, field, ts, ts, &points);
+    if (!read) {
+        THROW_CODE(InternalError, "Corrupt series in field [{}]", field);
+    }
+    // Exact match on the stored representation (doubles compare bitwise-equal
+    // via ==; non-finite values cannot be stored, so NaN != NaN never arises
+    // from a legitimate expectation).
+    lgraph::series::MeasureValue current = lgraph::series::MeasureValue::Null();
+    if (!points.empty()) current = points.front().values[idx];
+    bool match = false;
+    if (current.is_null && expected.is_null) {
+        match = true;
+    } else if (!current.is_null && !expected.is_null) {
+        match = (measures[idx].type == lgraph::series::MeasureType::DOUBLE)
+                    ? (current.d == expected.d)
+                    : (current.i == expected.i);
+    }
+    int64_t written = 0;
+    if (match) {
+        std::vector<lgraph::series::MeasureValue> values(measures.size(),
+                                                         lgraph::series::MeasureValue::Null());
+        if (!points.empty()) values = points.front().values;
+        values[idx] = updated;
+        const bool ok = elem.is_edge
+                            ? txn->SetEdgeSeriesPoint(elem.euid, field, ts, values)
+                            : txn->SetVertexSeriesPoint(elem.vid, field, ts, values);
+        if (!ok) {
+            THROW_CODE(InputError, "series.update_cas: point does not fit the bucket byte cap");
+        }
+        written = 1;
+    }
+    Record r;
+    r.AddConstant(lgraph::FieldData(written));
+    records->emplace_back(r.Snapshot());
+    FillProcedureYieldItem("series.update_cas", yield_items, records);
 }
 
 void BuiltinProcedure::SeriesClear(RTContext *ctx, const Record *record, const VEC_EXPR &args,
@@ -2639,22 +2784,20 @@ void BuiltinProcedure::DbmsSystemInfo(RTContext *ctx, const cypher::Record *reco
                                       std::vector<cypher::Record> *records) {
     CheckProcedureYieldItem("dbms.system.info", yield_items);
     if (ctx->txn_) ctx->txn_->Abort();
-    std::string version;
-    version.append(std::to_string(lgraph::_detail::VER_MAJOR))
-        .append(".")
-        .append(std::to_string(lgraph::_detail::VER_MINOR))
-        .append(".")
-        .append(std::to_string(lgraph::_detail::VER_PATCH));
+    std::string version = lgraph::version::ShortVersion();
     std::vector<std::pair<std::string, lgraph::FieldData>> info = {
         {lgraph::RestStrings::VER, lgraph::FieldData(version)},
         {lgraph::RestStrings::UP_TIME,
          lgraph::FieldData(ctx->sm_ ? ctx->sm_->GetUpTimeInSeconds() : 0.0)},
-        {lgraph::RestStrings::BRANCH, lgraph::FieldData(GIT_BRANCH)},
-        {lgraph::RestStrings::COMMIT, lgraph::FieldData(GIT_COMMIT_HASH)},
-        {lgraph::RestStrings::WEB_COMMIT, lgraph::FieldData(WEB_GIT_COMMIT_HASH)},
-        {lgraph::RestStrings::CPP_ID, lgraph::FieldData(CXX_COMPILER_ID)},
-        {lgraph::RestStrings::CPP_VERSION, lgraph::FieldData(CXX_COMPILER_VERSION)},
-        {lgraph::RestStrings::PYTHON_VERSION, lgraph::FieldData(PYTHON_LIB_VERSION)},
+        {lgraph::RestStrings::BRANCH, lgraph::FieldData(lgraph::version::GitBranch())},
+        {lgraph::RestStrings::COMMIT, lgraph::FieldData(lgraph::version::GitCommitHash())},
+        {lgraph::RestStrings::WEB_COMMIT,
+         lgraph::FieldData(lgraph::version::WebGitCommitHash())},
+        {lgraph::RestStrings::CPP_ID, lgraph::FieldData(lgraph::version::CxxCompilerId())},
+        {lgraph::RestStrings::CPP_VERSION,
+         lgraph::FieldData(lgraph::version::CxxCompilerVersion())},
+        {lgraph::RestStrings::PYTHON_VERSION,
+         lgraph::FieldData(lgraph::version::PythonLibVersion())},
     };
     for (auto &i : info) {
         Record r;

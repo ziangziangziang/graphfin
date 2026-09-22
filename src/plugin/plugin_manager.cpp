@@ -13,6 +13,7 @@
  */
 
 #include "plugin/plugin_manager.h"
+#include "core/version_info.h"
 
 lgraph::SingleLanguagePluginManager::SingleLanguagePluginManager(
     const std::string& language, const std::string& graph_name, const std::string& plugin_dir,
@@ -198,7 +199,8 @@ void lgraph::SingleLanguagePluginManager::UpdateSoToKvStore(KvTransaction& txn,
     table_->SetValue(txn, Value::ConstRef(so_key), Value::ConstRef(so));
     // write hash
     std::string hash_key = GetHashKey(name);
-    table_->SetValue(txn, Value::ConstRef(hash_key), Value::ConstRef(GIT_COMMIT_HASH));
+    table_->SetValue(txn, Value::ConstRef(hash_key),
+                     Value::ConstRef(lgraph::version::GitCommitHash()));
 }
 
 void lgraph::SingleLanguagePluginManager::UpdateZipToKvStore(KvTransaction& txn,
@@ -640,7 +642,7 @@ bool lgraph::SingleLanguagePluginManager::isHashUpTodate(KvTransaction& txn, std
     auto hash_it = table_->GetIterator(txn, Value::ConstRef(hash_key));
     FMA_DBG_ASSERT(hash_it->IsValid());
     const std::string& hash = hash_it->GetValue().AsString();
-    return hash == GIT_COMMIT_HASH;
+    return hash == lgraph::version::GitCommitHash();
 }
 
 void lgraph::SingleLanguagePluginManager::LoadAllPlugins(KvTransaction& txn) {

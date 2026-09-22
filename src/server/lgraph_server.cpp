@@ -26,6 +26,7 @@
 #include "server/lgraph_server.h"
 #include "core/audit_logger.h"
 #include "core/global_config.h"
+#include "core/version_info.h"
 #include "core/full_text_index.h"
 #include "core/thread_id.h"  // LGRAPH_MAX_THREADS for the memory estimate
 #include "restful/server/rest_server.h"
@@ -185,12 +186,7 @@ int LGraphServer::Start() {
         }
 
         // print welcome message
-        std::string version;
-        version.append(std::to_string(lgraph::_detail::VER_MAJOR))
-            .append(".")
-            .append(std::to_string(lgraph::_detail::VER_MINOR))
-            .append(".")
-            .append(std::to_string(lgraph::_detail::VER_PATCH));
+        const std::string version = lgraph::version::ShortVersion();
         std::ostringstream header;
         header << "\n"
                << "**********************************************************************"

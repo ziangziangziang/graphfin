@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -79,6 +80,17 @@ struct BucketPolicy {
 static const int64_t kMinTs = std::numeric_limits<int64_t>::min();
 static const int64_t kMaxTs = std::numeric_limits<int64_t>::max();
 
+/**
+ * Stored point timestamps must live in the DATETIME domain: query output
+ * always builds a DateTime from them, and values outside that range make
+ * normal reads throw. kMinTs/kMaxTs stay valid as unbounded range-query
+ * sentinels but are never valid stored timestamps.
+ */
+inline bool IsValidSeriesTimestamp(int64_t ts) {
+    return ts >= ::lgraph_api::MinMicroSecondsSinceEpochForDateTime() &&
+           ts <= ::lgraph_api::MaxMicroSecondsSinceEpochForDateTime();
+}
+
 /** One measure value at one point. */
 struct MeasureValue {
     bool is_null = true;
@@ -99,6 +111,25 @@ struct MeasureValue {
         return m;
     }
 };
+
+/**
+ * True when every value may be stored: non-null DOUBLEs must be finite.
+ * NaN/Infinity serialize as JSON null while staying non-null in the engine,
+ * silently conflating values with missing observations (R8), so writes
+ * reject them. Previously stored non-finite bytes still decode — the codec
+ * round-trips them bit-exactly — this guards only new writes.
+ */
+inline bool MeasureValuesAreStorable(const std::vector<MeasureValue>& values,
+                                     const std::vector<MeasureColumn>& columns) {
+    if (values.size() != columns.size()) return false;
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (!values[i].is_null && columns[i].type == MeasureType::DOUBLE &&
+            !std::isfinite(values[i].d)) {
+            return false;
+        }
+    }
+    return true;
+}
 
 /**
  * One point as handed back to callers: its timestamp and one value per column

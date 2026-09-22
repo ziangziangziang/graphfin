@@ -12,6 +12,8 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
 
+#include <cmath>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -519,6 +521,52 @@ TEST_F(TestSeriesStore, DataSurvivesReopenAndClose) {
     EXPECT_EQ(reopened.series().Table()->GetKeyCount(reopened.txn()), 3u);
 }
 
+TEST_F(TestSeriesStore, LegacyNonFiniteBytesStillDecode) {
+    // R8 storage compatibility: non-finite doubles were storable before the
+    // write-side rejection, so the decoder must keep reading legacy bytes
+    // faithfully (non-null, bit-exact) rather than failing or nulling them.
+    // New writes through Upsert are refused instead.
+    const std::vector<MeasureColumn> cols = OhlcColumns();
+    Bucket bucket;
+    bucket.first_ts = 0;
+    bucket.measure_ids = {0, 1, 2, 3, 4};
+    bucket.timestamps = {0, kUsPerDay};
+    bucket.columns.assign(5, std::vector<MeasureValue>(2, D(1.0)));
+    bucket.columns[0][1] = D(std::numeric_limits<double>::quiet_NaN());
+    bucket.columns[1][1] = D(std::numeric_limits<double>::infinity());
+    std::string encoded;
+    ASSERT_TRUE(SeriesStore::EncodeBucket(bucket, cols, kDefaultPolicy, &encoded));
+
+    SeriesSession session(dir_);
+    const ElementKey v = ElementKey::FromVertex(1);
+    std::string key;
+    SeriesStore::MakeBucketKey(v, 0, 0, &key);
+    session.series().Table()->SetValue(session.txn(), Value::ConstRef(key),
+                                       Value::ConstRef(encoded), true);
+    session.Commit();
+
+    std::vector<Point> points;
+    ASSERT_TRUE(session.series().Range(session.txn(), v, 0, kMinTs, kMaxTs, cols, &points));
+    ASSERT_EQ(points.size(), 2u);
+    EXPECT_FALSE(points[1].values[0].is_null);
+    EXPECT_TRUE(std::isnan(points[1].values[0].d));
+    EXPECT_FALSE(points[1].values[1].is_null);
+    EXPECT_TRUE(std::isinf(points[1].values[1].d));
+    size_t count = 0;
+    ASSERT_TRUE(session.series().Count(session.txn(), v, 0, kMinTs, kMaxTs, cols, &count));
+    EXPECT_EQ(count, 2u);
+
+    // Finite values still write through the same path.
+    ASSERT_TRUE(session.series().Upsert(session.txn(), v, 0, 2 * kUsPerDay, Point5(1.0),
+                                        cols, kDefaultPolicy));
+    // The same slot with a NaN is refused instead.
+    std::vector<MeasureValue> nan_point = Point5(1.0);
+    nan_point[0] = D(std::numeric_limits<double>::quiet_NaN());
+    EXPECT_FALSE(
+        session.series().Upsert(session.txn(), v, 0, 2 * kUsPerDay, nan_point, cols,
+                                kDefaultPolicy));
+}
+
 TEST_F(TestSeriesStore, RejectsMalformedBuckets) {
     SeriesSession session(dir_);
     const ElementKey v = ElementKey::FromVertex(1);
@@ -632,6 +680,99 @@ TEST_F(TestSeriesStore, EncodingRejectsInconsistentBuckets) {
     tampered[0] = static_cast<char>(tampered[0] + 1);  // break the magic
     EXPECT_FALSE(SeriesStore::DecodeBucket(tampered.data(), tampered.size(), cols, &decoded));
     EXPECT_FALSE(SeriesStore::DecodeBucket(encoded.data(), encoded.size() / 2, cols, &decoded));
+}
+
+TEST_F(TestSeriesStore, AdversarialBucketMutationsNeverCrash) {
+    // Review hardening: the header count is untrusted until the timestamp
+    // block proves it, so decoders must fail cleanly (false, no crash, no
+    // hang, no count-sized allocation) on every malformed input. The PRNG
+    // below is a fixed-seed LCG, so this stays reproducible in gate and under
+    // ASan/UBSan.
+    const std::vector<MeasureColumn> cols = OhlcColumns();
+    Bucket bucket;
+    bucket.first_ts = 0;
+    bucket.measure_ids = {0, 1, 2, 3, 4};
+    bucket.timestamps = {0, kUsPerDay, 2 * kUsPerDay, 3 * kUsPerDay};
+    bucket.columns.assign(5, std::vector<MeasureValue>(4, D(1.0)));
+    bucket.columns[4] = std::vector<MeasureValue>(4, I(7));
+    bucket.columns[2][1] = N();
+    std::string encoded;
+    ASSERT_TRUE(SeriesStore::EncodeBucket(bucket, cols, kDefaultPolicy, &encoded));
+
+    Bucket decoded;
+    int64_t first_ts = 0;
+    std::vector<int64_t> ts_only;
+    EXPECT_FALSE(SeriesStore::DecodeBucket("", 0, cols, &decoded));
+    EXPECT_FALSE(SeriesStore::DecodeBucketTimestamps("", 0, &first_ts, &ts_only));
+    EXPECT_FALSE(SeriesStore::DecodeBucket("TSB1", 4, cols, &decoded));
+
+    // A hostile count (u32 at offset 8) must be rejected before any
+    // count-sized allocation: without the decode cap this attempts multi-GB
+    // vectors.
+    std::string huge = encoded;
+    ASSERT_GE(huge.size(), 12u);
+    huge[8] = '\xFF';
+    huge[9] = '\xFF';
+    huge[10] = '\xFF';
+    huge[11] = '\xFF';
+    EXPECT_FALSE(SeriesStore::DecodeBucket(huge.data(), huge.size(), cols, &decoded));
+    EXPECT_FALSE(
+        SeriesStore::DecodeBucketTimestamps(huge.data(), huge.size(), &first_ts, &ts_only));
+
+    uint64_t state = 0x12345678u;
+    auto next = [&]() {
+        state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+        return state >> 33;
+    };
+    for (int iter = 0; iter < 5000; ++iter) {
+        std::string mutated = encoded;
+        const int op = static_cast<int>(next() % 5);
+        const size_t pos = static_cast<size_t>(next() % (mutated.size() + 8));
+        bool strictly_shorter = false;
+        switch (op) {
+        case 0:  // single-bit flip
+            if (pos < mutated.size()) mutated[pos] ^= static_cast<char>(1u << (next() % 8));
+            break;
+        case 1:  // random byte overwrite
+            if (pos < mutated.size()) mutated[pos] = static_cast<char>(next() % 256);
+            break;
+        case 2:  // truncation, possibly to empty
+            mutated.resize(pos % (mutated.size() + 1));
+            strictly_shorter = mutated.size() < encoded.size();
+            break;
+        case 3: {  // header count overwrite with extremes
+            static const uint32_t extremes[] = {0, 1, 2, 0x7FFFFFFFu, 0xFFFFFFFFu, 1000000u,
+                                                1000001u};
+            uint32_t v = extremes[next() % 7];
+            for (int b = 0; b < 4; ++b)
+                mutated[8 + b] = static_cast<char>((v >> (8 * b)) & 0xFF);
+            break;
+        }
+        default:  // splice a chunk of the valid encoding at a random spot
+            mutated.insert(pos % mutated.size(), encoded.data(),
+                           std::min<size_t>(static_cast<size_t>(next() % 32), encoded.size()));
+            break;
+        }
+        // Must return, never crash or hang. A strict truncation can never
+        // still decode a full bucket (every column block is required), so it
+        // must be false; the timestamp-only path may still succeed when the
+        // cut lands past the intact ts column, so it only requires clean
+        // completion. Every other op only requires clean completion.
+        const bool ok_full =
+            SeriesStore::DecodeBucket(mutated.data(), mutated.size(), cols, &decoded);
+        const bool ok_ts = SeriesStore::DecodeBucketTimestamps(mutated.data(), mutated.size(),
+                                                               &first_ts, &ts_only);
+        if (strictly_shorter) {
+            EXPECT_FALSE(ok_full) << "iter " << iter;
+        }
+        (void)ok_full;
+        (void)ok_ts;
+    }
+
+    // The intact value still decodes, so failures above are the corruption
+    // checks and not a broken setup.
+    ASSERT_TRUE(SeriesStore::DecodeBucket(encoded.data(), encoded.size(), cols, &decoded));
+    EXPECT_EQ(decoded.timestamps, bucket.timestamps);
 }
 
 TEST_F(TestSeriesStore, FailedSplitLeavesStoredBucketsUntouched) {

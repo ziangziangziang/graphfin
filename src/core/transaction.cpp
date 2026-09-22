@@ -1643,6 +1643,9 @@ bool Transaction::ProbeVertexSeries(VertexId id, const std::string& field,
 bool Transaction::SetVertexSeriesPoint(VertexId id, const std::string& field, int64_t ts,
                                        const std::vector<series::MeasureValue>& values) {
     ThrowIfReadOnlyTxn();
+    if (!series::IsValidSeriesTimestamp(ts)) {
+        THROW_CODE(InputError, "Series timestamp [{}] out of DATETIME range.", ts);
+    }
     VertexIterator it = GetVertexIterator(id);
     if (!it.IsValid()) return false;
     uint16_t field_id = 0;
@@ -1652,6 +1655,9 @@ bool Transaction::SetVertexSeriesPoint(VertexId id, const std::string& field, in
     if (values.size() != columns.size()) {
         THROW_CODE(InputError, "Series field [{}] has {} measures, but {} values were given.",
                    field, columns.size(), values.size());
+    }
+    if (!series::MeasureValuesAreStorable(values, columns)) {
+        THROW_CODE(InputError, "Series DOUBLE measure values must be finite numbers.");
     }
     return series_store_->Upsert(*txn_, series::ElementKey::FromVertex(id), field_id, ts, values,
                                  columns, policy);
@@ -1795,6 +1801,9 @@ bool Transaction::ResolveEdgeSeriesSchema(const EdgeUid& uid, const std::string&
 bool Transaction::SetEdgeSeriesPoint(const EdgeUid& uid, const std::string& field, int64_t ts,
                                      const std::vector<series::MeasureValue>& values) {
     ThrowIfReadOnlyTxn();
+    if (!series::IsValidSeriesTimestamp(ts)) {
+        THROW_CODE(InputError, "Series timestamp [{}] out of DATETIME range.", ts);
+    }
     uint16_t field_id = 0;
     std::vector<series::MeasureColumn> columns;
     series::BucketPolicy policy;
@@ -1802,6 +1811,9 @@ bool Transaction::SetEdgeSeriesPoint(const EdgeUid& uid, const std::string& fiel
     if (values.size() != columns.size()) {
         THROW_CODE(InputError, "Series field [{}] has {} measures, but {} values were given.",
                    field, columns.size(), values.size());
+    }
+    if (!series::MeasureValuesAreStorable(values, columns)) {
+        THROW_CODE(InputError, "Series DOUBLE measure values must be finite numbers.");
     }
     return series_store_->Upsert(*txn_, series::ElementKey::FromEdge(uid), field_id, ts, values,
                                  columns, policy);
