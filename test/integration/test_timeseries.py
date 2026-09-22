@@ -212,6 +212,24 @@ def test_restart_preserves_series(srv, rpc):
             pass
 
 
+def test_bundled_rest_client_login_and_cypher(srv):
+    # M4 regression: the bundled TuGraphRestClient posted `userName` while
+    # the server requires `user`, and assumed response envelopes the server
+    # no longer sends. Login, a Cypher round-trip, and logout must work.
+    from TuGraphRestClient import TuGraphRestClient
+
+    c = TuGraphRestClient("http://127.0.0.1:%d/" % srv.http_port,
+                          DEFAULT_USER, DEFAULT_PASSWORD)
+    try:
+        assert c.call_cypher(
+            "default", "CALL db.createVertexLabel('Sdk', 'id', 'id', 'INT64', false)") == []
+        assert c.call_cypher("default", "CREATE (n:Sdk {id:5})") == [
+            ["created 1 vertices, created 0 edges."]]
+        assert c.call_cypher("default", "MATCH (n:Sdk) RETURN n.id AS id") == [[5]]
+    finally:
+        assert c.logout() is True
+
+
 def test_bolt_series_wire_types(srv):
     # Live Bolt assertions (packstream over TCP, not in-process conversion):
     # collection cells cross as JSON text, scalars as Bolt natives.
