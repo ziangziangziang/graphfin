@@ -31,8 +31,13 @@ Consequences:
   text back; only the RPC JSON convenience layer does.
 - SDK normalization proposal (not yet implemented in any bundled SDK):
   clients should expose `result` (raw, as above) plus a `parsed()` view
-  that parses exactly the columns whose header type is `LIST`/`MAP`,
-  using header type metadata — never content sniffing.
+  for collection columns. This needs an M4 wire/API design decision first:
+  the current header carries type 0 for scalar, LIST, MAP, and ANY result
+  types alike (`state_machine.cpp`), so the header as shipped cannot tell a
+  collection from a JSON-looking string. Options: compatible logical-type
+  or value-tag metadata (including dynamic ANY expressions), or an explicit
+  caller-supplied result schema. Content sniffing is not acceptable, and the
+  ANY-cell serialization repair does not supply this distinction.
 - `RETURN []` / `RETURN {}` arrive as the strings `"[]"` / `"{}"`, never
   null. An empty window is `[]` after parsing.
 
@@ -53,6 +58,11 @@ Consequences:
 - `DOUBLE` measures keep IEEE semantics through JSON (17 significant
   digits) and Bolt float64. Integer `mean()` accumulates in double;
   integer `sum()` is overflow-checked and refuses rather than wraps.
+  Non-finite values (NaN, ±Infinity) are rejected at every write boundary
+  with a clear error: they serialize as JSON null while staying non-null
+  in the engine, which would silently conflate values with missing
+  observations. Previously stored non-finite bytes still decode (codec
+  round-trips them bit-exactly); only new writes are refused.
 
 ## 3. Null / empty / nesting matrix
 
@@ -87,12 +97,20 @@ Documented series errors (stable text, asserted by goldens and REST tests):
 | Ordinary `SET` on a series field | names `series.append` / `series.update` |
 | Reload-shifting DDL on packed labels | names the shifting field, suggests fast-alter or drop-first |
 
-Retry guidance: point writes are idempotent (same timestamp + values =
-same bytes), so transport-level failures (dropped connection, timeouts)
-may be retried freely; semantic `CypherError`s must never be retried.
-`test_timeseries.py::idempotent_retry` encodes this split. Multi-row
-`MATCH`+`CALL` writes commit atomically with the query; a later row's
-type error rolls back earlier rows of the same query.
+Retry guidance (R7): consecutive identical writes are idempotent, but replay
+is NOT safe across intervening writes — replaying request A after correction
+B silently restores A's value, and replaying a clear erases newly arrived
+points. Automatic retry is therefore restricted to an **ordered exclusive
+writer** (same bytes rewritten, nothing interleaves): transport-level
+failures (dropped connection, timeouts) may be retried there; semantic
+`CypherError`s are never retried; `clear` and DDL are never auto-retried.
+`test_timeseries.py::idempotent_retry` enforces this split (refuses
+non-retryable ops outright). Concurrent mutable ingestion must use
+`series.update_cas` with expectations: a stale replay loses explicitly
+(`written=0`) instead of undoing the correction. Provisional until the M5
+revision model lands.
+Multi-row `MATCH`+`CALL` writes commit atomically with the query; a later
+row's type error rolls back earlier rows of the same query.
 
 ## 5. Parser support
 

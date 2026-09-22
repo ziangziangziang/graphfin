@@ -10,11 +10,11 @@ in §7. Pinned build: `tugraph-compile-arm64:phase0`, `RelWithDebInfo`,
 |---|---|---|
 | R1–R6 review findings | Fixed, approved for merge/sign-off | Prior review §Post-fix; regressions in gate |
 | Decoder hardening + fuzz | Done | Cap + `AdversarialBucketMutationsNeverCrash` (gate); 20k-iter ASan/UBSan harness clean |
-| Sanitizer integration | Partial | TSan + ASan/UBSan harness runs clean; full-binary runs blocked by image issues (details §3) |
+| Sanitizer integration | Partial | TSan + ASan/UBSan harness runs clean (interim coverage only, not full lifecycle/concurrency claims); full-binary runs blocked by image issues (details §3) |
 | Upstream defects found by testing | Fixed (3) | Unlocked thread-id release; misaligned LMDB loads; ANY-cell server abort |
-| S5 lifecycle matrix | Done | Contention/OHLCV (C++), restart/SIGKILL/backup incl. real tool (pytest) |
-| Eviction/reopen | Done | Churn test + lifecycle `evictions` counter asserted |
-| Pre-series fixture | Partial | Merge-base-binary fixture + upgrade test; true v4.5.2 files open |
+| S5 lifecycle matrix | Partial | Contention/OHLCV (C++), restart/SIGKILL/backup incl. real tool (pytest). Retained subcases: idle-SIGKILL recovery, offline tool restore, counter-proven eviction churn, snapshot isolation. Open: mixed-txn fault injection, ack ledger, memory-limit eviction with live readers |
+| Eviction/reopen | Partial | Churn + `evictions` counter asserted; refs released before idle eviction, 1-point graphs — not a memory-budget test with live operations |
+| Pre-series fixture | Partial | Merge-base-binary fixture + upgrade test (narrower scope than a released fixture); true v4.5.2 files open |
 | REST/Bolt clients | Done | REST suite, in-process Bolt suite, live TCP-driver suite, live `neo4j` driver suite, bundled-client login fix |
 | Bundled REST login mismatch | Fixed | `fix(client)` + regression test |
 | Multi-row rollback | Proven + tested | Live verification, REST regression |
@@ -26,8 +26,8 @@ in §7. Pinned build: `tugraph-compile-arm64:phase0`, `RelWithDebInfo`,
 | M1 persisted identity | Design inputs drafted | PLAN.md; decision needed before implementation |
 | HA replication evidence | Not started | Needs multi-node setup |
 
-Current results: **gate 103/103 ACCEPT** (fresh XML, provenance), **pytest
-15/15** (10 series + 5 bench), TSan harness clean, ASan/UBSan fuzz clean.
+Current results: **gate 105/105 ACCEPT** (fresh XML, provenance), **pytest
+19/19** (14 series + 5 bench), TSan harness clean, ASan/UBSan fuzz clean.
 
 ## 2. R1–R6 (approved; retained for the record)
 
@@ -146,5 +146,42 @@ decoder cap, `fix(core)` races/UB, `fix(server)` ANY crash, S5/REST/Bolt/
 fixture tests, sanitizer options/harnesses/gate provenance, evidence
 report. Phases: REST login `fix(client)` + regression, `PLAN.md` build
 plan, live-driver/eviction/bench tests, demos, client-contracts doc,
-`fix(build)` version isolation + lifetime test. `PROJECT.md`/`REVIEW.md`
-rewrites are the principal's and stay uncommitted, as does `AGENTS.md`.
+`fix(build)` version isolation + lifetime test. R7–R10 below.
+`PROJECT.md`/`REVIEW.md` rewrites are the principal's and stay uncommitted,
+as does `AGENTS.md`.
+
+## 10. R7–R10 follow-up (principal increment #1)
+
+- **R8 (done)**: non-finite DOUBLEs rejected at the procedure boundary
+  (`ParseSeriesMeasureValue`, "must be a finite number"), the transaction
+  boundary (`SetVertex/EdgeSeriesPoint`, `InputError`), and defensively in
+  `SeriesStore::Upsert` (`false`), via shared
+  `series::MeasureValuesAreStorable`. Previously stored non-finite bytes
+  still decode (codec round-trips them; pinned by
+  `LegacyNonFiniteBytesStillDecode`). Goldens, C++ txn test, REST, raw-Bolt,
+  live-driver, and in-process Bolt coverage; actual nulls still store.
+- **R7 (done)**: new `series.update_cas` / `series_update_cas` procedure —
+  single-measure compare-and-set with null-aware expectations, yielding
+  `written=1` on apply and `written=0` (no mutation) on mismatch; null
+  expectation creates absent points. Provisional until the M5 revision
+  model. `idempotent_retry` restricted to an ordered exclusive writer and
+  to `point-write`/`read` ops (clear/DDL refused outright). Docs state the
+  exclusive-writer assumption and the CAS pattern. Acceptance covered:
+  lost-response replay keeps the correction with explicit conflict, normal
+  CAS applies, clear excluded (hazard demonstrated + refusal asserted),
+  multi-row rollback already pinned.
+- **R9 (done)**: `TuGraphRestError(status, message)`; `__get_result__`
+  never returns `None` and maps every status/body shape (flat, legacy
+  envelopes, empty/malformed bodies, transport errors); `call_cypher`
+  raises instead of returning error text as rows. Live tests: bad-password
+  login, malformed Cypher (500 + parser text), invalid measure, forged
+  token (401); offline shape matrix without a server.
+- **R10 (done)**: contract doc corrected — headers carry type 0 for
+  scalar/LIST/MAP/ANY alike, so automatic normalization needs an M4
+  logical-type/value-tag or caller-schema design first; recorded in PLAN.md
+  as a design dependency. No content sniffing.
+- **Labels (done)**: lifecycle matrix → Partial with retained subcases,
+  journey → smoke, merge-base fixture scope noted, harness ≠ full coverage.
+- Current results after this chapter: **gate 105/105 ACCEPT**, **pytest
+  19/19** (14 series + 5 bench). One flaky pytest-teardown segfault
+  observed once (native RPC-client teardown noise, green on rerun).

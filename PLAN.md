@@ -115,6 +115,10 @@ Prerequisites: M2/M3 (extend again for M5/M6 later).
 2. REST login fix; INT64-beyond-JS-range, precision/timezone, null/nesting
    rules; collection normalization in SDKs; native containers only via
    explicit compat path.
+   Design dependency (R10): result headers carry type 0 for scalar, LIST,
+   MAP, and ANY alike, so automatic collection normalization needs
+   compatible logical-type/value-tag metadata or a caller-supplied schema
+   first. No content sniffing.
 3. Telemetry + financial executable examples; parser-support matrix
    (GQL limits discoverable).
 4. Acceptance: examples use public APIs only; same logical values across
@@ -209,7 +213,8 @@ Done (gated, committed on `timeseries`):
   (docs/architecture/09-series-client-contracts.md: normalization rules,
   INT64/precision/timezone, null matrix, error catalog, retry guidance,
   parser matrix), SDK collection round-trip test, fresh-client journey
-  test with idempotent-retry helper, multi-row rollback regression.
+  test with idempotent-retry helper (smoke: individual writes, not batch;
+  manual windows, not cursors), multi-row rollback regression.
 
 Partial (landed, plan still lists remainder):
 
