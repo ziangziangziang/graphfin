@@ -1,220 +1,150 @@
-# Response to REVIEW.md (2026-09-21) — R1–R6 fixes
+# Progress report to the principal engineer
 
-Branch: `timeseries`. Review HEAD was `de8357c5`. Fixes committed as
-`f869df41` (fix) + `0adb46e2` (test); this report and the PROJECT.md cleanup
-as the docs commit on top.
-Gate: 93/93 pass on the review's acceptance selection plus 7 new regression
-tests (86 pre-existing incl. the review's 2 fixture-dependent passes, 5 new in
-`test_series_transaction.cpp`, 1 new ×2 params in `test_schema.cpp`, plus the
-extended `series_write` Cypher golden). Incremental container build
-(`tugraph-compile-arm64:phase0`, `RelWithDebInfo`, `-Wall -Werror`) is clean.
-The gate ran before the final comment/docs-only edits (`record.cpp` summary
-comment, PROJECT.md passages); those change no behavior.
+Date: 2026-09-22. Branch: `timeseries`. HEAD at write time: see commit list
+in §7. Pinned build: `tugraph-compile-arm64:phase0`, `RelWithDebInfo`,
+`-Wall -Werror`, container `linux/arm64`.
 
-## What changed, per finding
+## 1. Status summary
 
-### R3 — decode counter race (fixed)
-`SeriesStore::decode_count_` was a shared `mutable size_t` incremented on every
-`Range`/`Count`/`Latest`/`Earliest`/existing-bucket `Upsert`.
-Now `mutable std::atomic<size_t>` with relaxed load/store/fetch_add
-(`src/core/series_store.h`, `src/core/series_store.cpp`), and the header no
-longer claims the counter is off production paths. New
-`ConcurrentReadersShareTheStoreSafely` (8 readers × 25 iterations over one
-graph) exercises the path; a ThreadSanitizer run with concurrent readers is
-still outstanding (no TSan build was done here).
+| Area | Status | Evidence |
+|---|---|---|
+| R1–R6 review findings | Fixed, approved for merge/sign-off | Prior review §Post-fix; regressions in gate |
+| Decoder hardening + fuzz | Done | Cap + `AdversarialBucketMutationsNeverCrash` (gate); 20k-iter ASan/UBSan harness clean |
+| Sanitizer integration | Partial | TSan + ASan/UBSan harness runs clean; full-binary runs blocked by image issues (details §3) |
+| Upstream defects found by testing | Fixed (3) | Unlocked thread-id release; misaligned LMDB loads; ANY-cell server abort |
+| S5 lifecycle matrix | Done | Contention/OHLCV (C++), restart/SIGKILL/backup incl. real tool (pytest) |
+| Eviction/reopen | Done | Churn test + lifecycle `evictions` counter asserted |
+| Pre-series fixture | Partial | Merge-base-binary fixture + upgrade test; true v4.5.2 files open |
+| REST/Bolt clients | Done | REST suite, in-process Bolt suite, live TCP-driver suite, live `neo4j` driver suite, bundled-client login fix |
+| Bundled REST login mismatch | Fixed | `fix(client)` + regression test |
+| Multi-row rollback | Proven + tested | Live verification, REST regression |
+| Wire contract | Documented | `docs/architecture/09-series-client-contracts.md`, verified per transport |
+| Benchmark methodology | Done (baselines, never gated) | OHLCV, contention, fine-grained, storage, overbudget profiles |
+| Gate provenance | Done | Hashes, real XML parsing, freshness/completeness |
+| Build cost (commit → ~239 TUs) | Fixed, measured | Version-metadata isolation; docs-only commit now rebuilds 1 TU |
+| Executable examples | Done | Telemetry + financial (stdlib-only, verified live) |
+| M1 persisted identity | Design inputs drafted | PLAN.md; decision needed before implementation |
+| HA replication evidence | Not started | Needs multi-node setup |
 
-### R4 — LIST/MAP measure values stored as null (fixed)
-`ParseSeriesMeasureValue` (`src/cypher/procedure/procedure.cpp`) mapped every
-non-scalar to `Null()`. Now only an explicit null scalar yields `Null()`;
-LIST/MAP throws before any mutation, so the stored point is preserved.
-Golden coverage in `series_write.test/.result`: `series.update` with `[99]`
-and `series.append` with `{v:99}` both error and the point still reads
-`close:12.5, volume:7`.
+Current results: **gate 103/103 ACCEPT** (fresh XML, provenance), **pytest
+15/15** (10 series + 5 bench), TSan harness clean, ASan/UBSan fuzz clean.
 
-### R5 — bucket options wrapped before validation (fixed)
-`CreateSeriesFieldImpl` cast signed input to `u32`/`u64` before checking zero.
-Now it rejects unknown option keys, then range-checks the signed values:
-`bucket_max_points` in `[1, 1000000]`, `bucket_max_bytes` in `[1, 16777216]`
-(16 MiB property cap), `bucket_max_span_us >= 0`. The point/byte caps are
-mirrored in `CheckSeriesFieldSpec` (`src/core/schema.cpp`) so direct-API DDL
-cannot bypass them. Golden coverage: `2^32+1`/`-1`/`-1` combo, unknown key,
-and a follow-up valid create proving rejected DDL leaves no field behind.
+## 2. R1–R6 (approved; retained for the record)
 
-### R6 — timestamp write/read domain mismatch (fixed)
-`ParseSeriesTimestamp` accepted any INT64 while reads always build `DateTime`.
-Added `series::IsValidSeriesTimestamp` (`src/core/series_types.h`) for the
-DATETIME domain; enforced in `ParseSeriesTimestamp` (Cypher), in
-`Transaction::SetVertex/EdgeSeriesPoint` (`InputError`), and defensively in
-`SeriesStore::Upsert` (returns false). `kMinTs`/`kMaxTs` remain valid as
-unbounded range-query sentinels. Also fixed the signed-subtraction overflow in
-the span-cap check (`series_store.cpp`) to unsigned subtraction. Golden
-coverage: `ts:9223372036854775807` rejected; C++ test pins both INT64 extremes
-rejected and both DATETIME extremes accepted.
+- **R1**: packed-layout DDL that would shift series ids on reopen is rejected
+  (`AlterLabelAddFields/ModFields/DelFields`, `SeriesReloadIdWouldShift`);
+  ordinary→series conversion rejected; fast-alter exempt. Persisted identity
+  redesign remains a principal decision (see §6).
+- **R2**: fast-alter add skips defaults for series fields; pre-fix null-default
+  flags stripped on schema load; construction validation stays strict.
+- **R3**: shared decode counter is `atomic`; TSan harness over concurrent
+  readers + writer overlap is clean (§3).
+- **R4**: LIST/MAP measure values throw before mutation; stored point
+  preserved; multi-row rollback proven live and pinned in REST tests.
+- **R5**: option keys + signed ranges validated before narrowing
+  (`[1,10^6]` points, `[1,16MiB]` bytes, `span >= 0`), mirrored in schema
+  validation; rejected DDL leaves no field.
+- **R6**: stored timestamps must fit the DATETIME domain (procedure, both
+  transaction entry points, store); `kMinTs/kMaxTs` stay range sentinels;
+  span-cap arithmetic overflow fixed.
 
-### R2 — fast-alter series DDL wrote an un-reopenable schema (fixed)
-`AlterLabelAddFields` called `SetDefaultValue` for every added field, stamping
-`set_default_value=true` even for null, which reopen validation rejects.
-The fast-alter path now skips `SetDefaultValue` for series fields
-(`src/core/lightning_graph.cpp`); construction-time validation stays strict
-(`must not have a default value`). Recovery for databases already written with
-the invalid combination: `Deserialize` in `src/core/schema.h` strips a *null*
-default flag from series fields on load (a null default carries no value and
-the record keeps no bytes for a series field); non-null defaults stay
-rejected. New tests: `FastAlterAddSeriesFieldSurvivesReopen` (add series to an
-existing fast-alter label, write, reopen, read back) and
-`NullDefaultSeriesFlagIsStrippedOnLoad` (round-trips the pre-fix persisted
-form). The pre-existing `RejectsInvalidSeriesFields` still passes unmodified.
+## 3. Sanitizers: runs, finds, and blockers
 
-### R1 — series identity vs reload reordering (triggering DDL rejected)
-Confirmed the mechanism: `SetSchema` groups fixed-width before variable-width
-fields while `AddFields` appends live, so adding a fixed-width field behind a
-series field (BLOB = variable-width) shifts series ids on reopen and orphans
-buckets (within-type relative order is preserved, so ordinary record data is
-unaffected — only positional bucket keys break). Per the review's sanctioned
-interim ("if a complete fix must wait, reject the triggering schema alteration
-before it commits"), packed-layout DDL that would leave any series field's
-live id different from its reload-canonical id is now rejected in
-`AlterLabelAddFields`, `AlterLabelModFields` (type changes that flip
-fixed/variable classification included), and `AlterLabelDelFields`
-(`src/core/lightning_graph.cpp`, helper `SeriesReloadIdWouldShift`).
-Fast-alter labels (stable ids) are exempt. Also closed the
-ordinary-field-to-series conversion path in `ModFields`: gaining the modifier
-would silently hide ordinary stored data, so it is rejected. New tests:
-`AddingFixedFieldThatWouldShiftSeriesIdsIsRejected` (fixed add rejected,
-variable add allowed, data verified live and after reopen) and
-`OrdinaryFieldCannotGainTheSeriesModifier`. The persisted-identity redesign
-(name-keyed buckets or stable series ids with migration) remains a
-principal-engineer decision; the guards make the current format safe until then.
+- `ENABLE_TSAN` / `ENABLE_UBSAN` added (`Options.cmake`); TSan builds drop
+  `-fopenmp` (link-only `-pthread`, `-Wno-unknown-pragmas`).
+- **Full-binary TSan is blocked in this image**: prebuilt `libvsag.so`
+  (OpenMP) is linked into every process and breaks gcc-8.4 TSan init
+  (`failed to intercept pthread_mutex_trylock`, traced via ldd). Coverage
+  instead: minimal harness (`ci/phase0/sanitizer/tsan_series_race.cc`)
+  linking only TSan-instrumented store objects — 4 readers × 200
+  Range/Count/Latest + writer × 50 Upserts over one shared `SeriesStore` →
+  **clean**. Needs `--security-opt seccomp=unconfined` (ASLR personality)
+  and a 1 GiB LMDB map (4 TB default + TSan shadow exceeds VA budget).
+- **Full-binary ASan `unit_test` link is blocked**: prebuilt
+  `/usr/lib64/librocksdb` provides no `typeinfo for rocksdb::*`; the server
+  link fails identically with or without series changes. Coverage instead:
+  minimal harness (`ci/phase0/sanitizer/asan_series_fuzz.cc`), 20k
+  deterministic adversarial decoder mutations → **clean, no crashes/hangs**.
+- **Found and fixed**: unlocked `ThreadIdAssigner::ReleaseThreadId`
+  (upstream race, every transaction touches it); misaligned `size_t` loads
+  in `LMDBKvTable::GetVersion`/`GetValue(for_update)` (UB, fatal on strict
+  ARM); decoder allocation cap at 2^20 points before trusting the header
+  count (schema caps buckets at 10^6).
 
-## Validation
-- `TestSeriesTransaction.*`: 18/18 (13 existing + 5 new).
-- `TestQuery.TestCypherSuite` + `TestGqlSuite`: pass, incl. extended
-  `series_write` golden (R4/R5/R6 + no-residue follow-up create).
-- Full gate selection (series/schema/transaction/lgraph/detach/cypher/gql
-  suites): **93/93**.
-- One iteration finding: the first R2 approach (tolerate null defaults in
-  validation) broke `RejectsInvalidSeriesFields`; reworked to load-time
-  stripping, strict validation intact.
+## 4. Lifecycle, eviction, fixture
 
-## Outstanding (for principal review)
-1. Sanitizer runs: TSan (R3 readers + reader/writer overlap), ASan/UBSan with
-   decoder fuzz (`DecodeBucket` trusts header counts) — not run here.
-2. S5 matrix: durable restart/recovery, backup/restore, eviction/reopen,
-   distinct-series + same-series writer contention, OHLCV workload, real
-   old-version fixture.
-3. R1 follow-up: persisted series identity independent of record layout (the
-   current reject-guards are the review's sanctioned interim, and they make
-   adding fixed-width fields to packed-layout series labels an error — a real
-   limitation to lift with the redesign).
-4. Docs/gate: `PROJECT.md` cleaned in this pass (single merge-base statement,
-   accurate S1–S3 acceptance status, corrected Decision 2 heading and timestamp
-   codec description, series-summary cost comment fixed at the source).
-   Remaining: gate provenance (source/binary hashes) and per-run XML handling
-   per review §Harden.
- 5. `git status` is otherwise clean: no implementation files changed outside the
-    list above; no scratch artifacts committed (golden `.real` files are
-    gitignored and were removed). `REVIEW.md`/`AGENTS.md` workspace entries
-    predate this work and are left uncommitted.
+- C++ gate: 8 distinct writers, same-series contention with `TxnConflict`
+  retry to exact coverage plus logged abort rate, reader/writer overlap,
+  500×500 OHLCV (counts, packing, bytes/point), read-snapshot isolation
+  across concurrent commit, pre-series upgrade path.
+- pytest: durable restart (RPC+REST), SIGKILL under `--durable` (all
+  acknowledged commits present), stopped-copy restore, real `lgraph_backup`
+  tool restore, eviction/reopen with the lifecycle `evictions` counter
+  asserted (idle task runs ≥5s periods and skips referenced graphs —
+  encoded in the test).
+- Fixture: `test/resource/data/preseries_db/data.mdb` written by
+  `lgraph_server` built at merge base `384dc7da`; opened, verified,
+  upgraded with series DDL, and re-verified after reopen.
 
----
+## 5. Clients
 
-# S5 + sanitizer follow-up (principal's 4 trackers)
+- **Server abort found by testing, fixed**: any MAP/LIST cell over REST/RPC
+  aborted the server (`FMA_ASSERT(false)` in `FromLGraphT`: plan header
+  `ANY` vs collection element union). Fix dispatches on the element type;
+  collections keep the JSON-text crossing. Pre-existing, exposed by series.
+- REST suite (real HTTP): points/summaries/ranges, INT64 extremes, nulls,
+  empties, JSON-looking strings, error preservation, multi-row rollback.
+- Bolt: in-process `BoltRecords()` suite + live packstream driver suite +
+  live `neo4j==4.4.6` driver suite (scalars native incl. `LocalDateTime`,
+  collections as JSON text, RESET-after-FAILURE).
+- Bundled `TuGraphRestClient` repaired (login field, envelopes, Bearer,
+  error keys) with regression test. Transport truth documented:
+  REST/Bolt serve collections as JSON text for clients to parse; RPC JSON
+  re-parses into objects.
+- `docs/architecture/09-series-client-contracts.md`: rules, null matrix,
+  error catalog, retry guidance (`idempotent_retry`: transport failures
+  retried, semantic errors never), parser-support matrix, examples notes.
 
-Branch state at write time: R1–R6 commits `f869df41`, `0adb46e2`, `c7c72e95`
-below; this chapter's work uncommitted, awaiting review. Gate after all work:
-**102/102 ACCEPT** (fresh timestamped XML, real-parser provenance);
-integration pytest **6/6**; TSan harness clean; ASan/UBSan fuzz (20k iters)
-clean. The principal has since replaced `PROJECT.md` with the M0–M8 forward
-plan; that rewrite is not mine and stays uncommitted here.
+## 6. Build cost: version metadata isolated (measured)
 
-## 1. Sanitizers
+New commits regenerated `src/core/version.h` (git hash) on every build, and
+`core/defs.h` pulled it into ~239 TUs. Now `lgraph::version::*` accessors
+(`src/core/version_info.h`) expose the same values; `version_info.cpp` is
+the only TU including the generated header. Call sites migrated (banner,
+welcome, `system.info`, REST info, galaxy stamping, plugin hashes).
+Measured: a docs-only commit now recompiles **1 TU** (+25 relinks), down
+from ~239 compilations. Follow-on workflow: `CLEAN=0` incremental builds;
+`SKIP_BUILD=1` gate reruns; `GTEST_FILTER` for test selection (not compile
+scope). Remaining build-tech debt (test-executable split, per-target
+selection) intentionally deferred.
 
-- **Options**: `ENABLE_TSAN` / `ENABLE_UBSAN` added to `Options.cmake`
-  (alongside existing `ENABLE_ASAN`); TSan builds also drop `-fopenmp`
-  (keeping `-pthread` at link and `-Wno-unknown-pragmas`) because libgomp
-  preempts TSan's pthread interceptors at init.
-- **TSan**: the full `unit_test` binary cannot run under TSan in the pinned
-  image — the prebuilt `libvsag.so` (OpenMP) is linked into every process and
-  breaks gcc-8.4 TSan init (`failed to intercept pthread_mutex_trylock`;
-  confirmed via ldd dependency tracing). Coverage instead via a minimal harness
-  (`ci/phase0/sanitizer/tsan_series_race.cc`) linking only the
-  TSan-instrumented store objects: 4 readers × 200 Range/Count/Latest +
-  writer × 50 Upserts over one shared `SeriesStore` → **clean, no races**.
-  Run requires `--security-opt seccomp=unconfined` (Docker blocks the ASLR
-  personality syscall) and a 1 GiB LMDB map (default 4 TB + TSan shadow
-  exceeds the container VA budget).
-- **TSan found (fixed)**: `ThreadIdAssigner::ReleaseThreadId`
-  (`src/core/thread_id.h`) wrote the occupancy array unlocked while
-  `GetThreadId` runs under mutex — a pre-existing upstream race on a path
-  every transaction touches. Now takes the same lock.
-- **ASan+UBSan** (`ENABLE_ASAN=ON ENABLE_UBSAN=ON`, one build): full
-  `unit_test` link is blocked in this image (prebuilt `/usr/lib64/librocksdb`
-  provides no `typeinfo for rocksdb::*`; the server link fails identically
-  with or without series changes — pre-existing bit-rot, upstream ASan flow
-  uses `WITH_TEST=OFF`). Coverage instead via a minimal harness
-  (`ci/phase0/sanitizer/asan_series_fuzz.cc`): 20k deterministic adversarial
-  decoder mutations (bit flips, overwrites, truncations, header extremes
-  incl. count=UINT32_MAX, splices) plus store round-trips → **clean**.
-- **UBSan found (fixed)**: misaligned `size_t` loads of the LMDB value
-  prefix in `LMDBKvTable::GetVersion`/`GetValue(for_update)`
-  (`src/core/lmdb_table.cpp`) — pre-existing UB on every write-txn read,
-  fatal on strict-alignment ARM. Now `memcpy`.
-- **Decoder hardening** (review §Harden): `DecodeBucket`/
-  `DecodeBucketTimestamps` capped allocations at 2^20 points before trusting
-  the header count (schema caps buckets at 10^6); hostile counts return false
-  with no multi-GB allocation. Fuzz battery committed as
-  `TestSeriesStore.AdversarialBucketMutationsNeverCrash` (gate).
-- Not run: full-binary TSan (vsag, above), full-binary ASan unit_test
-  (rocksdb link, above). Both need image/toolchain fixes outside this stream.
+## 7. Benchmarks (methodology, never gated)
 
-## 2. S5 lifecycle matrix (all in gate or pytest)
+`test_series_bench.py`: OHLCV ingest/throughput/latency/RSS/bytes-point,
+contention (writes p50/p95/p99, scans, retries), fine-grained 1s cadence
+(full-span vs narrow reads), storage across caps, over-budget eviction
+churn. Baselines logged with seed/config; budgets outstanding per plan.
+`demo/SeriesTelemetry` + `demo/SeriesFinancial`: stdlib-only
+declare→ingest→query→export, verified live.
 
-- 8 distinct-series writers, same-series contention with `TxnConflict`
-  retry to exact coverage **plus logged abort rate**, reader/writer overlap,
-  500-symbol × 500-day OHLCV (250k points, exact counts, single-bucket
-  packing, bytes/point vs 32 raw logged) — `test_series_transaction.cpp`.
-- Durable restart (committed points + schema survive full stop/start, RPC +
-  REST verified), SIGKILL under `--durable` (all acknowledged commits fully
-  present), stopped-copy backup/restore, real `lgraph_backup` tool
-  backup/restore — `test/integration/test_timeseries.py` (6/6).
-- Pre-series upgrade path — `DatabaseWithoutSeriesGainsItOnUpgrade`; plus a
-  **genuine pre-series fixture**: `test/resource/data/preseries_db/data.mdb`
-  written by `lgraph_server` built at merge base `384dc7da`, opened and
-  upgraded by `PreSeriesReleaseFixtureUpgradesCleanly` (2 vertices + edge
-  verified, series DDL added, points survive reopen).
-- Remaining per the new M0 plan: eviction under constrained memory, actual
-  v4.5.2-binary fixture (ours is the merge-base binary, one step removed),
-  HA replication evidence.
+## 8. Open items and decisions needed
 
-## 3. REST/Bolt clients (principal item 3)
+1. **M1 identity decision (Option A/B in PLAN.md)** — gates all Phase
+   1/2/5 implementation. Guards retained meanwhile per plan.
+2. **Image fixes** (outside this stream): OpenMP-free vsag (or newer GCC)
+   for full-binary TSan; RTTI-complete rocksdb for full-binary ASan.
+3. **True v4.5.2 fixture** (no tags upstream to build from) and downgrade
+   policy text.
+4. **HA replication evidence** (multi-node setup).
+5. **M5+ designs** (bitemporal model, cursors, export format) per plan rule.
+6. **Benchmark budgets** and 10M/11.7M profiles (need M2 importer).
 
-- **Found by testing**: reading any MAP/LIST cell (every series read) over
-  REST/RPC **aborted the server** (`FMA_ASSERT(false)` in
-  `FieldDataConvert::FromLGraphT`, `src/server/proto_convert.h`): the plan
-  header for function calls is `ANY`, but the converter dereferenced
-  `v.fieldData` for collection elements that only set `v.map`/`v.list`.
-  Fixed by dispatching on the element's type; collections keep the
-  long-standing JSON-text crossing. Pre-existing bug, exposed by series.
-- **REST** (`test_timeseries.py` over real HTTP): structured assertions for
-  points/summaries/ranges (parsed from JSON text), INT64 extremes, nulls,
-  empties, JSON-looking strings, error preservation. Note: the bundled
-  `TuGraphRestClient` login is stale (posts `userName`, server requires
-  `user`); the test drives HTTPX directly with `Bearer` tokens.
-- **Bolt**: new `test_series_bolt.cpp` pins `Result::BoltRecords()` shapes
-  (scalars native incl. `LocalDateTime{sec,nano}`, collections as JSON text),
-  plus a **live packstream driver** (`test/integration/bolt_driver.py`,
-  no driver package in env) asserting the same over TCP, incl. session
-  RESET-after-FAILURE behavior.
-- Wire contract documented in `PROJECT.md` Decision 2 (since rewritten by
-  the principal into the M0–M8 plan, which states it independently).
+## 9. Commit list (this report covers through HEAD)
 
-## 4. Old-version fixture + gate provenance (principal item 4)
-
-- Fixture: see §2 (merge-base binary + committed `data.mdb` + upgrade test).
-- Gate (`ci/phase0/run_series_tests.sh`): fresh timestamped XML per run
-  (+ `series-latest.xml` copy, stale `series.xml` removed), real
-  `xml.etree` parsing with freshness (`mtime >= run start`) and completeness
-  (`testcase` count == `tests`) checks, dirty-build provenance (`git diff`
-  sha256, per-file sha256 of untracked content), binary hashes
-  (`unit_test`, `liblgraph.so*`), actual `CMakeCache` options, recorded
-  `SKIP_BUILD`/`CLEAN` flags. Latest run: ACCEPT 102/102, 0 excused.
+R1–R6: `f869df41` fix, `0adb46e2` test, `c7c72e95` docs. S5/sanitizer:
+decoder cap, `fix(core)` races/UB, `fix(server)` ANY crash, S5/REST/Bolt/
+fixture tests, sanitizer options/harnesses/gate provenance, evidence
+report. Phases: REST login `fix(client)` + regression, `PLAN.md` build
+plan, live-driver/eviction/bench tests, demos, client-contracts doc,
+`fix(build)` version isolation + lifetime test. `PROJECT.md`/`REVIEW.md`
+rewrites are the principal's and stay uncommitted, as does `AGENTS.md`.
