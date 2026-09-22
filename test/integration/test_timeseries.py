@@ -574,9 +574,15 @@ def test_eviction_reopen_preserves_series(tmp_path):
                 cypher(c, "MATCH (x:E {id:1}) CALL series.append(x, 'p', "
                           "{ts: datetime('2024-01-01 00:00:00'), v: 1}) "
                           "YIELD written RETURN written", graph=g)
-            # Let the idle timeout evict, then churn all three so eviction +
-            # reopen cycle repeatedly with reads interleaved.
-            time.sleep(3)
+            # The idle task runs at max(idle_timeout/2, 5)s and skips graphs
+            # with outstanding refs, so drop the client first and outwait it;
+            # then churn all three so eviction + reopen cycle with reads.
+            try:
+                c.logout()
+            except Exception:
+                pass
+            time.sleep(8)
+            c = srv.rpc()
             for _ in range(3):
                 for g in ("ev1", "ev2", "ev3"):
                     assert cypher(
