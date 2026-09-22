@@ -543,6 +543,9 @@ bool SeriesStore::Upsert(KvTransaction& txn, const ElementKey& elem, uint16_t fi
     // Stored timestamps must round-trip through DATETIME on read; the
     // unbounded kMinTs/kMaxTs sentinels are range bounds, not valid points.
     if (!IsValidSeriesTimestamp(ts)) return false;
+    // Non-finite doubles serialize as JSON null while staying non-null in the
+    // engine (R8); new writes refuse them (legacy bytes still decode).
+    if (!MeasureValuesAreStorable(values, columns)) return false;
 
     std::string field_prefix;
     MakeFieldPrefix(elem, field_id, &field_prefix);

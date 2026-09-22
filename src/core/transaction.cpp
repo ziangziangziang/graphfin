@@ -1656,6 +1656,9 @@ bool Transaction::SetVertexSeriesPoint(VertexId id, const std::string& field, in
         THROW_CODE(InputError, "Series field [{}] has {} measures, but {} values were given.",
                    field, columns.size(), values.size());
     }
+    if (!series::MeasureValuesAreStorable(values, columns)) {
+        THROW_CODE(InputError, "Series DOUBLE measure values must be finite numbers.");
+    }
     return series_store_->Upsert(*txn_, series::ElementKey::FromVertex(id), field_id, ts, values,
                                  columns, policy);
 }
@@ -1808,6 +1811,9 @@ bool Transaction::SetEdgeSeriesPoint(const EdgeUid& uid, const std::string& fiel
     if (values.size() != columns.size()) {
         THROW_CODE(InputError, "Series field [{}] has {} measures, but {} values were given.",
                    field, columns.size(), values.size());
+    }
+    if (!series::MeasureValuesAreStorable(values, columns)) {
+        THROW_CODE(InputError, "Series DOUBLE measure values must be finite numbers.");
     }
     return series_store_->Upsert(*txn_, series::ElementKey::FromEdge(uid), field_id, ts, values,
                                  columns, policy);

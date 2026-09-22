@@ -16,6 +16,7 @@
 // Created by wt on 19-1-10.
 //
 
+#include <cmath>
 #include <regex>
 #include <tuple>
 
@@ -1645,7 +1646,18 @@ lgraph::series::MeasureValue ParseSeriesMeasureValue(const cypher::FieldData &v,
         return lgraph::series::MeasureValue::Null();
     }
     if (type == lgraph::series::MeasureType::DOUBLE) {
-        if (v.IsReal()) return lgraph::series::MeasureValue::Double(v.scalar.AsDouble());
+        // Non-finite doubles serialize as JSON null while staying non-null in
+        // the engine, silently conflating values with missing observations
+        // (R8). Reject at the public boundary; previously stored bytes still
+        // decode (codec round-trips them bit-exactly).
+        if (v.IsReal()) {
+            const double d = v.scalar.AsDouble();
+            if (!std::isfinite(d)) {
+                throw lgraph::CypherException(proc + ": value for measure '" + measure +
+                                              "' must be a finite number");
+            }
+            return lgraph::series::MeasureValue::Double(d);
+        }
         if (v.IsInteger()) {
             return lgraph::series::MeasureValue::Double(static_cast<double>(v.scalar.integer()));
         }
@@ -1899,6 +1911,96 @@ void BuiltinProcedure::SeriesSet(RTContext *ctx, const Record *record, const VEC
     r.AddConstant(lgraph::FieldData(static_cast<int64_t>(1)));
     records->emplace_back(r.Snapshot());
     FillProcedureYieldItem("series.update", yield_items, records);
+}
+
+void BuiltinProcedure::SeriesUpdateCas(RTContext *ctx, const Record *record,
+                                       const VEC_EXPR &args,
+                                       const VEC_STR &yield_items,
+                                       std::vector<Record> *records) {
+    // R7: compare-and-set for replay-safe correction under concurrent mutable
+    // ingestion. Applies only when the stored value equals `expected`
+    // (null matches a missing point or a stored null); otherwise yields
+    // written=0 and mutates nothing, so a replayed request loses to an
+    // intervening correction instead of silently undoing it. Provisional
+    // until the M5 revision model lands; unconditional series.update keeps
+    // its contract for ordered exclusive writers.
+    CYPHER_ARG_CHECK(args.size() == 6,
+                     "e.g. series.update_cas(node, 'prices', 'close', "
+                     "datetime('2024-01-02'), 11.5, 12.5)");
+    CYPHER_ARG_CHECK(args[1].IsString() && args[2].IsString(),
+                     "field and measure must be strings");
+    CheckProcedureYieldItem("series.update_cas", yield_items);
+    CYPHER_DB_PROCEDURE_GRAPH_CHECK();
+    SeriesProcElement elem;
+    ExtractSeriesProcElement(args[0], "series.update_cas", &elem);
+    const std::string field = args[1].constant.scalar.AsString();
+    const std::string measure = args[2].constant.scalar.AsString();
+    const int64_t ts = ParseSeriesTimestamp(args[3].constant, "series.update_cas");
+    auto txn = ctx->txn_->GetTxn();
+    uint16_t field_id = 0;
+    std::vector<lgraph::series::MeasureColumn> columns;
+    lgraph::series::BucketPolicy policy;
+    std::vector<lgraph::series::MeasureRef> measures;
+    const bool resolved = elem.is_edge
+                              ? txn->ResolveEdgeSeriesSchema(elem.euid, field, &field_id,
+                                                             &columns, &policy, &measures)
+                              : txn->ResolveVertexSeriesSchema(elem.vid, field, &field_id,
+                                                               &columns, &policy, &measures);
+    if (!resolved) {
+        THROW_CODE(InputError, "Element has no time series field [{}]", field);
+    }
+    size_t idx = measures.size();
+    for (size_t i = 0; i < measures.size(); ++i) {
+        if (measures[i].name == measure) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx == measures.size()) {
+        THROW_CODE(InputError, "Series field [{}] has no measure [{}]", field, measure);
+    }
+    const lgraph::series::MeasureValue expected = ParseSeriesMeasureValue(
+        args[4].constant, measures[idx].type, measure, "series.update_cas");
+    const lgraph::series::MeasureValue updated = ParseSeriesMeasureValue(
+        args[5].constant, measures[idx].type, measure, "series.update_cas");
+    std::vector<lgraph::series::Point> points;
+    const bool read = elem.is_edge
+                          ? txn->GetEdgeSeriesRange(elem.euid, field, ts, ts, &points)
+                          : txn->GetVertexSeriesRange(elem.vid, field, ts, ts, &points);
+    if (!read) {
+        THROW_CODE(InternalError, "Corrupt series in field [{}]", field);
+    }
+    // Exact match on the stored representation (doubles compare bitwise-equal
+    // via ==; non-finite values cannot be stored, so NaN != NaN never arises
+    // from a legitimate expectation).
+    lgraph::series::MeasureValue current = lgraph::series::MeasureValue::Null();
+    if (!points.empty()) current = points.front().values[idx];
+    bool match = false;
+    if (current.is_null && expected.is_null) {
+        match = true;
+    } else if (!current.is_null && !expected.is_null) {
+        match = (measures[idx].type == lgraph::series::MeasureType::DOUBLE)
+                    ? (current.d == expected.d)
+                    : (current.i == expected.i);
+    }
+    int64_t written = 0;
+    if (match) {
+        std::vector<lgraph::series::MeasureValue> values(measures.size(),
+                                                         lgraph::series::MeasureValue::Null());
+        if (!points.empty()) values = points.front().values;
+        values[idx] = updated;
+        const bool ok = elem.is_edge
+                            ? txn->SetEdgeSeriesPoint(elem.euid, field, ts, values)
+                            : txn->SetVertexSeriesPoint(elem.vid, field, ts, values);
+        if (!ok) {
+            THROW_CODE(InputError, "series.update_cas: point does not fit the bucket byte cap");
+        }
+        written = 1;
+    }
+    Record r;
+    r.AddConstant(lgraph::FieldData(written));
+    records->emplace_back(r.Snapshot());
+    FillProcedureYieldItem("series.update_cas", yield_items, records);
 }
 
 void BuiltinProcedure::SeriesClear(RTContext *ctx, const Record *record, const VEC_EXPR &args,
