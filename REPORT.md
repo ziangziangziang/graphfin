@@ -31,20 +31,23 @@ a hardened 3-node HA replica group (chaos-tested, soak-validated).
   it is not current merged-release evidence and must not be reused as the
   current candidate's sign-off artifact.
 
-**Current merged-candidate evidence (2026-09-22, fixed candidate):** the strict
-C++ unit gate passed 110/110 (evidence `unit-p6uuknon`), the joint
-financial/telemetry smoke gate passed 4/4 (`smoke-sh_x0e7u`), the live client
-gate passed 14/14 with `neo4j==4.4.6` (`clients-gjxcjgat`), and the HA series
-failover gate passed 2/2 with zero skips and zero failures (`ha-aha_pbu5`).
-All four ran on the same source/build snapshot: base commit `701fbfb9` plus
-the recorded dirty-content manifest, `lgraph_server`
+**Current merged-candidate evidence (2026-09-22, frozen candidate `5e31bacf`
+with empty dirty manifest):** the strict C++ unit gate passed 110/110
+(evidence `unit-7aprcjji`), the joint financial/telemetry smoke gate passed
+4/4 (`smoke-ngkx9evx`), the live client gate passed 14/14 with
+`neo4j==4.4.6` (`clients-5odtbvuq`), and the HA series failover gate passed
+2/2 with zero skips and zero failures (`ha-2k7e6e4c`). (The same gates first
+passed on the dirty fixed tree as `unit-p6uuknon`, `smoke-sh_x0e7u`,
+`clients-gjxcjgat`, `ha-aha_pbu5` before the freeze commits.)
+All four ran on the same source/build snapshot: frozen commit `5e31bacf`,
+`lgraph_server`
 `5010f5ecabbefbe3162483c500e8c06c326152fc95a4a21e721fafd40485d178`,
 `unit_test`
 `3e3d33a349ec17a75e1e2649bbde65ceb8feca79545dad92439a0910808a0e38`,
 compile image
 `sha256:2350a9a1f998b6898b169d28015c60c49b488def8980b9553a657819763afedf`.
-The candidate must still be frozen into an immutable commit and re-qualified
-clean before any tag, package, or publication step.
+The candidate is frozen; tag, package, and publication steps must derive
+from `5e31bacf` only.
 
 **What is explicitly not done:** live multi-shard request forwarding, a
 replicated control plane, receiver-side fence wiring into the server write path,
@@ -88,9 +91,10 @@ reads). Incremental rebuilds reused the existing tree (client/tool relink
 full unit-test relink in `phase0-logs/build-20260922-185044.log`; no clean
 rebuilds).
 
-Result: strict HA gate 2/2 passed, zero skips, zero failures
-(`/tmp/graphfin-merge-results/ha-aha_pbu5`), on the same binaries that pass
-unit (110/110), smoke (4/4), and clients (14/14). The current merged-release HA evidence is the failed
+Result: strict HA gate 2/2 passed, zero skips, zero failures on the fixed
+candidate (`/tmp/graphfin-merge-results/ha-aha_pbu5`) and again on the clean
+frozen candidate `5e31bacf` (`/tmp/graphfin-merge-results/ha-2k7e6e4c`), on
+the same binaries that pass unit (110/110), smoke (4/4), and clients (14/14). The current merged-release HA evidence is the failed
 series failover gate recorded above; the historical soak does not close it.
 
 ---

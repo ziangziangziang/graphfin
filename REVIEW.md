@@ -9,13 +9,15 @@
 >
 > Addendum 2026-09-22: the HA blocker is resolved by a product fix plus
 > harness hardening (see [TASK.md](TASK.md) workstream A and `REPORT.md` §
-> "HA series failover blocker"). Current fixed-candidate evidence: unit
-> 110/110 (`unit-p6uuknon`), smoke 4/4 (`smoke-sh_x0e7u`), clients 14/14
-> with `neo4j==4.4.6` (`clients-gjxcjgat`), HA 2/2 with zero skips/failures
-> (`ha-aha_pbu5`). This addendum records evidence only; it does not change
-> the review disposition. Freeze to an immutable commit, re-qualify clean,
-> and complete the remaining TASK.md workstreams before sign-off or
-> publication.
+> "HA series failover blocker"). Fixed-candidate evidence: unit 110/110
+> (`unit-p6uuknon`), smoke 4/4 (`smoke-sh_x0e7u`), clients 14/14 with
+> `neo4j==4.4.6` (`clients-gjxcjgat`), HA 2/2 with zero skips/failures
+> (`ha-aha_pbu5`). Frozen clean candidate `5e31bacf` (empty dirty manifest)
+> re-qualified all four gates: `unit-7aprcjji` 110/110, `smoke-ngkx9evx` 4/4,
+> `clients-5odtbvuq` 14/14, `ha-2k7e6e4c` 2/2. This addendum records evidence
+> only; it does not change the review disposition. Complete the remaining
+> TASK.md workstreams (package, container, release publication) from
+> `5e31bacf` before sign-off or publication.
 
 **Date:** 2026-09-22
 

@@ -23,10 +23,10 @@ The merged qualification currently has this evidence:
 
 | Gate | Current result | Decision |
 | --- | --- | --- |
-| C++ merged unit suite | 110/110 passed in the strict isolated run (evidence `unit-p6uuknon`), including the new read-only-classifier regression | Green; rerun on the final candidate commit |
-| Joint financial/telemetry smoke | 4/4 passed in the strict isolated run (evidence `smoke-sh_x0e7u`) | Green; rerun after final test edits |
-| Live client compatibility | 14/14 passed with `neo4j==4.4.6` (evidence `clients-gjxcjgat`) | Green; preserve dependency manifest and warning record |
-| HA series failover | 2/2 passed with zero skips/failures after the engine fix (evidence `ha-aha_pbu5`); root cause was a product defect, not a harness defect (see workstream A) | Green on the fixed candidate; rerun on the final candidate commit |
+| C++ merged unit suite | 110/110 passed, zero skips, clean tree at `5e31bacf` (evidence `unit-7aprcjji`), including the new read-only-classifier regression | Green; frozen candidate qualified |
+| Joint financial/telemetry smoke | 4/4 passed, zero skips, clean tree at `5e31bacf` (evidence `smoke-ngkx9evx`) | Green; frozen candidate qualified |
+| Live client compatibility | 14/14 passed with `neo4j==4.4.6`, zero skips, clean tree at `5e31bacf` (evidence `clients-5odtbvuq`) | Green; preserve dependency manifest and warning record |
+| HA series failover | 2/2 passed with zero skips/failures on the fixed candidate and again on the clean frozen candidate `5e31bacf` (evidence `ha-aha_pbu5`, then `ha-2k7e6e4c`); root cause was a product defect, not a harness defect (see workstream A) | Green; frozen candidate qualified |
 | Docs and release metadata | `python3 ci/release/check_docs.py` passes; `git diff --check` clean | Run the docs gate after all documentation edits |
 | Package and container images | Not qualified | Build, inspect, smoke-test, checksum, and publish only after approval gates |
 | GitHub release | Not published | Tag and publish only from the approved immutable commit |
@@ -70,9 +70,12 @@ issues, and both are fixed without weakening the oracle:
    above; fix in `src/cypher/parser/clause.h`, regression test
    `TestSeriesTransaction.MutatingProcedureCallsWithReturnClassifyAsWrites`.
 
-Final gate result on the fixed candidate: both HA cases pass with zero
-skips and zero failures (evidence `/tmp/graphfin-merge-results/ha-aha_pbu5`,
-manifest + `results.xml` + `run.log` + per-node server logs). The passing
+Final gate result: both HA cases pass with zero
+skips and zero failures on the fixed candidate (evidence
+`/tmp/graphfin-merge-results/ha-aha_pbu5`) and again on the clean frozen
+candidate `5e31bacf` with empty dirty manifest
+(`/tmp/graphfin-merge-results/ha-2k7e6e4c`, manifest + `results.xml` +
+`run.log` + per-node server logs). The passing
 result includes: initial writes, exact range verification on all replicas,
 leader kill, verification through the new leader, restart of the old leader,
 and final per-replica reconciliation.
