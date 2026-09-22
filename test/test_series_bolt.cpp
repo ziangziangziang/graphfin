@@ -175,6 +175,24 @@ TEST_F(TestSeriesBolt, SeriesScalarsReachBoltAsBoltNatives) {
         EXPECT_NE(s.find("12.5"), std::string::npos);
         ExpectPackable(cells);
     }
+
+    // R8: non-finite doubles are rejected before mutation; the stored point
+    // and the INT64 measure survive.
+    EXPECT_FALSE(RunCypher(
+        "MATCH (c:Company {id:1}) CALL series.update(c, 'prices', 'close', "
+        "datetime('2024-01-02 00:00:00'), toFloat('NaN')) "
+        "YIELD written RETURN written"));
+    ASSERT_TRUE(
+        RunCypher("MATCH (c:Company {id:1}) RETURN series.at(c, 'prices', "
+                  "datetime('2024-01-02 00:00:00')) AS point"));
+    {
+        auto cells = BoltCells();
+        ASSERT_EQ(cells.size(), 1u);
+        const std::string s = std::any_cast<std::string>(cells[0][0]);
+        EXPECT_NE(s.find("12.5"), std::string::npos);
+        EXPECT_NE(s.find("9223372036854775807"), std::string::npos);
+        ExpectPackable(cells);
+    }
 }
 
 TEST_F(TestSeriesBolt, BoltScalarsNullsAndBoundaries) {

@@ -779,6 +779,41 @@ TEST_F(TestSeriesTransaction, OutOfDateTimeRangeTimestampsAreRejected) {
     txn.Commit();
 }
 
+TEST_F(TestSeriesTransaction, NonFiniteDoublesAreRejectedAtWrite) {
+    // R8: NaN/Infinity serialize as JSON null while staying non-null in the
+    // engine, so writes refuse them at the transaction boundary (the Cypher
+    // layer rejects them first). Actual nulls still write fine.
+    const std::string dir = "./testdb_series_txn_nonfinite";
+    AutoCleanDir cleaner(dir);
+    DBConfig conf;
+    conf.dir = dir;
+    LightningGraph db(conf);
+    AddCompanyLabel(db);
+    auto txn = db.CreateWriteTxn();
+    VertexId v = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                               std::vector<std::string>{"1"});
+    UT_EXPECT_THROW_CODE(
+        txn.SetVertexSeriesPoint(v, "prices", 0,
+                                 OnePoint(std::numeric_limits<double>::quiet_NaN(), 1.0, 1)),
+        InputError);
+    UT_EXPECT_THROW_CODE(
+        txn.SetVertexSeriesPoint(v, "prices", 0,
+                                 OnePoint(std::numeric_limits<double>::infinity(), 1.0, 1)),
+        InputError);
+    UT_EXPECT_THROW_CODE(
+        txn.SetVertexSeriesPoint(
+            v, "prices", 0, OnePoint(-std::numeric_limits<double>::infinity(), 1.0, 1)),
+        InputError);
+    // A null DOUBLE still stores as null (not an error).
+    ASSERT_TRUE(txn.SetVertexSeriesPoint(
+        v, "prices", 0, {MeasureValue::Null(), MeasureValue::Double(1.0),
+                         MeasureValue::Int64(1)}));
+    size_t count = 0;
+    ASSERT_TRUE(txn.GetVertexSeriesCount(v, "prices", kMinTs, kMaxTs, &count));
+    EXPECT_EQ(count, 1u);
+    txn.Commit();
+}
+
 TEST_F(TestSeriesTransaction, PreSeriesReleaseFixtureUpgradesCleanly) {
     // Genuine old-version compatibility: data.mdb under
     // test/resource/data/preseries_db was written by lgraph_server at the

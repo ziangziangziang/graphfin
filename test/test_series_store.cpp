@@ -12,6 +12,8 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
 
+#include <cmath>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -517,6 +519,52 @@ TEST_F(TestSeriesStore, DataSurvivesReopenAndClose) {
     // 7 points with a cap of 3 were split into 3 + 3 + 1 buckets, and the split
     // survives the reopen.
     EXPECT_EQ(reopened.series().Table()->GetKeyCount(reopened.txn()), 3u);
+}
+
+TEST_F(TestSeriesStore, LegacyNonFiniteBytesStillDecode) {
+    // R8 storage compatibility: non-finite doubles were storable before the
+    // write-side rejection, so the decoder must keep reading legacy bytes
+    // faithfully (non-null, bit-exact) rather than failing or nulling them.
+    // New writes through Upsert are refused instead.
+    const std::vector<MeasureColumn> cols = OhlcColumns();
+    Bucket bucket;
+    bucket.first_ts = 0;
+    bucket.measure_ids = {0, 1, 2, 3, 4};
+    bucket.timestamps = {0, kUsPerDay};
+    bucket.columns.assign(5, std::vector<MeasureValue>(2, D(1.0)));
+    bucket.columns[0][1] = D(std::numeric_limits<double>::quiet_NaN());
+    bucket.columns[1][1] = D(std::numeric_limits<double>::infinity());
+    std::string encoded;
+    ASSERT_TRUE(SeriesStore::EncodeBucket(bucket, cols, kDefaultPolicy, &encoded));
+
+    SeriesSession session(dir_);
+    const ElementKey v = ElementKey::FromVertex(1);
+    std::string key;
+    SeriesStore::MakeBucketKey(v, 0, 0, &key);
+    session.series().Table()->SetValue(session.txn(), Value::ConstRef(key),
+                                       Value::ConstRef(encoded), true);
+    session.Commit();
+
+    std::vector<Point> points;
+    ASSERT_TRUE(session.series().Range(session.txn(), v, 0, kMinTs, kMaxTs, cols, &points));
+    ASSERT_EQ(points.size(), 2u);
+    EXPECT_FALSE(points[1].values[0].is_null);
+    EXPECT_TRUE(std::isnan(points[1].values[0].d));
+    EXPECT_FALSE(points[1].values[1].is_null);
+    EXPECT_TRUE(std::isinf(points[1].values[1].d));
+    size_t count = 0;
+    ASSERT_TRUE(session.series().Count(session.txn(), v, 0, kMinTs, kMaxTs, cols, &count));
+    EXPECT_EQ(count, 2u);
+
+    // Finite values still write through the same path.
+    ASSERT_TRUE(session.series().Upsert(session.txn(), v, 0, 2 * kUsPerDay, Point5(1.0),
+                                        cols, kDefaultPolicy));
+    // The same slot with a NaN is refused instead.
+    std::vector<MeasureValue> nan_point = Point5(1.0);
+    nan_point[0] = D(std::numeric_limits<double>::quiet_NaN());
+    EXPECT_FALSE(
+        session.series().Upsert(session.txn(), v, 0, 2 * kUsPerDay, nan_point, cols,
+                                kDefaultPolicy));
 }
 
 TEST_F(TestSeriesStore, RejectsMalformedBuckets) {

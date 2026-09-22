@@ -51,6 +51,11 @@ MATCH (a:Company {id:1})-[h:HOLDS]->(b:Company {id:2}) RETURN series.at(h, 'w', 
 
 MATCH (a:Company {id:1})-[h:HOLDS]->(b:Company {id:2}) RETURN h.w AS summary;
 
+# R7 on edges: null expectation creates the absent point.
+MATCH (a:Company {id:1})-[h:HOLDS]->(b:Company {id:2}) CALL series.update_cas(h, 'w', 'v', datetime('2024-01-04 00:00:00'), null, 42) YIELD written RETURN written;
+
+MATCH (a:Company {id:1})-[h:HOLDS]->(b:Company {id:2}) RETURN series.at(h, 'w', datetime('2024-01-04 00:00:00')) AS point;
+
 MATCH (a:Company {id:1})-[h:HOLDS]->(b:Company {id:2}) CALL series.clear(h, 'w') YIELD cleared RETURN cleared;
 
 CALL db.dropSeriesField('edge', 'HOLDS', 'w') YIELD field RETURN field;
@@ -74,11 +79,43 @@ MATCH (c:ReviewC {id:1}) CALL series.update(c, 'prices', 'close', datetime('2024
 
 MATCH (c:ReviewC {id:1}) RETURN series.at(c, 'prices', datetime('2024-01-02 00:00:00')) AS point;
 
+# R8: non-finite doubles are rejected before mutation, never stored as null.
+-- error
+MATCH (c:ReviewC {id:1}) CALL series.update(c, 'prices', 'close', datetime('2024-01-02 00:00:00'), toFloat('NaN')) YIELD written RETURN written;
+
+-- error
+MATCH (c:ReviewC {id:1}) CALL series.append(c, 'prices', {ts: datetime('2024-01-02 00:00:00'), close: toFloat('Infinity'), volume: 7}) YIELD written RETURN written;
+
+-- error
+MATCH (c:ReviewC {id:1}) CALL series.append(c, 'prices', {ts: datetime('2024-01-02 00:00:00'), close: toFloat('-Infinity'), volume: 7}) YIELD written RETURN written;
+
+MATCH (c:ReviewC {id:1}) RETURN series.at(c, 'prices', datetime('2024-01-02 00:00:00')) AS point;
+
+# R4 map container: likewise rejected, stored point preserved.
 -- error
 MATCH (c:ReviewC {id:1}) CALL series.append(c, 'prices', {ts: datetime('2024-01-02 00:00:00'), close: {v:99}, volume: 7}) YIELD written RETURN written;
 
 MATCH (c:ReviewC {id:1}) RETURN series.at(c, 'prices', datetime('2024-01-02 00:00:00')) AS point;
 
+# R7: compare-and-set for replay-safe correction. Matching expectation
+# applies; stale expectation yields written=0 and mutates nothing.
+MATCH (c:ReviewC {id:1}) CALL series.update_cas(c, 'prices', 'close', datetime('2024-01-02 00:00:00'), 12.5, 20.0) YIELD written RETURN written;
+
+MATCH (c:ReviewC {id:1}) RETURN series.at(c, 'prices', datetime('2024-01-02 00:00:00')) AS point;
+
+MATCH (c:ReviewC {id:1}) CALL series.update_cas(c, 'prices', 'close', datetime('2024-01-02 00:00:00'), 12.5, 30.0) YIELD written RETURN written;
+
+MATCH (c:ReviewC {id:1}) RETURN series.at(c, 'prices', datetime('2024-01-02 00:00:00')) AS point;
+
+# Lost-response replay: A wrote 20.0 (response lost), B corrected to 22.0,
+# A replays against its stale belief of 20.0 and loses explicitly.
+MATCH (c:ReviewC {id:1}) CALL series.update(c, 'prices', 'close', datetime('2024-01-02 00:00:00'), 22.0) YIELD written RETURN written;
+
+MATCH (c:ReviewC {id:1}) CALL series.update_cas(c, 'prices', 'close', datetime('2024-01-02 00:00:00'), 20.0, 21.0) YIELD written RETURN written;
+
+MATCH (c:ReviewC {id:1}) RETURN series.at(c, 'prices', datetime('2024-01-02 00:00:00')) AS point;
+
+# R5: wrapped values are rejected before narrowing conversion.
 -- error
 CALL db.createSeriesField('ReviewC', 'wrapped', [{name:'v', type:'INT64'}], {bucket_max_points:4294967297, bucket_max_bytes:-1, bucket_max_span_us:-1}) YIELD field RETURN field;
 
