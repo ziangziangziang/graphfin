@@ -16,6 +16,7 @@
 #include "core/audit_logger.h"
 #include "core/defs.h"
 #include "core/killable_rw_lock.h"
+#include "core/version_info.h"
 #include "db/galaxy.h"
 #include "db/token_manager.h"
 #include "tools/lgraph_log.h"
@@ -780,12 +781,12 @@ std::tuple<int, int, int> lgraph::Galaxy::GetAndSetTuGraphVersionIfNecessary(KvT
     if (!it->IsValid()) {
         // no version info, set it
         db_info_table_->SetValue(txn, Value::ConstRef(_detail::VER_MAJOR_KEY),
-                                Value::ConstRef(lgraph::_detail::VER_MAJOR));
+                                Value::ConstRef(lgraph::version::Major()));
         db_info_table_->SetValue(txn, Value::ConstRef(_detail::VER_MINOR_KEY),
-                                Value::ConstRef(lgraph::_detail::VER_MINOR));
+                                Value::ConstRef(lgraph::version::Minor()));
         db_info_table_->SetValue(txn, Value::ConstRef(_detail::VER_PATCH_KEY),
-                                Value::ConstRef(lgraph::_detail::VER_PATCH));
-        return std::make_tuple(_detail::VER_MAJOR, _detail::VER_MINOR, _detail::VER_PATCH);
+                                Value::ConstRef(lgraph::version::Patch()));
+        return std::make_tuple(version::Major(), version::Minor(), version::Patch());
     } else {
         int major = it->GetValue().AsType<int>();
         it->GotoKey(Value::ConstRef(_detail::VER_MINOR_KEY));
@@ -802,15 +803,14 @@ void lgraph::Galaxy::CheckTuGraphVersion(KvTransaction& txn) {
     auto ver = GetAndSetTuGraphVersionIfNecessary(txn);
     int major = std::get<0>(ver);
     int minor = std::get<1>(ver);
-    if (major != _detail::VER_MAJOR) {
+    if (major != version::Major()) {
         LOG_WARN() << "Mismatching major version: DB is created with ver " << major
-                                 << ", while current TuGraph is ver " << _detail::VER_MAJOR;
+                                 << ", while current TuGraph is ver " << version::Major();
         throw std::runtime_error("Mismatch DB and software version.");
     }
-    if (minor != _detail::VER_MINOR) {
+    if (minor != version::Minor()) {
         LOG_WARN() << "DB is created with ver " << major << "." << minor
-                                 << ", while current TuGraph is ver " << _detail::VER_MAJOR << "."
-                                 << _detail::VER_MINOR
+                                 << ", while current TuGraph is ver " << version::ShortVersion()
                                  << ". TuGraph may work just fine, but be ware of compatibility "
                                     "warnings in release notes.";
     }

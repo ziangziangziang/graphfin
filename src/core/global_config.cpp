@@ -15,6 +15,7 @@
 #include "fma-common/string_formatter.h"
 
 #include "core/global_config.h"
+#include "core/version_info.h"
 
 std::map<std::string, std::string> lgraph::GlobalConfig::FormatAsOptions() const {
     std::map<std::string, std::string> options;
@@ -162,18 +163,13 @@ int lgraph::GlobalConfig::PrintVersion(std::string &config_file, std::string &cm
     }
     // check if dumping version
     if (print_version) {
-        std::string version;
-        version.append(std::to_string(lgraph::_detail::VER_MAJOR))
-            .append(".")
-            .append(std::to_string(lgraph::_detail::VER_MINOR))
-            .append(".")
-            .append(std::to_string(lgraph::_detail::VER_PATCH));
-        LOG_INFO() << "TuGraph v" << version << ", compiled from " << GIT_BRANCH
-                  << " branch, commit " << GIT_COMMIT_HASH << " (web commit " << WEB_GIT_COMMIT_HASH
-                  << ").";
-        LOG_INFO() << "  CPP compiler version: " << CXX_COMPILER_ID << " " << CXX_COMPILER_VERSION
-                  << ".";
-        LOG_INFO() << "  Python version : " << PYTHON_LIB_VERSION << ".";
+        LOG_INFO() << "TuGraph v" << lgraph::version::ShortVersion() << ", compiled from "
+                   << lgraph::version::GitBranch() << " branch, commit "
+                   << lgraph::version::GitCommitHash() << " (web commit "
+                   << lgraph::version::WebGitCommitHash() << ").";
+        LOG_INFO() << "  CPP compiler version: " << lgraph::version::CxxCompilerId() << " "
+                   << lgraph::version::CxxCompilerVersion() << ".";
+        LOG_INFO() << "  Python version : " << lgraph::version::PythonLibVersion() << ".";
         return 0;
     }
     return 1;

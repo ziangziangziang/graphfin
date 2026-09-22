@@ -29,6 +29,7 @@
 #include "restful/server/json_convert.h"
 #include "cypher/graph/common.h"
 #include "cypher/procedure/procedure.h"
+#include "core/version_info.h"
 #include "cypher/procedure/utils.h"
 #include "butil/endpoint.h"
 #include "cypher/monitor/memory_monitor_allocator.h"
@@ -2681,22 +2682,20 @@ void BuiltinProcedure::DbmsSystemInfo(RTContext *ctx, const cypher::Record *reco
                                       std::vector<cypher::Record> *records) {
     CheckProcedureYieldItem("dbms.system.info", yield_items);
     if (ctx->txn_) ctx->txn_->Abort();
-    std::string version;
-    version.append(std::to_string(lgraph::_detail::VER_MAJOR))
-        .append(".")
-        .append(std::to_string(lgraph::_detail::VER_MINOR))
-        .append(".")
-        .append(std::to_string(lgraph::_detail::VER_PATCH));
+    std::string version = lgraph::version::ShortVersion();
     std::vector<std::pair<std::string, lgraph::FieldData>> info = {
         {lgraph::RestStrings::VER, lgraph::FieldData(version)},
         {lgraph::RestStrings::UP_TIME,
          lgraph::FieldData(ctx->sm_ ? ctx->sm_->GetUpTimeInSeconds() : 0.0)},
-        {lgraph::RestStrings::BRANCH, lgraph::FieldData(GIT_BRANCH)},
-        {lgraph::RestStrings::COMMIT, lgraph::FieldData(GIT_COMMIT_HASH)},
-        {lgraph::RestStrings::WEB_COMMIT, lgraph::FieldData(WEB_GIT_COMMIT_HASH)},
-        {lgraph::RestStrings::CPP_ID, lgraph::FieldData(CXX_COMPILER_ID)},
-        {lgraph::RestStrings::CPP_VERSION, lgraph::FieldData(CXX_COMPILER_VERSION)},
-        {lgraph::RestStrings::PYTHON_VERSION, lgraph::FieldData(PYTHON_LIB_VERSION)},
+        {lgraph::RestStrings::BRANCH, lgraph::FieldData(lgraph::version::GitBranch())},
+        {lgraph::RestStrings::COMMIT, lgraph::FieldData(lgraph::version::GitCommitHash())},
+        {lgraph::RestStrings::WEB_COMMIT,
+         lgraph::FieldData(lgraph::version::WebGitCommitHash())},
+        {lgraph::RestStrings::CPP_ID, lgraph::FieldData(lgraph::version::CxxCompilerId())},
+        {lgraph::RestStrings::CPP_VERSION,
+         lgraph::FieldData(lgraph::version::CxxCompilerVersion())},
+        {lgraph::RestStrings::PYTHON_VERSION,
+         lgraph::FieldData(lgraph::version::PythonLibVersion())},
     };
     for (auto &i : info) {
         Record r;

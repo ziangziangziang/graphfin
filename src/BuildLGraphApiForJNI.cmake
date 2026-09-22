@@ -56,6 +56,7 @@ set(LGRAPH_CORE_SRC
         core/transaction.cpp
         core/vertex_index.cpp
         core/vector_index.cpp
+        core/version_info.cpp
         core/faiss_ivf_flat.cpp
         core/vsag_hnsw.cpp
         core/wal.cpp

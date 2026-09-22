@@ -25,6 +25,7 @@
 
 #include "core/audit_logger.h"
 #include "core/task_tracker.h"
+#include "core/version_info.h"
 #include "protobuf/ha.pb.h"
 #include "server/proto_convert.h"
 #include "server/state_machine.h"
@@ -1010,19 +1011,16 @@ void RestServer::HandleGetInfo(const std::string& user, const http_request& requ
             web::json::value::number((int64_t)state_machine_->GetUpTimeInSeconds());
         response[RestStrings::DBCONFIG] = GetDbConfig(global_config_);
         // qw add finish
-        std::string version;
-        version.append(std::to_string(lgraph::_detail::VER_MAJOR))
-            .append(".")
-            .append(std::to_string(lgraph::_detail::VER_MINOR))
-            .append(".")
-            .append(std::to_string(lgraph::_detail::VER_PATCH));
-        response[RestStrings::VER] = web::json::value::string(_TU(version));
-        response[RestStrings::BRANCH] = web::json::value::string(_TU(GIT_BRANCH));
-        response[RestStrings::COMMIT] = web::json::value::string(_TU(GIT_COMMIT_HASH));
-        response[RestStrings::WEB_COMMIT] = web::json::value::string(_TU(WEB_GIT_COMMIT_HASH));
-        response[RestStrings::CPP_ID] = web::json::value::string(_TU(CXX_COMPILER_ID));
-        response[RestStrings::CPP_VERSION] = web::json::value::string(_TU(CXX_COMPILER_VERSION));
-        response[RestStrings::PYTHON_VERSION] = web::json::value::string(_TU(PYTHON_LIB_VERSION));
+        response[RestStrings::VER] = web::json::value::string(_TU(lgraph::version::ShortVersion()));
+        response[RestStrings::BRANCH] = web::json::value::string(_TU(lgraph::version::GitBranch()));
+        response[RestStrings::COMMIT] = web::json::value::string(_TU(lgraph::version::GitCommitHash()));
+        response[RestStrings::WEB_COMMIT] =
+            web::json::value::string(_TU(lgraph::version::WebGitCommitHash()));
+        response[RestStrings::CPP_ID] = web::json::value::string(_TU(lgraph::version::CxxCompilerId()));
+        response[RestStrings::CPP_VERSION] =
+            web::json::value::string(_TU(lgraph::version::CxxCompilerVersion()));
+        response[RestStrings::PYTHON_VERSION] =
+            web::json::value::string(_TU(lgraph::version::PythonLibVersion()));
         return RespondSuccess(request, response);
     }
     if (paths.size() != 2) return RespondBadURI(request);
