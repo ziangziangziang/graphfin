@@ -10,6 +10,11 @@ then run:
 
 The same code path serves the financial example (demo/SeriesFinancial);
 only the fixture differs.
+
+Fixture notes: `site` is an ordinary indexed STRING property used for
+grouping (`MATCH (d:Sensor {site:'hall-0'})`); nothing in the engine is
+telemetry-specific. See docs/architecture/09-series-client-contracts.md
+for the wire shapes this example relies on.
 """
 
 import argparse

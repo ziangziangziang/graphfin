@@ -203,6 +203,13 @@ Done (gated, committed on `timeseries`):
 - Benchmarks: contention/latency profile (writes p50/p95/p99, scans,
   transport retries), fine-grained 1s-cadence profile (full-span vs narrow
   reads), eviction counter asserted via lifecycle metrics.
+  Follow-ups landed: storage-amplification profile (caps 100/1000,
+  rewrite timings), over-budget eviction-churn profile (6 graphs,
+  evictions asserted), M4 client-contracts doc
+  (docs/architecture/09-series-client-contracts.md: normalization rules,
+  INT64/precision/timezone, null matrix, error catalog, retry guidance,
+  parser matrix), SDK collection round-trip test, fresh-client journey
+  test with idempotent-retry helper, multi-row rollback regression.
 
 Partial (landed, plan still lists remainder):
 

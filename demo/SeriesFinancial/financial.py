@@ -8,6 +8,11 @@ Start a server first, e.g.
       --host 127.0.0.1 --port 7073 --rpc_port 9093
 then run:
   python3 financial.py --port 7073
+
+Fixture notes: `sector` is an ordinary indexed STRING property; symbols
+are vertices, daily bars are series points. Nothing in the engine is
+finance-specific. See docs/architecture/09-series-client-contracts.md
+for the wire shapes this example relies on.
 """
 
 import argparse
