@@ -257,7 +257,15 @@ class TestQuery : public TuGraphTest {
         }
         std::ifstream test_file_in(test_file);
         std::ofstream real_file_out(real_file);
+        // The series suites need the series fixture; every other suite runs
+        // against the pristine import so the series field cannot leak into
+        // unrelated expectations.
+        const auto saved_graph_type = graph_type_;
+        if (file_prefix.find("series") != std::string::npos) {
+            graph_type_ = GraphFactory::GRAPH_DATASET_TYPE::YAGO_SERIES;
+        }
         init_db();
+        graph_type_ = saved_graph_type;
         UT_DBG() << "test_file: " << test_file;
         auto test_query_handle_result = [&]() {
             UT_LOG() << "-----" << lgraph::ut::ToString(query_type_) << "-----";

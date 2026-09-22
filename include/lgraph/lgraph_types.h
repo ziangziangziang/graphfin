@@ -1321,6 +1321,59 @@ struct FieldData {
                   "sizeof int64_t is supposed to be equal to Pointer types");
 };
 
+/** @brief   One measure of a time-series field. */
+struct SeriesMeasureSpec {
+    /** @brief   name of the measure, unique within its series field */
+    std::string name;
+    /** @brief   type of the measure, DOUBLE or INT64 */
+    FieldType type = FieldType::DOUBLE;
+
+    inline bool operator==(const SeriesMeasureSpec& rhs) const {
+        return name == rhs.name && type == rhs.type;
+    }
+
+    std::string ToString() const {
+        return name + ":" + lgraph_api::to_string(type);
+    }
+};
+
+/**
+ * @brief   The measures and bucket policy of a time-series field.
+ *
+ * A time-series field is declared as an optional BLOB carrying the `series`
+ * modifier: the record itself stores nothing for it, and the points live in the
+ * series table. The measures are the columns of that series, and the knobs
+ * decide when a bucket - the unit the store reads and rewrites - is closed.
+ */
+struct SeriesSpec {
+    /** @brief   measures of the series, in storage order */
+    std::vector<SeriesMeasureSpec> measures;
+    /** @brief   close a bucket once it holds more than this many points */
+    uint32_t bucket_max_points = 1000;
+    /** @brief   optional wall-clock cap in microseconds, 0 disables it */
+    uint64_t bucket_max_span_us = 0;
+    /** @brief   hard cap on the encoded size of one bucket, in bytes */
+    uint32_t bucket_max_bytes = 1u << 20;
+
+    inline bool operator==(const SeriesSpec& rhs) const {
+        return measures == rhs.measures && bucket_max_points == rhs.bucket_max_points &&
+               bucket_max_span_us == rhs.bucket_max_span_us &&
+               bucket_max_bytes == rhs.bucket_max_bytes;
+    }
+
+    std::string ToString() const {
+        std::string s = "measures=[";
+        for (size_t i = 0; i < measures.size(); ++i) {
+            if (i != 0) s += ",";
+            s += measures[i].ToString();
+        }
+        s += "],bucket_max_points=" + std::to_string(bucket_max_points) +
+             ",bucket_max_span_us=" + std::to_string(bucket_max_span_us) +
+             ",bucket_max_bytes=" + std::to_string(bucket_max_bytes);
+        return s;
+    }
+};
+
 /** @brief   Specification for a field. */
 struct FieldSpec {
     /** @brief   name of the field */
@@ -1337,6 +1390,16 @@ struct FieldSpec {
     bool set_default_value;
     /** @brief  the default value when inserting data. */
     FieldData default_value;
+    /**
+     * @brief   is this field a time series?
+     *
+     * A series field must be an optional BLOB, may not be indexed nor be the
+     * primary field, and must not have a default value: the record has no bytes
+     * for it at all, every point lives in the series table.
+     */
+    bool series = false;
+    /** @brief   the series description, valid only when `series` is true */
+    SeriesSpec series_spec;
     /** @brief   is set init value? */
 
     FieldSpec()
@@ -1396,12 +1459,15 @@ struct FieldSpec {
           deleted(spec.deleted),
           id(spec.id),
           set_default_value(spec.set_default_value),
-          default_value(spec.default_value) {}
+          default_value(spec.default_value),
+          series(spec.series),
+          series_spec(spec.series_spec) {}
 
     inline bool operator==(const FieldSpec& rhs) const {
         return name == rhs.name && type == rhs.type && optional == rhs.optional &&
             deleted == rhs.deleted && id == rhs.id  &&
-            set_default_value == rhs.set_default_value && default_value == rhs.default_value;
+            set_default_value == rhs.set_default_value && default_value == rhs.default_value &&
+            series == rhs.series && series_spec == rhs.series_spec;
     }
 
     /** @brief   Get the string representation of the FieldSpec. */
@@ -1409,7 +1475,8 @@ struct FieldSpec {
         return "lgraph_api::FieldSpec(name=[" + name + "],type=" + lgraph_api::to_string(type) +
                "),optional=" + std::to_string(optional) + ",fieldid=" + std::to_string(id) +
                ",isDeleted=" + std::to_string(deleted) +
-               (set_default_value ? ",default_value=" + default_value.ToString() : "");
+               (set_default_value ? ",default_value=" + default_value.ToString() : "") +
+               (series ? ",series={" + series_spec.ToString() + "}" : "");
     }
 };
 

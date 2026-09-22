@@ -18,6 +18,7 @@
 #include "procedure/utils.h"
 #include "cypher/execution_plan/ops/op_standalone_call.h"
 #include "procedure/procedure.h"
+#include "cypher/execution_plan/ops/op_produce_results.h"
 #include "resultset/record.h"
 #include "server/json_convert.h"
 #include "db/galaxy.h"
@@ -144,9 +145,8 @@ cypher::OpBase::OpResult cypher::StandaloneCall::RealConsume(RTContext *ctx) {
                     CYPHER_TODO();
                     break;
                 case lgraph_api::LGraphType::ANY:
-                    if (v.type == Entry::RecordEntryType::CONSTANT &&
-                        v.constant.type == cypher::FieldData::FieldType::SCALAR) {
-                        record->Insert(title, lgraph::FieldData(v.constant.scalar));
+                    if (v.type == Entry::RecordEntryType::CONSTANT) {
+                        InsertConstantValue(*record, title, v.constant);
                     } else {
                         record->Insert(title, lgraph::FieldData(v.ToString()));
                     }
@@ -176,11 +176,7 @@ cypher::OpBase::OpResult cypher::StandaloneCall::RealConsume(RTContext *ctx) {
                         break;
                     }
                 default:
-                    if (v.constant.array != nullptr) {
-                        record->Insert(title, lgraph::FieldData(v.ToString()));
-                    } else {
-                        record->Insert(title, v.constant.scalar);
-                    }
+                    InsertConstantValue(*record, title, v.constant);
                 }
                 idx++;
             }

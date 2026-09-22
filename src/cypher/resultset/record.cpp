@@ -19,19 +19,62 @@
 #include "parser/symbol_table.h"
 
 namespace cypher {
-lgraph::FieldData Entry::GetEntityField(RTContext *ctx, const std::string &fd) const {
+
+namespace {
+
+/**
+ * What `RETURN n.<series field>` reports: the point count and the two ends, read
+ * from the bucket headers, plus the measure names - which the encoded buckets do
+ * not carry, since they store measure indices. The points themselves are never
+ * materialised; that is what keeps this cheap enough to be a property read.
+ */
+cypher::FieldData SeriesSummaryToMap(const lgraph::series::SeriesSummary &s) {
+    cypher::FieldData::CYPHER_FIELD_DATA_MAP m;
+    m.emplace("count", cypher::FieldData(lgraph::FieldData(static_cast<int64_t>(s.count))));
+    m.emplace("first", s.has_points
+                           ? cypher::FieldData(lgraph::FieldData(lgraph::DateTime(s.first_ts)))
+                           : cypher::FieldData(lgraph::FieldData()));
+    m.emplace("last", s.has_points
+                          ? cypher::FieldData(lgraph::FieldData(lgraph::DateTime(s.last_ts)))
+                          : cypher::FieldData(lgraph::FieldData()));
+    cypher::FieldData::CYPHER_FIELD_DATA_LIST names;
+    names.reserve(s.measures.size());
+    for (const auto &mr : s.measures) {
+        names.emplace_back(cypher::FieldData(lgraph::FieldData(mr.name)));
+    }
+    m.emplace("measures", cypher::FieldData(std::move(names)));
+    return cypher::FieldData(std::move(m));
+}
+
+}  // namespace
+
+cypher::FieldData Entry::GetEntityField(RTContext *ctx, const std::string &fd) const {
     switch (type) {
     case NODE:
         {
             auto vit = node->ItRef();
             CYPHER_THROW_ASSERT(node && vit);
-            return node->IsValidAfterMaterialize(ctx) ? vit->GetField(fd) : lgraph::FieldData();
+            if (!node->IsValidAfterMaterialize(ctx)) return cypher::FieldData(lgraph::FieldData());
+            // Asked before the stored value, because a series field has no bytes
+            // in the record to return and its summary is the useful answer.
+            lgraph::series::SeriesSummary summary;
+            if (ctx->txn_->GetTxn()->ProbeVertexSeries(node->PullVid(), fd, &summary)) {
+                return SeriesSummaryToMap(summary);
+            }
+            return cypher::FieldData(vit->GetField(fd));
         }
     case RELATIONSHIP:
         {
             auto eit = relationship->ItRef();
             CYPHER_THROW_ASSERT(relationship && eit);
-            return eit->IsValid() ? eit->GetField(fd) : lgraph::FieldData();
+            if (!eit->IsValid()) return cypher::FieldData(lgraph::FieldData());
+            // Asked before the stored value, like the vertex branch: a series
+            // field has no bytes in the record and its summary is the answer.
+            lgraph::series::SeriesSummary summary;
+            if (ctx->txn_->GetTxn()->ProbeEdgeSeries(eit->GetUid(), fd, &summary)) {
+                return SeriesSummaryToMap(summary);
+            }
+            return cypher::FieldData(eit->GetField(fd));
         }
     case NODE_SNAPSHOT:
         {
@@ -40,19 +83,25 @@ lgraph::FieldData Entry::GetEntityField(RTContext *ctx, const std::string &fd) c
                                 constant.scalar.type == lgraph::FieldType::STRING);
             auto vid =
                 std::stoi(constant.scalar.string().substr(2, constant.scalar.string().size() - 3));
-            return ctx->txn_->GetTxn()->GetVertexField(vid, fd);
+            lgraph::series::SeriesSummary summary;
+            if (ctx->txn_->GetTxn()->ProbeVertexSeries(vid, fd, &summary)) {
+                return SeriesSummaryToMap(summary);
+            }
+            return cypher::FieldData(ctx->txn_->GetTxn()->GetVertexField(vid, fd));
         }
     case CONSTANT:
         {
             if (constant.type != cypher::FieldData::MAP) {
                 THROW_CODE(CypherException, "Only support for map type");
             }
+            // The whole member, not just scalars: a summary's `measures` is a
+            // list, and a point's entries are scalars - both have to survive
+            // `WITH m AS x RETURN x.y`.
             auto it = constant.map->find(fd);
-            if (it == constant.map->end() ||
-                it->second.type != cypher::FieldData::SCALAR) {
+            if (it == constant.map->end()) {
                 THROW_CODE(CypherException, "Not found or type mismatch");
             }
-            return it->second.scalar;
+            return it->second;
         }
     case RELP_SNAPSHOT:
     default:

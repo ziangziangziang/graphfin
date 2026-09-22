@@ -27,6 +27,75 @@
 #include "server/bolt_session.h"
 #include "boost/regex.hpp"
 
+/* Converts a Cypher MAP/ARRAY value into the result model's json form, recursively.
+ *
+ * A map or array used to be flattened with ToString() into a scalar string, which
+ * only reached the caller as structured data when the text happened to parse as
+ * JSON. Cypher renders a map as {key:value} with unquoted keys and a missing value
+ * as NUL, so a map - and any array containing one - always arrived as an opaque
+ * string. Converting here keeps the nesting, and the result model already stores
+ * LIST/MAP columns as json.
+ *
+ * Scalars go through CypherScalarToResultJson rather than FieldDataToJson: that
+ * helper parses a STRING that happens to contain a JSON array or object into that
+ * container, which is right for stored property text but wrong for a typed nested
+ * value - RETURN ['[]', '{}'] has to come back as two strings, not as [] and {}. */
+inline nlohmann::json CypherScalarToResultJson(const lgraph::FieldData &scalar) {
+    if (scalar.type == lgraph::FieldType::STRING) return nlohmann::json(scalar.AsString());
+    return lgraph_rfc::FieldDataToJson(scalar);
+}
+
+inline nlohmann::json CypherValueToResultJson(const cypher::FieldData &v) {
+    switch (v.type) {
+    case cypher::FieldData::ARRAY:
+        {
+            std::vector<nlohmann::json> list;
+            list.reserve(v.array->size());
+            for (const auto &item : *v.array) {
+                list.emplace_back(CypherValueToResultJson(item));
+            }
+            return nlohmann::json(list);
+        }
+    case cypher::FieldData::MAP:
+        {
+            // std::map rather than the unordered original, so the output order is
+            // stable across runs.
+            std::map<std::string, nlohmann::json> map;
+            for (const auto &kv : *v.map) {
+                map[kv.first] = CypherValueToResultJson(kv.second);
+            }
+            return nlohmann::json(map);
+        }
+    case cypher::FieldData::SCALAR:
+    default:
+        // Same scalar conventions as everywhere else in the result path: a
+        // DATETIME renders as its string, a missing value as json null.
+        return CypherScalarToResultJson(v.scalar);
+    }
+}
+
+/* Inserts a constant Cypher value into a result column: a list or map goes in as a
+ * structured value, anything else as a scalar. */
+inline void InsertConstantValue(lgraph_api::Record &record, const std::string &name,
+                                const cypher::FieldData &v) {
+    if (v.type == cypher::FieldData::ARRAY) {
+        std::vector<nlohmann::json> list;
+        list.reserve(v.array->size());
+        for (const auto &item : *v.array) {
+            list.emplace_back(CypherValueToResultJson(item));
+        }
+        record.Insert(name, list);
+    } else if (v.type == cypher::FieldData::MAP) {
+        std::map<std::string, nlohmann::json> map;
+        for (const auto &kv : *v.map) {
+            map[kv.first] = CypherValueToResultJson(kv.second);
+        }
+        record.Insert(name, map);
+    } else {
+        record.Insert(name, v.scalar);
+    }
+}
+
 /* Runtime Record to User Record */
 static void RRecordToURecord(
     lgraph_api::Transaction *txn,
@@ -164,21 +233,13 @@ static void RRecordToURecord(
                 record.Insert(header[index].first, path, txn, node_map, relp_map);
                 continue;
             } else {
-                if (v.constant.array != nullptr || v.constant.map != nullptr) {
-                    record.Insert(header[index].first, lgraph_api::FieldData(v.ToString()));
-                } else {
-                    record.Insert(header[index].first, v.constant.scalar);
-                }
+                InsertConstantValue(record, header[index].first, v.constant);
                 continue;
             }
         }
 
         if (entry_type == cypher::Entry::UNKNOWN) {
-            if (v.constant.array != nullptr) {
-                record.Insert(header[index].first, lgraph_api::FieldData(v.ToString()));
-            } else {
-                record.Insert(header[index].first, v.constant.scalar);
-            }
+            InsertConstantValue(record, header[index].first, v.constant);
             continue;
         }
 

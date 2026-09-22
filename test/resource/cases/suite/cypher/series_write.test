@@ -1,0 +1,59 @@
+# S3: the whole time-series workflow through Cypher only.
+#
+# A fresh label is declared, points are written, one measure is corrected
+# without losing the others, repeats are idempotent, and everything is
+# deleted cleanly - first the vertex side, then the edge side.
+
+CALL db.createVertexLabel('Company', 'id', 'id', 'INT64', false);
+
+CALL db.createSeriesField('Company', 'prices', [{name:'close', type:'DOUBLE'}, {name:'volume', type:'INT64'}], {bucket_max_points:1000}) YIELD field RETURN field;
+
+CREATE (c:Company {id:1});
+
+MATCH (c:Company {id:1}) CALL series.append(c, 'prices', {ts: datetime('2024-01-02 00:00:00'), close: 11.0, volume: 200}) YIELD written RETURN written;
+
+MATCH (c:Company {id:1}) RETURN series.at(c, 'prices', datetime('2024-01-02 00:00:00')) AS point;
+
+# Correct one measure; the other survives.
+MATCH (c:Company {id:1}) CALL series.update(c, 'prices', 'close', datetime('2024-01-02 00:00:00'), 11.5) YIELD written RETURN written;
+
+MATCH (c:Company {id:1}) RETURN series.at(c, 'prices', datetime('2024-01-02 00:00:00')) AS point;
+
+# Repeating the same write changes nothing.
+MATCH (c:Company {id:1}) CALL series.append(c, 'prices', {ts: datetime('2024-01-02 00:00:00'), close: 11.5, volume: 200}) YIELD written RETURN written;
+
+MATCH (c:Company {id:1}) RETURN series.at(c, 'prices', datetime('2024-01-02 00:00:00')) AS point;
+
+MATCH (c:Company {id:1}) CALL series.clear(c, 'prices') YIELD cleared RETURN cleared;
+
+MATCH (c:Company {id:1}) RETURN series.count(c, 'prices') AS n;
+
+CALL db.dropSeriesField('vertex', 'Company', 'prices') YIELD field RETURN field;
+
+-- error
+MATCH (c:Company {id:1}) RETURN series.count(c, 'prices') AS n;
+
+-- error
+CALL db.dropSeriesField('vertex', 'Company', 'id') YIELD field RETURN field;
+
+# The edge side: same workflow on an edge series.
+CALL db.createEdgeLabel('HOLDS', '[]');
+
+CALL db.createEdgeSeriesField('HOLDS', 'w', [{name:'v', type:'INT64'}], {}) YIELD field RETURN field;
+
+CREATE (c:Company {id:2});
+
+MATCH (a:Company {id:1}), (b:Company {id:2}) CREATE (a)-[h:HOLDS]->(b);
+
+MATCH (a:Company {id:1})-[h:HOLDS]->(b:Company {id:2}) CALL series.append(h, 'w', {ts: datetime('2024-01-03 00:00:00'), v: 7}) YIELD written RETURN written;
+
+MATCH (a:Company {id:1})-[h:HOLDS]->(b:Company {id:2}) RETURN series.at(h, 'w', datetime('2024-01-03 00:00:00')) AS point;
+
+MATCH (a:Company {id:1})-[h:HOLDS]->(b:Company {id:2}) RETURN h.w AS summary;
+
+MATCH (a:Company {id:1})-[h:HOLDS]->(b:Company {id:2}) CALL series.clear(h, 'w') YIELD cleared RETURN cleared;
+
+CALL db.dropSeriesField('edge', 'HOLDS', 'w') YIELD field RETURN field;
+
+-- error
+MATCH (a:Company {id:1})-[h:HOLDS]->(b:Company {id:2}) RETURN series.count(h, 'w') AS n;

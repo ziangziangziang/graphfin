@@ -614,6 +614,20 @@ inline web::json::value ValueToJson(
         js[_TU("name")] = ValueToJson(fields[idx]->GetFieldSpec().name);
         js[_TU("type")] = ValueToJson(to_string(fields[idx]->GetFieldSpec().type));
         js[_TU("optional")] = ValueToJson(fields[idx]->GetFieldSpec().optional);
+        // Series discovery for clients: only present on series fields, so old
+        // responses are unchanged.
+        const auto &spec = fields[idx]->GetFieldSpec();
+        js[_TU("series")] = ValueToJson(spec.series);
+        if (spec.series) {
+            auto measures = web::json::value::array();
+            for (size_t m = 0; m < spec.series_spec.measures.size(); ++m) {
+                web::json::value mj;
+                mj[_TU("name")] = ValueToJson(spec.series_spec.measures[m].name);
+                mj[_TU("type")] = ValueToJson(to_string(spec.series_spec.measures[m].type));
+                measures[m] = mj;
+            }
+            js[_TU("measures")] = measures;
+        }
         if (fields[idx]->GetVertexIndex()) {
             js[_TU("index")] = ValueToJson(true);
             switch (fields[idx]->GetVertexIndex()->GetType()) {

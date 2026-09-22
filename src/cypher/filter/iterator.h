@@ -568,7 +568,10 @@ class VIter {
     std::vector<std::string> Keys(const lgraph::graph::VertexIterator &it) const {
         std::vector<std::string> keys;
         auto schema = it.GetTxn()->GetVertexSchema(it);
-        for (auto &s : schema) keys.emplace_back(s.name);
+        for (auto &s : schema) {
+            if (s.series) continue;
+            keys.emplace_back(s.name);
+        }
         return keys;
     }
 };

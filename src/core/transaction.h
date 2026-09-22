@@ -22,6 +22,7 @@
 #include "core/kv_store.h"
 #include "core/managed_object.h"
 #include "core/schema_manager.h"
+#include "core/series_store.h"
 #include "core/type_convert.h"
 #include "core/value.h"
 
@@ -78,6 +79,7 @@ class Transaction {
 
     IndexManager* index_manager_ = nullptr;
     BlobManager* blob_manager_ = nullptr;
+    series::SeriesStore* series_store_ = nullptr;
     std::vector<IteratorBase*> iterators_;
     FullTextIndex* fulltext_index_;
     std::vector<FTIndexEntry> fulltext_buffers_;
@@ -1049,6 +1051,98 @@ class Transaction {
 
     KvTransaction& GetTxn() { return *txn_; }
 
+    //------------------------ time series ------------------------
+
+    /**
+     * Writes one point of a vertex's series field: appends it, or overwrites
+     * the point that already sits at `ts` (an idempotent correction).
+     *
+     * `values[i]` is the value of the field's i-th declared measure and may be
+     * null; `ts` is microseconds since the epoch, the same domain as DATETIME.
+     * These are the entry points the series procedures use; a series field
+     * cannot be written through the ordinary property API, because its points
+     * are not in the record.
+     *
+     * Returns false if the label has no such field, if it is not a series
+     * field, or if a point cannot be made to fit the field's bucket byte cap.
+     */
+    bool SetVertexSeriesPoint(VertexId id, const std::string& field, int64_t ts,
+                              const std::vector<series::MeasureValue>& values);
+
+    /** Reads the points of a vertex's series with t0 <= ts <= t1, oldest first.
+     *  kMinTs/kMaxTs are valid bounds. */
+    bool GetVertexSeriesRange(VertexId id, const std::string& field, int64_t t0, int64_t t1,
+                              std::vector<series::Point>* points);
+
+    /** Number of points of a vertex's series in [t0, t1]. */
+    bool GetVertexSeriesCount(VertexId id, const std::string& field, int64_t t0, int64_t t1,
+                              size_t* count);
+
+    /** Newest / oldest point of a vertex's series; `point` keeps no values when
+     *  the series is empty. */
+    bool GetVertexSeriesLatest(VertexId id, const std::string& field, series::Point* point);
+    bool GetVertexSeriesEarliest(VertexId id, const std::string& field, series::Point* point);
+
+    /** Drops every point of a vertex's series field. */
+    bool ClearVertexSeries(VertexId id, const std::string& field);
+
+    /**
+     * Header-only state of a vertex's series field: point count, first and last
+     * timestamp, and the field's measure names and types.
+     *
+     * Unlike the accessors above this never throws: it returns false when the
+     * vertex or the field does not exist, or when the field is not a series.
+     * That is deliberate, because the Cypher layer asks about every field it is
+     * handed - `RETURN n.price` has to fall back to the stored value for an
+     * ordinary field rather than treat it as an error - and because the measure
+     * names, which the encoded buckets do not carry, are needed to turn a point
+     * into a map keyed by measure.
+     *
+     * The count and the two ends come from reading buckets, so this costs work
+     * proportional to the series. Point lookups use ResolveVertexSeriesSchema
+     * instead and only touch the buckets they return.
+     */
+    bool ProbeVertexSeries(VertexId id, const std::string& field,
+                           series::SeriesSummary* summary);
+
+    /**
+     * The schema half of a series access: the field's storage id, measure
+     * columns, bucket policy and measure names and types. Reads no buckets,
+     * so validating a field and naming its measures is O(1) in the series
+     * length. Returns false (without throwing) when the vertex or the field
+     * does not exist or the field is not a series, so callers report those
+     * uniformly; only a hand-edited measure type throws.
+     */
+    bool ResolveVertexSeriesSchema(VertexId id, const std::string& field, uint16_t* field_id,
+                                   std::vector<series::MeasureColumn>* columns,
+                                   series::BucketPolicy* policy,
+                                   std::vector<series::MeasureRef>* measures);
+
+    /**
+     * Edge counterparts of the vertex series accessors above: points hang off
+     * the edge's uid rather than a vid, keyed with kind 0x01. Same
+     * throw/return contract as the vertex side: false for a missing edge or
+     * field, InputError for a non-series field, InternalError for a
+     * hand-edited measure type. The schema-only and summary variants follow
+     * the vertex split: ResolveEdgeSeriesSchema reads no buckets, while
+     * ProbeEdgeSeries walks the history for count/first/last.
+     */
+    bool SetEdgeSeriesPoint(const EdgeUid& uid, const std::string& field, int64_t ts,
+                            const std::vector<series::MeasureValue>& values);
+    bool GetEdgeSeriesRange(const EdgeUid& uid, const std::string& field, int64_t t0, int64_t t1,
+                            std::vector<series::Point>* points);
+    bool GetEdgeSeriesCount(const EdgeUid& uid, const std::string& field, int64_t t0, int64_t t1,
+                            size_t* count);
+    bool GetEdgeSeriesLatest(const EdgeUid& uid, const std::string& field, series::Point* point);
+    bool GetEdgeSeriesEarliest(const EdgeUid& uid, const std::string& field, series::Point* point);
+    bool ClearEdgeSeries(const EdgeUid& uid, const std::string& field);
+    bool ProbeEdgeSeries(const EdgeUid& uid, const std::string& field,
+                         series::SeriesSummary* summary);
+    bool ResolveEdgeSeriesSchema(const EdgeUid& uid, const std::string& field, uint16_t* field_id,
+                                 std::vector<series::MeasureColumn>* columns,
+                                 series::BucketPolicy* policy,
+                                 std::vector<series::MeasureRef>* measures);
+
     /**
      * Registers a new iterator.
      * Each transaction keep a list of all the iterators created inside it.
@@ -1123,6 +1217,24 @@ class Transaction {
 
     CompositeIndex* GetVertexCompositeIndex(const size_t& label,
                                             const std::vector<size_t>& field_ids);
+
+    /**
+     * Resolves a vertex's series field into what the store needs: the field id,
+     * the measure columns in declared order and the bucket policy. Returns
+     * false when the label has no such field or it is not a series field.
+     */
+    bool ResolveVertexSeries(const graph::VertexIterator& it, const std::string& field,
+                             uint16_t* field_id, std::vector<series::MeasureColumn>* columns,
+                             series::BucketPolicy* policy);
+
+    /**
+     * Edge counterpart of ResolveVertexSeries: throws InputError for a
+     * non-series field, returns false for a missing edge or field. Used by
+     * the edge write path, where a mistyped field must be a loud error.
+     */
+    bool ResolveEdgeSeries(const EdgeUid& uid, const std::string& field, uint16_t* field_id,
+                           std::vector<series::MeasureColumn>* columns,
+                           series::BucketPolicy* policy);
 
     void EnterTxn();
     void LeaveTxn();

@@ -86,6 +86,7 @@ static const char* const DEFAULT_GRAPH_DB_NAME = "default";
 // table names used in core
 static const char* const META_TABLE = "_meta_";                  // stores version numbers
 static const char* const BLOB_TABLE = "_blob_";                  // stores the blobs
+static const char* const SERIES_TABLE = "_tseries_";              // time-series buckets
 static const char* const IP_WHITELIST_TABLE = "_ip_whitelist_";  // ip whitelist table
 static const char* const GRAPH_TABLE = "_graph_";                // vid -> edge1, edge2, ...
 static const char* const V_SCHEMA_TABLE = "_v_schema_";          // label -> schema
@@ -141,6 +142,7 @@ static const int VER_PATCH = LGRAPH_VERSION_PATCH;
 // limits
 static const size_t MAX_NUM_USERS = 65536;
 static const size_t MAX_NUM_FIELDS = 1024;  // max number of fields in vertex/edge property
+static const size_t MAX_SERIES_MEASURES = 64;  // max measures in one time-series field
 static const size_t MAX_NUM_LABELS = 4096;  // max number of vertex and edge labels in one graph
 
 static const size_t MAX_COMPILE_TIME_MS = 1000 * 1000;  // max compile time when loading plugin

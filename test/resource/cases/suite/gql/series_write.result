@@ -1,0 +1,32 @@
+# S3 DDL on the GQL parser path.
+#
+# Map and list literals cannot be expressed here (`{...}` arrives as an
+# unsupported MkRecord node), and neither can CREATE, so point writes stay
+# Cypher-only. What this path covers is scalar-argument DDL - dropping a
+# series field and every validation error around it - plus the underscore
+# read aliases, which series.test covers.
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series_count(p, 'prices') AS n;
+[{"n":3}]
+
+CALL db.dropSeriesField('vertex', 'Person', 'prices') YIELD field RETURN field;
+[{"field":"prices"}]
+
+-- error
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series_count(p, 'prices') AS n;
+[InputError] Vertex 0 has no time series field [prices]
+
+-- error
+CALL db.dropSeriesField('vertex', 'Person', 'name') YIELD field RETURN field;
+[InputError] Field [name] of label [Person] is not a time series
+
+-- error
+CALL db.dropSeriesField('vertex', 'Nope', 'prices') YIELD field RETURN field;
+[InputError] vertex Label "Nope" does not exist.
+
+-- error
+CALL db.dropSeriesField('verte', 'Person', 'prices') YIELD field RETURN field;
+[InputError] Wrong argument given for label type: must be 'vertex' or 'edge'.
+
+-- error
+CALL db.dropSeriesField('edge', 'HAS_CHILD', 'nope') YIELD field RETURN field;
+[InputError] Label [HAS_CHILD] has no field [nope]

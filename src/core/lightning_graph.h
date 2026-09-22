@@ -21,6 +21,7 @@
 #include "fma-common/rw_lock.h"
 
 #include "core/blob_manager.h"
+#include "core/series_store.h"
 #include "core/data_type.h"
 #include "core/defs.h"
 #include "core/index_manager.h"
@@ -54,6 +55,8 @@ class LightningGraph {
     std::unique_ptr<IndexManager> index_manager_ = nullptr;
     std::unique_ptr<PluginManager> plugin_manager_ = nullptr;
     std::unique_ptr<BlobManager> blob_manager_ = nullptr;
+    // Time-series buckets of every series field of this graph.
+    std::unique_ptr<series::SeriesStore> series_store_ = nullptr;
     std::unique_ptr<FullTextIndex> fulltext_index_ = nullptr;
     GCRefCountedPtr<SchemaInfo> schema_;
     KillableRWLock meta_lock_;  // lock to hold when doing meta update, especially when AlterLabel
@@ -269,6 +272,13 @@ class LightningGraph {
     void DropAllIndex();
 
     KvStore& GetStore();
+
+    /**
+     * The graph's time-series buckets, one table for every series field of
+     * every label. Exposed the way GetStore() is: for the monitor and for tests
+     * that need to see the buckets themselves rather than a query result.
+     */
+    series::SeriesStore* GetSeriesStore() { return series_store_.get(); }
 
     const DBConfig& GetConfig() const;
 

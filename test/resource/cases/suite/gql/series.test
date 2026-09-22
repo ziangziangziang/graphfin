@@ -1,0 +1,36 @@
+# Time-series reads on the GQL parser path (PROJECT.md S2).
+#
+# Same fixture as the Cypher suite: every Person has three daily points from
+# 2024-01-01 with close 10/11/12 and volume 100/200/300, and Vanessa Redgrave
+# has a null close on the middle day.
+#
+# The names here are the underscore aliases. The vendored ISO-GQL lexer builds
+# an identifier from ID_Continue | Sc | '#', which has no dot, so the dotted
+# spelling cannot be tokenised by this parser at all - see the expected syntax
+# error at the end, which pins that.
+
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN p.prices AS summary;
+
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series_count(p, 'prices') AS n;
+
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series_range(p, 'prices', datetime('2024-01-01 00:00:00'), datetime('2024-01-03 00:00:00')) AS points;
+
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series_at(p, 'prices', datetime('2024-01-02 00:00:00')) AS point;
+
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series_latest(p, 'prices') AS point, series_earliest(p, 'prices') AS first_point;
+
+MATCH (p:Person {name:'Vanessa Redgrave'}) RETURN series_at(p, 'prices', datetime('2024-01-02 00:00:00')) AS point;
+
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series_mean(p, 'prices', 'close') AS mean, series_min(p, 'prices', 'close') AS min, series_max(p, 'prices', 'close') AS max, series_sum(p, 'prices', 'close') AS sum;
+
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN p.prices.measures AS names;
+
+# Roy Redgrave's volumes cannot be summed in INT64: min/max/mean stay
+# well-defined, the sum refuses instead of wrapping.
+MATCH (p:Person {name:'Roy Redgrave'}) RETURN series_min(p, 'prices', 'volume') AS min, series_max(p, 'prices', 'volume') AS max, series_mean(p, 'prices', 'volume') AS mean;
+
+-- error
+MATCH (p:Person {name:'Roy Redgrave'}) RETURN series_sum(p, 'prices', 'volume') AS sum;
+
+-- error
+MATCH (p:Person {name:'Rachel Kempson'}) RETURN series.range(p, 'prices', datetime('2024-01-01 00:00:00'), datetime('2024-01-03 00:00:00')) AS points;
