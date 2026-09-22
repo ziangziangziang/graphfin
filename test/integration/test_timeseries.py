@@ -546,12 +546,19 @@ def test_tool_backup_restore(tmp_path):
 def test_eviction_reopen_preserves_series(tmp_path):
     # M0: with max_open_graphs=2 and a 1s idle timeout, opening a third graph
     # and idling evicts the LRU graphs; evicted graphs reopen from disk with
-    # schema + series buckets intact.
+    # schema + series buckets intact. The lifecycle counter proves eviction
+    # actually fired (not just correctness-if-it-fired).
     import time
 
+    import httpx
+
+    from phase0_util import free_port
+    monitor_port = free_port()
     db_dir = str(tmp_path / "evict_db")
     srv = ServerHandle(db_dir, extra_args=["--max_open_graphs", "2",
-                                           "--graph_idle_timeout_s", "1"])
+                                           "--graph_idle_timeout_s", "1",
+                                           "--monitor_host",
+                                           "127.0.0.1:%d" % monitor_port])
     srv.start()
     try:
         c = srv.rpc()
@@ -579,6 +586,16 @@ def test_eviction_reopen_preserves_series(tmp_path):
                 pt = cypher(c, "MATCH (x:E {id:1}) RETURN series.at(x, 'p', "
                                "datetime('2024-01-01 00:00:00')) AS point", graph=g)
                 assert pt[0]["point"]["v"] == 1
+            # The lifecycle counter proves eviction fired and reopened graphs
+            # served correctly above.
+            metrics = httpx.get("http://127.0.0.1:%d/metrics" % monitor_port,
+                                timeout=30).text
+            evictions = 0
+            for line in metrics.splitlines():
+                if 'metric="evictions"' in line and not line.startswith("#"):
+                    evictions = int(float(line.rsplit(" ", 1)[1]))
+            log.info("evictions=%d", evictions)
+            assert evictions >= 1
         finally:
             try:
                 c.logout()
@@ -586,3 +603,93 @@ def test_eviction_reopen_preserves_series(tmp_path):
                 pass
     finally:
         srv.cleanup()
+
+
+def idempotent_retry(fn, retries=5, interval=0.5):
+    # Retry transport-level failures for idempotent series operations (same
+    # point rewritten: append/update/clear/DDL reads). Semantic CypherError
+    # results are returned, never retried: retrying a type error cannot help.
+    import time
+    import httpx as _httpx
+
+    last = None
+    for _ in range(retries):
+        try:
+            return fn()
+        except CypherError:
+            raise
+        except (_httpx.HTTPError, ConnectionError, OSError, TimeoutError) as e:
+            last = e
+            time.sleep(interval)
+    raise last
+
+
+def test_fresh_client_journey(srv):
+    # M4 acceptance, one fresh connection per stage: authenticate, discover
+    # metadata, ingest a batch, page through results, stable unsupported
+    # error. Retry guidance: idempotent writes use idempotent_retry.
+    auth = Rest(srv.http_port)
+    labels = auth.cypher("CALL db.vertexLabels()")[1]
+    assert isinstance(labels, list)
+
+    discover = Rest(srv.http_port)
+    discover.cypher("CALL db.createVertexLabel('Journey', 'id', 'id', 'INT64', false)")
+    discover.cypher("CALL db.createSeriesField('Journey', 'prices', "
+                    "[{name:'close', type:'DOUBLE'}], {bucket_max_points:100}) "
+                    "YIELD field RETURN field")
+    discover.cypher("CREATE (c:Journey {id:1})")
+    # Series metadata discovery: the summary map names measures + bounds.
+    _, rows = discover.cypher("MATCH (c:Journey {id:1}) RETURN c.prices AS summary")
+    assert json.loads(rows[0][0])["measures"] == ["close"]
+
+    ingest = Rest(srv.http_port)
+    for day in range(1, 11):
+        _, rows = idempotent_retry(lambda: ingest.cypher(
+            "MATCH (c:Journey {id:1}) CALL series.append(c, 'prices', "
+            "{ts: datetime('2024-01-%02d 00:00:00'), close: %f}) "
+            "YIELD written RETURN written" % (day, 10.0 + day)))
+        assert rows == [[1]]
+    # Repeating the batch is a no-op for counts (idempotent ingest).
+    _, rows = idempotent_retry(lambda: ingest.cypher(
+        "MATCH (c:Journey {id:1}) CALL series.append(c, 'prices', "
+        "{ts: datetime('2024-01-05 00:00:00'), close: 15.0}) "
+        "YIELD written RETURN written"))
+    assert rows == [[1]]
+
+    reader = Rest(srv.http_port)
+    pages = []
+    for lo, hi in ((1, 3), (4, 6), (7, 10)):
+        _, rows = reader.cypher(
+            "MATCH (c:Journey {id:1}) RETURN series.range(c, 'prices', "
+            "datetime('2024-01-%02d 00:00:00'), datetime('2024-01-%02d 00:00:00')) AS pts"
+            % (lo, hi))
+        pages.extend(json.loads(rows[0][0]))
+    _, rows = reader.cypher(
+        "MATCH (c:Journey {id:1}) RETURN series.range(c, 'prices', "
+        "datetime('2024-01-01 00:00:00'), datetime('2024-01-10 00:00:00')) AS pts")
+    assert pages == json.loads(rows[0][0]) and len(pages) == 10
+
+    # Unsupported capabilities fail stably: same error text on repeat calls.
+    errs = []
+    for _ in range(2):
+        try:
+            Rest(srv.http_port).cypher(
+                "MATCH (c:Journey {id:1}) RETURN series.bogus(c, 'prices') AS x")
+            raise AssertionError("unsupported call unexpectedly succeeded")
+        except CypherError as e:
+            errs.append(str(e))
+    assert len(errs) == 2 and errs[0] == errs[1] and errs[0]
+
+    # Semantic errors are not retried by the helper: exactly one attempt.
+    calls = []
+
+    def always_fails():
+        calls.append(1)
+        raise CypherError("boom")
+
+    try:
+        idempotent_retry(always_fails, retries=5)
+        raise AssertionError("expected CypherError")
+    except CypherError:
+        pass
+    assert calls == [1]

@@ -1142,3 +1142,59 @@ TEST_F(TestSeriesTransaction, RealisticOhlcvWorkload) {
              << "ms, " << bytes_per_point << " stored bytes/point vs 32 raw";
     EXPECT_LT(bytes_per_point, 32.0);
 }
+
+TEST_F(TestSeriesTransaction, OpenReadSurvivesConcurrentCommit) {
+    // Transaction/store lifetimes: a read txn with live results stays valid
+    // across another txn's commit, keeps its snapshot (no leaking of the new
+    // points), and a fresh txn observes the committed state.
+    const std::string dir = "./testdb_series_txn_snapshot";
+    AutoCleanDir cleaner(dir);
+    DBConfig conf;
+    conf.dir = dir;
+    LightningGraph db(conf);
+    AddCompanyLabel(db);
+    VertexId v = 0;
+    {
+        auto txn = db.CreateWriteTxn();
+        v = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                          std::vector<std::string>{"1"});
+        for (int i = 0; i < 4; ++i) {
+            ASSERT_TRUE(txn.SetVertexSeriesPoint(v, "prices", i * kUsPerDay,
+                                                 OnePoint(i, i, i)));
+        }
+        txn.Commit();
+    }
+    auto rtxn = db.CreateReadTxn();
+    std::vector<series::Point> before;
+    ASSERT_TRUE(rtxn.GetVertexSeriesRange(v, "prices", kMinTs, kMaxTs, &before));
+    ASSERT_EQ(before.size(), 4u);
+    // A concurrent commit on another thread: LightningGraph forbids two live
+    // transactions on one thread, so the writer runs separately.
+    std::thread writer([&]() {
+        auto wtxn = db.CreateWriteTxn();
+        for (int i = 4; i < 8; ++i) {
+            EXPECT_TRUE(wtxn.SetVertexSeriesPoint(v, "prices", i * kUsPerDay,
+                                                  OnePoint(i, i, i)));
+        }
+        wtxn.Commit();
+    });
+    writer.join();
+    // The held-open read still serves its snapshot; its earlier results are
+    // untouched by the concurrent commit. The read ends before a fresh one
+    // begins (one live transaction per thread).
+    {
+        std::vector<series::Point> during;
+        ASSERT_TRUE(rtxn.GetVertexSeriesRange(v, "prices", kMinTs, kMaxTs, &during));
+        ASSERT_EQ(during.size(), 4u);
+        ASSERT_EQ(during.size(), before.size());
+        for (size_t i = 0; i < 4u; ++i) {
+            EXPECT_EQ(during[i].ts, before[i].ts);
+            EXPECT_EQ(during[i].values[2].i, static_cast<int64_t>(i));
+        }
+    }
+    rtxn.Abort();
+    auto fresh = db.CreateReadTxn();
+    size_t count = 0;
+    ASSERT_TRUE(fresh.GetVertexSeriesCount(v, "prices", kMinTs, kMaxTs, &count));
+    EXPECT_EQ(count, 8u);
+}
