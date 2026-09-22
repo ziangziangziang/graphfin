@@ -5,6 +5,10 @@ native time-series storage. Neither parent branch's plan alone describes deliver
 of the combined product. This document coordinates them; historical PROJECT.md,
 PLAN.md, REPORT.md and REVIEW.md remain evidence of their original work streams.
 
+The direction is stronger operational qualification, stable series identity,
+batched ingestion and bounded reads, integrated whole-graph sharding, and
+historical analysis primitives — in that order where contracts force an order.
+
 | Order | Deliverable | Exit criterion |
 | --- | --- | --- |
 | 1 | Merged release baseline | One identified merged build passes series, cluster and applicable lifecycle/client gates; failures and unsupported capabilities published |

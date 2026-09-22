@@ -1,0 +1,429 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 1024 1024"
+  width="1024"
+  height="1024"
+  role="img"
+  aria-label="GraphFin graphene spiral logo"
+>
+  <defs>
+    <!-- Carbon node shading -->
+    <radialGradient id="carbonNode" cx="35%" cy="28%" r="75%">
+      <stop offset="0%" stop-color="#5c6269"/>
+      <stop offset="28%" stop-color="#272b30"/>
+      <stop offset="72%" stop-color="#111417"/>
+      <stop offset="100%" stop-color="#050607"/>
+    </radialGradient>
+
+    <!-- Warm signal -->
+    <linearGradient id="goldSignal" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fff38a"/>
+      <stop offset="28%" stop-color="#ffd83d"/>
+      <stop offset="65%" stop-color="#f5b800"/>
+      <stop offset="100%" stop-color="#d99000"/>
+    </linearGradient>
+
+    <!-- Gold node -->
+    <radialGradient id="goldNode" cx="36%" cy="30%" r="72%">
+      <stop offset="0%" stop-color="#fffbd1"/>
+      <stop offset="18%" stop-color="#fff36a"/>
+      <stop offset="52%" stop-color="#ffc814"/>
+      <stop offset="100%" stop-color="#d88900"/>
+    </radialGradient>
+
+    <!-- Carbon subtle glow/shadow -->
+    <filter id="carbonShadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow
+        dx="0"
+        dy="7"
+        stdDeviation="7"
+        flood-color="#000000"
+        flood-opacity="0.30"
+      />
+    </filter>
+
+    <!-- Signal glow -->
+    <filter id="goldGlow" x="-150%" y="-150%" width="400%" height="400%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feFlood flood-color="#ffc400" flood-opacity="0.72" result="color"/>
+      <feComposite in="color" in2="blur" operator="in" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Stronger glow on illuminated carbon atoms -->
+    <filter id="nodeGlow" x="-220%" y="-220%" width="540%" height="540%">
+      <feGaussianBlur stdDeviation="12" result="blur"/>
+      <feFlood flood-color="#ffd52b" flood-opacity="0.80" result="color"/>
+      <feComposite in="color" in2="blur" operator="in" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Defocus at spiral head/tail -->
+    <filter id="softFocus" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="9"/>
+    </filter>
+
+    <filter id="deepFocus" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="15"/>
+    </filter>
+
+    <!-- Fade for the remote ends -->
+    <linearGradient id="headFade" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="white" stop-opacity="0"/>
+      <stop offset="55%" stop-color="white" stop-opacity=".45"/>
+      <stop offset="100%" stop-color="white" stop-opacity="1"/>
+    </linearGradient>
+
+    <mask id="headMask">
+      <rect width="1024" height="1024" fill="url(#headFade)"/>
+    </mask>
+  </defs>
+
+  <!-- =========================================================
+       BONDS — MAIN CARBON LATTICE
+       ========================================================= -->
+
+  <g
+    fill="none"
+    stroke="#171a1d"
+    stroke-width="16"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    filter="url(#carbonShadow)"
+  >
+    <!-- Outer spiral -->
+    <path d="
+      M 690 112
+      L 594 100
+      L 505 126
+      L 423 171
+      L 347 234
+      L 292 314
+      L 260 408
+      L 261 510
+      L 296 612
+      L 355 700
+      L 437 770
+      L 532 817
+      L 636 834
+      L 730 811
+      L 801 756
+      L 837 676
+      L 824 594
+    "/>
+
+    <!-- Inner spiral -->
+    <path d="
+      M 691 183
+      L 610 171
+      L 534 194
+      L 467 233
+      L 407 286
+      L 367 351
+      L 346 427
+      L 351 505
+      L 379 578
+      L 428 641
+      L 491 688
+      L 562 712
+      L 632 706
+      L 688 674
+      L 715 628
+    "/>
+
+    <!-- cross-bonds creating graphene-like cells -->
+    <path d="M 594 100 L 610 171"/>
+    <path d="M 505 126 L 534 194"/>
+    <path d="M 423 171 L 467 233"/>
+    <path d="M 347 234 L 407 286"/>
+    <path d="M 292 314 L 367 351"/>
+    <path d="M 260 408 L 346 427"/>
+    <path d="M 261 510 L 351 505"/>
+    <path d="M 296 612 L 379 578"/>
+    <path d="M 355 700 L 428 641"/>
+    <path d="M 437 770 L 491 688"/>
+    <path d="M 532 817 L 562 712"/>
+    <path d="M 636 834 L 632 706"/>
+    <path d="M 730 811 L 688 674"/>
+    <path d="M 801 756 L 715 628"/>
+
+    <!-- diagonal bonds for fuller honeycomb texture -->
+    <path d="M 594 100 L 534 194"/>
+    <path d="M 505 126 L 467 233"/>
+    <path d="M 423 171 L 407 286"/>
+
+    <path d="M 292 314 L 346 427"/>
+    <path d="M 260 408 L 351 505"/>
+
+    <path d="M 296 612 L 428 641"/>
+    <path d="M 355 700 L 491 688"/>
+
+    <path d="M 532 817 L 632 706"/>
+    <path d="M 636 834 L 688 674"/>
+
+    <!-- inward G-tail -->
+    <path d="
+      M 824 594
+      L 748 551
+      L 676 545
+      L 618 575
+      L 590 623
+    "/>
+
+    <path d="
+      M 715 628
+      L 660 610
+      L 618 625
+      L 590 657
+    "/>
+
+    <path d="M 748 551 L 715 628"/>
+    <path d="M 676 545 L 660 610"/>
+    <path d="M 618 575 L 618 625"/>
+  </g>
+
+  <!-- =========================================================
+       SIGNAL — CONTINUOUS GOLDEN PATH THROUGH THE STRUCTURE
+       ========================================================= -->
+
+  <!-- Soft underlying light -->
+  <path
+    d="
+      M 505 126
+      L 534 194
+      L 467 233
+      L 423 171
+      L 347 234
+      L 407 286
+      L 367 351
+      L 292 314
+      L 260 408
+      L 346 427
+      L 351 505
+      L 261 510
+      L 296 612
+      L 379 578
+      L 428 641
+      L 355 700
+      L 437 770
+      L 491 688
+      L 562 712
+      L 532 817
+      L 636 834
+      L 632 706
+      L 688 674
+      L 715 628
+      L 676 545
+    "
+    fill="none"
+    stroke="#ffc400"
+    stroke-width="31"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    opacity=".14"
+    filter="url(#goldGlow)"
+  />
+
+  <!-- Sharp signal -->
+  <path
+    d="
+      M 505 126
+      L 534 194
+      L 467 233
+      L 423 171
+      L 347 234
+      L 407 286
+      L 367 351
+      L 292 314
+      L 260 408
+      L 346 427
+      L 351 505
+      L 261 510
+      L 296 612
+      L 379 578
+      L 428 641
+      L 355 700
+      L 437 770
+      L 491 688
+      L 562 712
+      L 532 817
+      L 636 834
+      L 632 706
+      L 688 674
+      L 715 628
+      L 676 545
+    "
+    fill="none"
+    stroke="url(#goldSignal)"
+    stroke-width="12"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    filter="url(#goldGlow)"
+  />
+
+  <!-- =========================================================
+       CARBON NODES
+       ========================================================= -->
+
+  <g fill="url(#carbonNode)">
+    <!-- Outer -->
+    <circle cx="690" cy="112" r="24"/>
+    <circle cx="594" cy="100" r="26"/>
+    <circle cx="505" cy="126" r="25"/>
+    <circle cx="423" cy="171" r="26"/>
+    <circle cx="347" cy="234" r="27"/>
+    <circle cx="292" cy="314" r="28"/>
+    <circle cx="260" cy="408" r="29"/>
+    <circle cx="261" cy="510" r="28"/>
+    <circle cx="296" cy="612" r="29"/>
+    <circle cx="355" cy="700" r="28"/>
+    <circle cx="437" cy="770" r="29"/>
+    <circle cx="532" cy="817" r="29"/>
+    <circle cx="636" cy="834" r="28"/>
+    <circle cx="730" cy="811" r="27"/>
+    <circle cx="801" cy="756" r="28"/>
+    <circle cx="837" cy="676" r="27"/>
+    <circle cx="824" cy="594" r="26"/>
+
+    <!-- Inner -->
+    <circle cx="691" cy="183" r="22"/>
+    <circle cx="610" cy="171" r="23"/>
+    <circle cx="534" cy="194" r="23"/>
+    <circle cx="467" cy="233" r="24"/>
+    <circle cx="407" cy="286" r="23"/>
+    <circle cx="367" cy="351" r="24"/>
+    <circle cx="346" cy="427" r="24"/>
+    <circle cx="351" cy="505" r="24"/>
+    <circle cx="379" cy="578" r="24"/>
+    <circle cx="428" cy="641" r="24"/>
+    <circle cx="491" cy="688" r="24"/>
+    <circle cx="562" cy="712" r="24"/>
+    <circle cx="632" cy="706" r="24"/>
+    <circle cx="688" cy="674" r="23"/>
+    <circle cx="715" cy="628" r="23"/>
+
+    <!-- G tail -->
+    <circle cx="748" cy="551" r="23"/>
+    <circle cx="676" cy="545" r="23"/>
+    <circle cx="618" cy="575" r="22"/>
+    <circle cx="590" cy="623" r="21"/>
+    <circle cx="660" cy="610" r="21"/>
+    <circle cx="618" cy="625" r="20"/>
+    <circle cx="590" cy="657" r="19"/>
+  </g>
+
+  <!-- =========================================================
+       ILLUMINATED SIGNAL NODES
+       ========================================================= -->
+
+  <g fill="url(#goldNode)" filter="url(#nodeGlow)">
+    <circle cx="505" cy="126" r="21"/>
+    <circle cx="467" cy="233" r="21"/>
+    <circle cx="347" cy="234" r="21"/>
+    <circle cx="367" cy="351" r="22"/>
+    <circle cx="260" cy="408" r="22"/>
+    <circle cx="351" cy="505" r="21"/>
+    <circle cx="296" cy="612" r="23"/>
+    <circle cx="428" cy="641" r="22"/>
+    <circle cx="437" cy="770" r="22"/>
+    <circle cx="562" cy="712" r="22"/>
+    <circle cx="636" cy="834" r="22"/>
+    <circle cx="688" cy="674" r="21"/>
+    <circle cx="676" cy="545" r="20"/>
+  </g>
+
+  <!-- Small white-hot cores -->
+  <g fill="#fffbe0">
+    <circle cx="505" cy="126" r="9"/>
+    <circle cx="367" cy="351" r="9"/>
+    <circle cx="260" cy="408" r="9"/>
+    <circle cx="296" cy="612" r="10"/>
+    <circle cx="437" cy="770" r="9"/>
+    <circle cx="562" cy="712" r="9"/>
+    <circle cx="636" cy="834" r="9"/>
+    <circle cx="676" cy="545" r="8"/>
+  </g>
+
+  <!-- =========================================================
+       OUT-OF-FOCUS HEAD
+       ========================================================= -->
+
+  <g opacity=".46" filter="url(#softFocus)">
+    <path
+      d="M 690 112 L 748 143 L 797 191 L 829 252"
+      fill="none"
+      stroke="#1d2023"
+      stroke-width="15"
+      stroke-linecap="round"
+    />
+    <path
+      d="M 691 183 L 747 210 L 784 255"
+      fill="none"
+      stroke="#25282c"
+      stroke-width="14"
+      stroke-linecap="round"
+    />
+
+    <circle cx="748" cy="143" r="22" fill="url(#carbonNode)"/>
+    <circle cx="797" cy="191" r="21" fill="url(#carbonNode)"/>
+    <circle cx="829" cy="252" r="18" fill="url(#carbonNode)"/>
+
+    <circle cx="747" cy="210" r="20" fill="url(#carbonNode)"/>
+    <circle cx="784" cy="255" r="18" fill="url(#goldNode)"/>
+  </g>
+
+  <g opacity=".19" filter="url(#deepFocus)">
+    <path
+      d="M 829 252 L 845 311 L 842 362"
+      fill="none"
+      stroke="#25282c"
+      stroke-width="15"
+      stroke-linecap="round"
+    />
+    <circle cx="845" cy="311" r="20" fill="url(#carbonNode)"/>
+    <circle cx="842" cy="362" r="17" fill="url(#goldNode)"/>
+  </g>
+
+  <!-- =========================================================
+       OUT-OF-FOCUS INNER TAIL
+       ========================================================= -->
+
+  <g opacity=".48" filter="url(#softFocus)">
+    <path
+      d="M 590 623 L 548 595 L 509 588"
+      fill="none"
+      stroke="#171a1d"
+      stroke-width="14"
+      stroke-linecap="round"
+    />
+    <path
+      d="M 590 657 L 544 642 L 504 650"
+      fill="none"
+      stroke="#171a1d"
+      stroke-width="14"
+      stroke-linecap="round"
+    />
+
+    <circle cx="548" cy="595" r="20" fill="url(#carbonNode)"/>
+    <circle cx="509" cy="588" r="17" fill="url(#carbonNode)"/>
+    <circle cx="544" cy="642" r="18" fill="url(#carbonNode)"/>
+    <circle cx="504" cy="650" r="15" fill="url(#goldNode)"/>
+  </g>
+
+  <g opacity=".18" filter="url(#deepFocus)">
+    <path
+      d="M 509 588 L 475 566"
+      fill="none"
+      stroke="#171a1d"
+      stroke-width="13"
+      stroke-linecap="round"
+    />
+    <circle cx="475" cy="566" r="15" fill="url(#goldNode)"/>
+  </g>
+</svg>

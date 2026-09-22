@@ -65,6 +65,27 @@ python3 demo/SeriesFinancial/financial.py --port 7070
 Check each script's `--help` for credentials and output options. Repeating a schema
 creation example on an already populated database may need a new test database.
 
+## Local runtime image instead of building
+
+A local arm64 runtime image built from the frozen qualified candidate exists
+for connecting applications without compiling: `graphfin/graphfin:0.1.0-alpha`.
+It runs `lgraph_server` in the foreground with HTTP on 7071, RPC on 9091,
+Bolt on 7687, and database files under `/data`. It is smoke-tested and local
+only; it has not been pushed to any registry.
+
+```bash
+docker run -d --name graphfin \
+  -p 7071:7071 -p 9091:9091 -p 7687:7687 \
+  -v graphfin-data:/data \
+  graphfin/graphfin:0.1.0-alpha
+python3 demo/SeriesTelemetry/telemetry.py --port 7071
+```
+
+The image carries the qualified engine content, so the README 30-second
+example and both demo scripts run against it unchanged. Upstream TuGraph
+runtime images do not contain GraphFin's changes; use the image above, not
+an upstream one.
+
 ## Run merge gates without rebuilding
 
 ```bash

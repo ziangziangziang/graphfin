@@ -1,7 +1,10 @@
 # GraphFin documentation
 
 GraphFin is a general-purpose time-series graph database derived from TuGraph.
-Financial dependency analysis and equipment telemetry are example applications.
+Many graph problems are also time-series problems: the database stores what is
+connected and what changed along those connections, together. Investment
+analytics is the first major use case; financial dependency analysis and
+equipment telemetry are the acceptance fixtures.
 
 Start with [the English README](../README.md) or [中文说明](../README_CN.md).
 

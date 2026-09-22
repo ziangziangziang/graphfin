@@ -1,10 +1,30 @@
 # Relationships and observations, together
 
-GraphFin stores labeled vertices and edges with native time-series fields.
-Applications can follow a dependency and read the observations attached to the
-selected entities or relationships. Each named graph has its own transactional
-store; lazy loading and bounded admission keep inactive graphs from requiring
-all their runtime resources at once.
+Many graph problems are also time-series problems. Real-world data is both
+**connected** and **changing**: a company is connected to suppliers,
+subsidiaries, securities, funds, industries, and counterparties, while the
+facts attached to those entities and relationships — prices, holdings,
+fundamentals, exposures, volumes, ownership stakes — evolve continuously.
+
+Traditionally those two dimensions live in different systems. The graph
+database knows **what is connected**. The time-series system knows **what
+changed and when**. The application is left to align identities, coordinate
+reads and writes, and move between the two models.
+
+GraphFin lets vertices and edges own native time-series fields, so
+applications traverse the relationships that matter and work with their
+changing observations through the same data model.
+
+The graph provides the **context**.
+The series provides the **history**.
+The relationships tell you **where to look**.
+The series tell you **what happened over time**.
+
+It is built for connected, time-varying data — with **investment analytics
+as its first major use case**, while keeping the underlying database
+general-purpose. Each named graph has its own transactional store; lazy
+loading and bounded admission keep inactive graphs from requiring all their
+runtime resources at once.
 
 ![Connected graph entities above sampled time-series layers](images/product/graph-time-hero.png)
 
@@ -23,14 +43,46 @@ This is a conceptual product illustration, not a deployed-cluster diagram.
 | Clients | REST/RPC/Bolt paths and Python examples | Collection normalization, error behavior and required driver compatibility have explicit contracts |
 | Operations | Restart, backup and snapshot tools | Qualification scope depends on evidence for the exact merged build |
 
+## Why this shape
+
+**One identity.** A series belongs to a vertex or edge in a named graph. The
+application does not need a second store's identifier just to find that
+element's observations.
+
+**One transaction domain.** Graph records and series buckets live in the same
+graph store. Changes made within one graph transaction commit or roll back
+together. Separate requests still create separate transactions.
+
+**Graph-first selection.** Follow a holding, supplier, or dependency
+relationship to find the entities that matter, then read their observations.
+The graph narrows the question before the series answers it.
+
+**Native storage.** Observations are stored in timestamp-ordered, encoded
+buckets, with typed measures and point/range operations. Applications can
+correct a measure or read a window without treating an entire history as an
+ordinary property value.
+
 ## Example applications
 
-A financial application models issuers, suppliers, products, dealers and holdings,
-then attaches price, volume, fundamentals or ownership observations. A telemetry
-application models machines, sensors and upstream dependencies with sampled
-measurements. Both use the same generic series and graph APIs. Entity resolution,
-market feeds, causal/statistical models and trading decisions belong above the
-database.
+**Finance.** Model issuers, securities, funds, suppliers, and counterparties.
+Attach prices and fundamentals to entities, and positions or weights to
+relationships. Use the graph to select exposures and the series to examine
+how their observations changed. A security vertex can own its price series; a
+company can carry its fundamentals; a `HOLDS` edge can carry a position
+series.
+
+**Telemetry.** Model machines, sensors, sites, and upstream dependencies.
+Attach temperature, throughput, or health measurements to the equipment and
+relationships they describe. Follow a dependency to find the relevant
+readings.
+
+**Dependency systems.** Model services, components, supply chains, or
+infrastructure. Track latency, volume, capacity, or lead time alongside the
+connections that give those measurements meaning.
+
+All three use the same generic series and graph APIs. The database provides
+the relationships and observations. Applications provide entity resolution,
+feeds, domain models, and statistical or causal analysis.
 
 Historical questions such as “what was known at the time?” require future
 revision and graph-temporal semantics. A timestamped series and an ordinary edge
