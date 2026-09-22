@@ -306,3 +306,142 @@ def test_bench_fine_grained_1s_cadence(srv, client):
         ("server_peak_rss_mb", round(peak_kb / 1024, 1) if peak_kb else None),
     ]:
         log.info("BENCH %s=%s", k, v)
+
+
+def test_bench_storage_amplification(tmp_path):
+    # Storage amplification across bucket caps: same workload under caps 100
+    # and 1000, bytes/point from directory size, plus full-range rewrite
+    # timings as a rewrite-cost proxy. (Exact rewritten-bytes counters await
+    # the M3 query-diagnostics instrumentation.)
+    from phase0_util import ServerHandle
+
+    results = {}
+    for cap in (100, 1000):
+        db_dir = str(tmp_path / ("amp_%d" % cap))
+        srv = ServerHandle(db_dir)
+        srv.start()
+        try:
+            c = srv.rpc()
+            try:
+                cypher(c, "CALL db.createVertexLabel('Amp', 'id', 'id', 'INT64', false)")
+                cypher(c, "CALL db.createSeriesField('Amp', 'p', "
+                          "[{name:'v', type:'INT64'}], {bucket_max_points:%d}) "
+                          "YIELD field RETURN field" % cap)
+                t0 = time.time()
+                for s in range(4):
+                    cypher(c, "CREATE (x:Amp {id:%d})" % s)
+                    for p in range(500):
+                        cypher(c, "MATCH (x:Amp {id:%d}) CALL series.append(x, 'p', "
+                                  "{ts: %d, v: %d}) YIELD written RETURN written"
+                                  % (s, 1704067200000000 + p * 86400000000, p))
+                ingest_s = time.time() - t0
+                total = 4 * 500
+                for s in range(4):
+                    assert cypher(c, "MATCH (x:Amp {id:%d}) "
+                                     "RETURN series.count(x, 'p') AS n" % s) == [{"n": 500}]
+                # Rewrite every point once (correction workload).
+                t0 = time.time()
+                for s in range(4):
+                    for p in range(500):
+                        cypher(c, "MATCH (x:Amp {id:%d}) CALL series.update(x, 'p', 'v', "
+                                  "%d, %d) YIELD written RETURN written"
+                                  % (s, 1704067200000000 + p * 86400000000, p + 1))
+                rewrite_s = time.time() - t0
+                results[cap] = (total / ingest_s, total / rewrite_s,
+                                du_bytes(db_dir) / total)
+            finally:
+                try:
+                    c.logout()
+                except Exception:
+                    pass
+        finally:
+            srv.cleanup()
+    for cap, (ingest, rewrite, bpp) in sorted(results.items()):
+        log.info("BENCH amp_cap=%d ingest_pts=%s rewrite_pts=%s db_dir_bytes_per_point=%s",
+                 cap, round(ingest, 1), round(rewrite, 1), round(bpp, 2))
+
+
+def test_bench_overbudget_eviction_churn(tmp_path):
+    # Methodology for the over-budget profile: more graphs than the open
+    # budget (6 graphs, max_open_graphs=2) with continuous cross-graph churn
+    # reads, so eviction + reopen interleave with query traffic. Records
+    # per-read latencies and the eviction counter. Small-scale stand-in: the
+    # full profile needs data past the memory budget, which this
+    # environment cannot hold.
+    import httpx
+
+    from phase0_util import create_graph, free_port
+
+    graphs = ["ch%d" % i for i in range(6)]
+    db_dir = str(tmp_path / "overbudget_db")
+    monitor_port = free_port()
+    srv = ServerHandle(db_dir, extra_args=["--max_open_graphs", "2",
+                                           "--graph_idle_timeout_s", "1",
+                                           "--monitor_host",
+                                           "127.0.0.1:%d" % monitor_port])
+    srv.start()
+    try:
+        c = srv.rpc()
+        try:
+            for g in graphs:
+                create_graph(c, g)
+                cypher(c, "CALL db.createVertexLabel('E', 'id', 'id', 'INT64', false)",
+                       graph=g)
+                cypher(c, "CALL db.createSeriesField('E', 'p', "
+                          "[{name:'v', type:'INT64'}], {}) YIELD field RETURN field",
+                       graph=g)
+                for s in range(2):
+                    cypher(c, "CREATE (x:E {id:%d})" % s, graph=g)
+                    for p in range(200):
+                        cypher(c, "MATCH (x:E {id:%d}) CALL series.append(x, 'p', "
+                                  "{ts: %d, v: %d}) YIELD written RETURN written"
+                                  % (s, 1704067200000000 + p * 86400000000, p),
+                               graph=g)
+            lat = []
+            rounds = 4
+            # Drop refs and outwait the idle task (5s minimum period) so
+            # eviction fires; then churn with a fresh client.
+            try:
+                c.logout()
+            except Exception:
+                pass
+            time.sleep(8)
+            c = srv.rpc()
+            for _ in range(rounds):
+                for g in graphs:
+                    for s in range(2):
+                        q0 = time.time()
+                        rows = cypher(
+                            c, "MATCH (x:E {id:%d}) RETURN series.range(x, 'p', %d, %d) AS p"
+                            % (s, 1704067200000000, 1704067200000000 + 199 * 86400000000),
+                            graph=g)
+                        lat.append(time.time() - q0)
+                        assert len(rows[0]["p"]) == 200
+            lat.sort()
+
+            def pct(q):
+                return round(lat[min(len(lat) - 1, int(len(lat) * q))], 4)
+
+            metrics = httpx.get("http://127.0.0.1:%d/metrics" % monitor_port,
+                                timeout=30).text
+            evictions = 0
+            for line in metrics.splitlines():
+                if 'metric="evictions"' in line and not line.startswith("#"):
+                    evictions = int(float(line.rsplit(" ", 1)[1]))
+            for k, v in [
+                ("overbudget_graphs", len(graphs)),
+                ("overbudget_points", len(graphs) * 2 * 200),
+                ("overbudget_reads", len(lat)),
+                ("overbudget_read_p50_s", pct(0.50)),
+                ("overbudget_read_p95_s", pct(0.95)),
+                ("overbudget_evictions", evictions),
+            ]:
+                log.info("BENCH %s=%s", k, v)
+            assert evictions >= 1
+        finally:
+            try:
+                c.logout()
+            except Exception:
+                pass
+    finally:
+        srv.cleanup()

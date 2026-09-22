@@ -178,6 +178,27 @@ def test_rest_series_wire_types(rest):
         "datetime('2024-01-02 00:00:00')) AS point")
     assert json.loads(rows[0][0])["close"] == 12.5
 
+    # A later row's type error rolls back earlier rows of the same query:
+    # id:1 keeps close=12.5 (not 99.9), id:2 stays empty.
+    rest.cypher("CREATE (c:Wire {id:2})")
+    try:
+        rest.cypher(
+            "MATCH (c:Wire) CALL series.update(c, 'prices', 'close', "
+            "datetime('2024-01-02 00:00:00'), "
+            "CASE WHEN c.id = 2 THEN [99] ELSE 99.9 END) "
+            "YIELD written RETURN written")
+        raise AssertionError("multi-row malformed update unexpectedly succeeded")
+    except CypherError as e:
+        assert "declared type" in str(e)
+    _, rows = rest.cypher(
+        "MATCH (c:Wire {id:1}) RETURN series.at(c, 'prices', "
+        "datetime('2024-01-02 00:00:00')) AS point")
+    assert json.loads(rows[0][0])["close"] == 12.5
+    _, rows = rest.cypher(
+        "MATCH (c:Wire {id:2}) RETURN series.at(c, 'prices', "
+        "datetime('2024-01-02 00:00:00')) AS point")
+    assert rows[0][0] is None
+
 
 def test_restart_preserves_series(srv, rpc):
     # Durable restart: committed series data (points + schema) survives a
@@ -321,6 +342,24 @@ def test_bundled_rest_client_login_and_cypher(srv):
         assert c.call_cypher("default", "CREATE (n:Sdk {id:5})") == [
             ["created 1 vertices, created 0 edges."]]
         assert c.call_cypher("default", "MATCH (n:Sdk) RETURN n.id AS id") == [[5]]
+        # Collection normalization through the SDK: LIST/MAP cells arrive as
+        # JSON text (wire contract); the client parses them by header type.
+        assert c.call_cypher(
+            "default",
+            "CALL db.createSeriesField('Sdk', 'prices', "
+            "[{name:'close', type:'DOUBLE'}], {}) YIELD field RETURN field") == [
+            ["prices"]]
+        assert c.call_cypher(
+            "default",
+            "MATCH (n:Sdk {id:5}) CALL series.append(n, 'prices', {ts: "
+            "datetime('2024-01-02 00:00:00'), close: 3.5}) "
+            "YIELD written RETURN written") == [[1]]
+        point_raw = c.call_cypher(
+            "default",
+            "MATCH (n:Sdk {id:5}) RETURN series.at(n, 'prices', "
+            "datetime('2024-01-02 00:00:00')) AS point")[0][0]
+        assert isinstance(point_raw, str)
+        assert json.loads(point_raw)["close"] == 3.5
     finally:
         assert c.logout() is True
 
