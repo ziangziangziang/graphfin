@@ -348,21 +348,40 @@ def cypher_on_leader(handle, script, graph="default", timeout=15,
                      leader_timeout=90.0):
     """Run a Cypher statement, retrying against live nodes. Returns (ok, result).
 
-    Writes executed on a follower are redirected by the server to the leader,
-    so this works during elections and node restarts without explicit leader
-    tracking.
+    Write requests sent to a follower are answered with a redirect by the
+    server instead of being forwarded, so attempts rotate across all three
+    nodes rather than pinning the first live one. Clients are logged out after
+    each attempt to avoid leaking server sessions across long retry loops.
     """
     deadline = time.time() + leader_timeout
     last = None
+    attempt = 0
     while time.time() < deadline:
-        try:
-            c = live_client(handle)
-            ok, result = c.callCypher(script, graph, timeout=timeout)
-            if ok:
+        order = [(attempt + i) % 3 for i in range(3)]
+        for i in order:
+            c = None
+            try:
+                c = handle.rpc(i, retries=2)
+            except Exception as exc:  # noqa: BLE001
+                last = exc
+                continue
+            try:
+                ok, result = c.callCypher(script, graph, timeout=timeout)
+            except Exception as exc:  # noqa: BLE001
+                last = exc
+                continue
+            finally:
+                try:
+                    c.logout()
+                except Exception:  # noqa: BLE001
+                    pass
+            if ok or "already" in str(result).lower():
                 return ok, result
-            last = result
-        except Exception as exc:  # noqa: BLE001
-            last = exc
+            if "Not a leader" in str(result) or "no leader" in str(result).lower():
+                last = result
+                continue
+            return ok, result
+        attempt += 1
         time.sleep(1)
     return False, last
 

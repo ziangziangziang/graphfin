@@ -23,6 +23,8 @@
 #include "./ut_config.h"
 #include "core/lightning_graph.h"
 #include "core/series_store.h"
+#include "cypher/execution_plan/runtime_context.h"
+#include "cypher/execution_plan/scheduler.h"
 #include "./test_tools.h"
 #include "./ut_utils.h"
 
@@ -1232,4 +1234,42 @@ TEST_F(TestSeriesTransaction, OpenReadSurvivesConcurrentCommit) {
     size_t count = 0;
     ASSERT_TRUE(fresh.GetVertexSeriesCount(v, "prices", kMinTs, kMaxTs, &count));
     EXPECT_EQ(count, 8u);
+}
+
+TEST_F(TestSeriesTransaction, MutatingProcedureCallsWithReturnClassifyAsWrites) {
+    // The HA layer replicates only statements classified as writes. A
+    // standalone CALL followed by RETURN parses as a regular query whose call
+    // lands in iq_call_clause; the v1 read-only decider used to ignore that
+    // clause, so series DDL/appends executed leader-local without raft
+    // replication and followers diverged permanently (GraphFin v0.1.0-alpha
+    // HA gate: followers reported "has no time series field" while the
+    // leader served the same reads). The context carries an empty graph so
+    // the visitor's AST rewrite (which opens the named graph) is skipped;
+    // classifying built-in calls does not need it.
+    cypher::RTContext ctx(nullptr, nullptr, "admin", "", false);
+    const std::vector<std::pair<std::string, bool>> cases = {
+        {"CALL db.createSeriesField('L', 's', [{name:'v', type:'DOUBLE'}], {}) "
+         "YIELD field RETURN field",
+         false},
+        {"CALL db.createEdgeSeriesField('E', 'w', [{name:'v', type:'INT64'}], {}) "
+         "YIELD field RETURN field",
+         false},
+        {"CALL db.createSeriesField('L', 's', [{name:'v', type:'DOUBLE'}], {})",
+         false},
+        {"MATCH (n:L {id:1}) CALL series.append(n, 's', {ts:1, v:1.0}) "
+         "YIELD written RETURN written",
+         false},
+        {"MATCH (n:L {id:1}) CALL series.update_cas(n, 's', 'v', 1, 1.0, 2.0) "
+         "YIELD written RETURN written",
+         false},
+        {"MATCH (n:L {id:1}) RETURN series.range(n, 's', 1, 2) AS p", true},
+        {"CALL db.createVertexLabel('L', 'id', 'id', 'INT64', false)", false},
+        {"CALL db.vertexLabels()", true},
+    };
+    for (const auto& c : cases) {
+        std::string name, type;
+        bool read_only = cypher::Scheduler::DetermineReadOnly(
+            &ctx, lgraph_api::GraphQueryType::CYPHER, c.first, name, type);
+        EXPECT_EQ(read_only, c.second) << c.first;
+    }
 }
