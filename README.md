@@ -1,123 +1,96 @@
-# TuGraph
+# GraphFin
 
-[![Release](https://shields.io/github/v/release/tugraph-family/tugraph-db.svg?logo=stackblitz&label=Version&color=red)](https://github.com/TuGraph-family/tugraph-db/releases)
-[![UT&&IT](https://github.com/TuGraph-family/tugraph-db/actions/workflows/ci.yml/badge.svg)](https://github.com/TuGraph-family/tugraph-db/actions/workflows/ci.yml)
-[![Documentation Status](https://readthedocs.org/projects/tugraph-db/badge/?version=latest)](https://tugraph-db.readthedocs.io/en/latest/?badge=latest)
-[![Commit](https://badgen.net/github/last-commit/tugraph-family/tugraph-db/master?icon=git&label=Commit)](https://github.com/TuGraph-family/tugraph-db/commits/master)
-[![codecov](https://codecov.io/gh/TuGraph-family/tugraph-db/branch/master/graph/badge.svg?token=JH78ARWZAQ)](https://codecov.io/gh/TuGraph-family/tugraph-db)
+**A general-purpose graph database with native time-series data.**
 
-[![Star](https://shields.io/github/stars/tugraph-family/tugraph-db?logo=startrek&label=Star&color=yellow)](https://github.com/TuGraph-family/tugraph-db/stargazers)
-[![Fork](https://shields.io/github/forks/tugraph-family/tugraph-db?logo=forgejo&label=Fork&color=orange)](https://github.com/TuGraph-family/tugraph-db/forks)
-[![Contributor](https://shields.io/github/contributors/tugraph-family/tugraph-db?logo=actigraph&label=Contributor&color=abcdef)](https://github.com/TuGraph-family/tugraph-db/contributors)
-[![Docker](https://shields.io/docker/pulls/tugraph/tugraph-runtime-centos7?logo=docker&label=Docker&color=blue)](https://hub.docker.com/r/tugraph/tugraph-runtime-centos7/tags)
-[![License](https://shields.io/github/license/tugraph-family/tugraph-db?logo=apache&label=License&color=blue)](https://www.apache.org/licenses/LICENSE-2.0.html)
+[中文](README_CN.md) · [Documentation](docs/README.md) · [Quick start](docs/getting-started.md) · [Test plan](docs/testing/post-merge.md) · [Release status](RELEASE.md)
 
-[![EN](https://shields.io/badge/Docs-English-blue?logo=readme)](https://tugraph-db.readthedocs.io/en/latest)
-[![CN](https://shields.io/badge/Docs-中文-blue?logo=readme)](https://tugraph-db.readthedocs.io/zh-cn/latest)
+![Connected entities with sampled observations and compact storage layers](docs/images/product/graph-time-hero.png)
 
-[[中文版]](README_CN.md)
+Store relationships and the observations that change over time, together.
+GraphFin combines TuGraph's property-graph foundation with native vertex and edge
+series, resource-aware multi-graph storage, and replication infrastructure.
+Financial dependencies, supply chains and equipment telemetry use the same APIs.
 
-:mega: **TuGraph-db [Free Trial](https://computenest.console.aliyun.com/service/detail/cn-hangzhou/service-7b50ea3d20e643da95bf?type=user&isRecommend=true) on Aliyun with [Guide](https://aliyun-computenest.github.io/quickstart-tugraph/)**.
+**Status: Alpha qualification in progress.** The confirmed product version is
+`0.1.0-alpha`; this is not a production-readiness claim. Whole-graph sharding
+currently provides control-plane components, with live forwarding and migration
+data movement still to come. See [TASK.md](TASK.md) for the release blockers.
 
-## 1. Introduction
-TuGraph is an efficient graph database that supports high data volume, low latency lookup and fast graph analytics.
+## What you can build
 
-Functionalities:
+| Capability | What it enables |
+| --- | --- |
+| Relationships with measurements | Typed series on vertices and edges: instrument prices, sensor readings and dependency weights |
+| Native series operations | Append/replace points, update a measure, compare-and-set, point/range/endpoint reads and aggregates |
+| Many independent graphs | Separate graph stores, lazy loading and a cap on simultaneously open graphs |
+| Replication foundation | Existing HA machinery, subject to merged-series failover and recovery qualification |
+| Placement and routing components | Persistent identities, placement epochs and routing decisions; public distributed forwarding remains unfinished |
+| Familiar interfaces | Cypher, REST, RPC, Bolt and Python, with explicit wire contracts |
 
-- Labeled property graph model
-- Full ACID support with serializable transactions
-- Graph analytics algorithms embedded with graph computing framework
-- Full-Text/Primary/Secondary Index support
-- OpenCypher query API
-- Stored procedure with C++/Python API
+An application can follow `SUPPLIES` relationships and read selected suppliers'
+measurements. The same operation follows `FEEDS` relationships between machines.
+GraphFin supplies storage and query primitives; applications supply domain models
+and statistical analysis.
 
-Performance and scalability:
-
-- LDBC SNB world record holder (2022/9/1 https://ldbcouncil.org/benchmarks/snb/)
-- Supports up to tens of terabytes
-- Visit millions of vertices per second
-- Fast bulk import
-
-You can find TuGraph's doc by [link](https://tugraph-db.readthedocs.io/en/latest), and welcome to our [website](https://www.tugraph.org).
-
-## 2. Quick Start
-
-An easy way to start is using docker to set up, which can be found in [DockerHub](https://hub.docker.com/u/tugraph), named `tugraph/tugraph-runtime-[os]:[tugraph version]`,
-for example, `tugraph/tugraph-runtime-centos7:4.5.1`.
-
-For more details, please refer to [quick start doc](docs/en-US/source/3.quick-start/1.preparation.md) and [development guide](./docs/zh-CN/source/development_guide.md).
-
-## 3. Build from Source
-
-It's recommended to build TuGraph in linux system, and docker environment is a good choice. If you want to setup a new environment, please refer to [Dockerfile](ci/images).
-
-Here are steps to compile TuGraph:
-1. run `deps/build_deps.sh` to build tugraph-web if you need. Skip this step otherwise.
-2. `cmake .. -DOURSYSTEM=centos7` or `cmake .. -DOURSYSTEM=ubuntu`
-3. `make`
-4. `make package` or `cpack --config CPackConfig.cmake`
-
-Example:
-`tugraph/tugraph-compile-centos7`Docker environment
-
-```bash
-$ git clone --recursive https://github.com/TuGraph-family/tugraph-db.git
-$ cd tugraph-db
-$ deps/build_deps.sh
-$ mkdir build && cd build
-$ cmake .. -DOURSYSTEM=centos7
-$ make
-$ make package
+```cypher
+CALL db.createVertexLabel('Sensor', 'id', 'id', 'INT64', false);
+CALL db.createSeriesField('Sensor', 'readings',
+  [{name:'temperature', type:'DOUBLE'}], {}) YIELD field RETURN field;
+CREATE (s:Sensor {id:1});
+MATCH (s:Sensor {id:1})
+CALL series.append(s, 'readings',
+  {ts:datetime('2024-01-02 00:00:00'), temperature:21.5})
+YIELD written RETURN written;
+MATCH (s:Sensor {id:1}) RETURN series.latest(s, 'readings') AS latest;
 ```
 
-## 4. Develop
+Run these statements separately against a fresh graph. Executable
+[telemetry](demo/SeriesTelemetry/telemetry.py) and
+[financial](demo/SeriesFinancial/financial.py) examples show client requests and export.
 
-We have prepared environment docker images for compiling in DockerHub, named `tugraph/tugraph-compile-[os]:[compile version]`, 
-for example, `tugraph/tugraph-compile-centos7:1.3.4`, which can help developers get started easily.
+## Start locally
 
-We have a [roadmap](docs/en-US/source/12.contributor-manual/5.roadmap.md) to help you understand TuGraph.
+Follow the [developer quick start](docs/getting-started.md) to provision the
+environment, build this fork and start a server. Upstream TuGraph runtime images
+do not contain these merged changes.
 
-To contribute, please read [doc](docs/en-US/source/12.contributor-manual/1.contributing.md).
+```bash
+# After provisioning the documented compile image:
+CLEAN=0 JOBS=2 BUILD_TYPE=RelWithDebInfo bash ci/phase0/build.sh
 
-NOTICE: If you want to contribute code, you should sign a [cla doc](https://cla-assistant.io/TuGraph-db/tugraph-db).
+# Reuse the binaries; these commands do not rebuild:
+bash ci/merge/run.sh unit
+bash ci/merge/run.sh smoke
+```
 
-## 5. Partners
+The runner isolates test databases, fails on required skips, and records
+source/binary/image provenance. The [test plan](docs/testing/post-merge.md)
+separates fast regression, three-node HA and dedicated scale/soak gates.
 
-<table cellspacing="0" cellpadding="0">
-  <tr align="center">
-    <td height="80"><a href="https://github.com/CGCL-codes/YiTu"><img src="docs/images/partners/hust.png" width="300" alt="HUST" /></a></td>
-    <td height="80"><a href="http://kw.fudan.edu.cn/"><img src="docs/images/partners/fu.png" width="300" alt="FU" /></a></td>
-    <td height="80"><img src="docs/images/partners/zju.png" width="300" alt="ZJU" /></td>
-  </tr>
-  <tr align="center">
-    <td height="80"><a href="http://www.whaleops.com/"><img src="docs/images/partners/whaleops.png" width="300" alt="WhaleOps" /></a></td>
-    <td height="80"><a href="https://github.com/oceanbase/oceanbase"><img src="docs/images/partners/oceanbase.png" width="300" alt="OceanBase" /></a></td>
-    <td height="80"><a href="https://github.com/secretflow/secretflow"><img src="docs/images/partners/secretflow.png" width="300" alt="SecretFlow" /></a></td>
-  </tr>
-  <tr>
-    <td height="80"><a href="https://hellogithub.com/repository/1816669a47354a158b49f8887f91bcf5" target="_blank"><img src="https://api.hellogithub.com/v1/widgets/recommend.svg?rid=1816669a47354a158b49f8887f91bcf5&claim_uid=vC6zMAZ9So3YN01" alt="Featured｜HelloGitHub" width="300" /></a></td>
-  </tr>
-</table>
+## Capability boundaries
 
-## 6. Contact
+- One mutable point per timestamp today. Revisions, knowledge-time queries and
+  temporal graph selection remain planned.
+- Microsecond timestamps carry no timezone identifier; applications agree on a time basis.
+- Range bounds are inclusive; bounded streaming/cursor APIs remain planned.
+- Append replaces an existing point. Value-based CAS detects a mismatched value,
+  but is not request deduplication or a revision-token protocol.
+- New DOUBLE measures must be finite. Collection cells and INT64 handling follow
+  the [client contract](docs/architecture/09-series-client-contracts.md).
+- Whole-graph sharding does not imply intra-graph sharding, cross-shard queries,
+  distributed transactions or online migration.
 
-Official Website: [tugraph.tech](https://tugraph.tech)
+Read the [capability matrix](docs/product.md), [roadmap](docs/roadmap.md) and
+[release checklist](RELEASE.md) before selecting deployment scope. The hero is a
+conceptual illustration, not a certified cluster topology.
 
-Slack (For developer quick communication):
-[TuGraph.slack](https://join.slack.com/t/tugraph/shared_invite/zt-1hha8nuli-bqdkwn~w4zH1vlk0QvqIfg)
+## Development and attribution
 
-Contact us via dingtalk, email and telephone:
-![contacts](./docs/images/contact-dingding_en.png)
+GraphFin is a fork of [TuGraph](https://github.com/TuGraph-family/tugraph-db).
+Upstream authorship, copyright notices and the [Apache-2.0 license](LICENSE)
+are retained. Legacy `lgraph_*` executable/API names and engine compatibility
+version `4.5.2` remain distinct from GraphFin's product version.
 
-## 7. Acknowledgement
-
-Thanks to all the individual developers who have contributed to this repository, which are listed below.
-
-<a href="https://github.com/TuGraph-family/tugraph-db/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=TuGraph-family/tugraph-db" />
-</a>
-
-Made with [contrib.rocks](https://contrib.rocks).
-
-
-
+Report issues and propose changes in this repository. Commit format:
+`test(series): cover snapshot restore across tenants`. Inherited reference
+manuals are indexed separately from the current product documentation.

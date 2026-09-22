@@ -1,4 +1,22 @@
-# TuGraph Scaling Project — Engineering Prompts
+# GraphFin — General-Purpose Time-Series Graph Database Project
+
+> This document retains the historical performance work-stream requirements for
+> traceability. GraphFin is still a general-purpose graph database with native
+> time-series data; the financial dependency-analysis scenario is an acceptance
+> fixture, not a restriction on the product. After the merge, use the
+> [combined roadmap](docs/roadmap.md), [capability matrix](docs/product.md), and
+> [post-merge acceptance plan](docs/testing/post-merge.md) for current product
+> scope. Use [TASK.md](TASK.md) for the delegated release work and current
+> qualification status.
+
+## Current merged-candidate status
+
+The product identity is confirmed as GraphFin `0.1.0-alpha`, with TuGraph
+`4.5.2` retained as the engine compatibility baseline. The merged candidate has
+passed the strict unit, joint smoke, and live-client gates recorded in
+`RELEASE.md`; the latest HA series failover gate failed both cases. Therefore
+the candidate is not signed off and must not be published until the HA failure
+is resolved or explicitly accepted by the release owner.
 
 ## Phase 0 — Architecture Baseline and Test Harness
 
@@ -944,4 +962,3 @@ Phase 7 should be considered complete only when:
 The project should preserve a fast path for queries that remain within a single partition.
 
 Phase 7 should not be considered successful merely because data can be split across servers. It is successful only when distributed query execution, mutation semantics, recovery, and operational behavior are reliable enough for production use.
-

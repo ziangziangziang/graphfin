@@ -287,6 +287,8 @@ bool MigrationManager::Batch::Fail(uint64_t graph_uid, const std::string& reason
     Record* r = FindForWrite(graph_uid);
     if (!r || IsTerminal(r->state)) return false;
     if (expected_id != 0 && r->migration_id != expected_id) return false;
+    // Post-cutover failures must enter ROLLBACK before becoming terminal.
+    if (!CanTransition(r->state, MigrationState::FAILED)) return false;
     r->state = MigrationState::FAILED;
     r->error = reason;
     r->updated_ms = mgr_->Now();

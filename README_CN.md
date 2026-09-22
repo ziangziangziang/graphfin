@@ -1,118 +1,86 @@
-# TuGraph
+# GraphFin
 
-[![Release](https://shields.io/github/v/release/tugraph-family/tugraph-db.svg?logo=stackblitz&label=Version&color=red)](https://github.com/TuGraph-family/tugraph-db/releases)
-[![UT&&IT](https://github.com/TuGraph-family/tugraph-db/actions/workflows/ci.yml/badge.svg)](https://github.com/TuGraph-family/tugraph-db/actions/workflows/ci.yml)
-[![Documentation Status](https://readthedocs.org/projects/tugraph-db/badge/?version=latest)](https://tugraph-db.readthedocs.io/en/latest/?badge=latest)
-[![Commit](https://badgen.net/github/last-commit/tugraph-family/tugraph-db/master?icon=git&label=Commit)](https://github.com/TuGraph-family/tugraph-db/commits/master)
-[![codecov](https://codecov.io/gh/TuGraph-family/tugraph-db/branch/master/graph/badge.svg?token=JH78ARWZAQ)](https://codecov.io/gh/TuGraph-family/tugraph-db)
+**原生支持时序数据的通用图数据库。**
 
-[![Star](https://shields.io/github/stars/tugraph-family/tugraph-db?logo=startrek&label=Star&color=yellow)](https://github.com/TuGraph-family/tugraph-db/stargazers)
-[![Fork](https://shields.io/github/forks/tugraph-family/tugraph-db?logo=forgejo&label=Fork&color=orange)](https://github.com/TuGraph-family/tugraph-db/forks)
-[![Contributor](https://shields.io/github/contributors/tugraph-family/tugraph-db?logo=actigraph&label=Contributor&color=abcdef)](https://github.com/TuGraph-family/tugraph-db/contributors)
-[![Docker](https://shields.io/docker/pulls/tugraph/tugraph-runtime-centos7?logo=docker&label=Docker&color=blue)](https://hub.docker.com/r/tugraph/tugraph-runtime-centos7/tags)
-[![License](https://shields.io/github/license/tugraph-family/tugraph-db?logo=apache&label=License&color=blue)](https://www.apache.org/licenses/LICENSE-2.0.html)
+[English](README.md) · [文档](docs/README.md) · [快速开始](docs/getting-started.md) · [测试计划](docs/testing/post-merge.md) · [发布状态](RELEASE.md)
 
-[![EN](https://shields.io/badge/Docs-English-blue?logo=readme)](https://tugraph-db.readthedocs.io/en/latest)
-[![CN](https://shields.io/badge/Docs-中文-blue?logo=readme)](https://tugraph-db.readthedocs.io/zh-cn/latest)
+![实体关系、采样观测与紧凑存储层的概念示意](docs/images/product/graph-time-hero.png)
 
-[[English Version]](README.md)
+将实体关系与随时间变化的观测保存在一起。GraphFin 基于 TuGraph 的属性图能力，
+增加顶点与边的原生时序字段、多图资源管理，并整合已有复制基础设施。
+金融依赖分析、供应链和设备遥测使用同一套通用接口。
 
-:mega: **TuGraph 现在在阿里云计算巢提供[免费试用](https://computenest.console.aliyun.com/user/cn-hangzhou/serviceInstanceCreate?ServiceId=service-7b50ea3d20e643da95bf&ServiceVersion=1&isTrial=true) 可参见 [操作指引](https://aliyun-computenest.github.io/quickstart-tugraph/)**。
+**当前状态：Alpha 版本验证进行中。** 已确认产品版本为 `0.1.0-alpha`，
+目前不代表已达到生产发布条件。整图分片目前主要提供控制面组件，真实请求转发及迁移数据搬运
+尚未完成。发布阻塞项见 [TASK.md](TASK.md)。
 
-## 1. 简介
-TuGraph 是支持大数据容量、低延迟查找和快速图分析功能的高效图数据库。
+## 可以用来做什么
 
-主要功能：
+| 能力 | 用途 |
+| --- | --- |
+| 关系与观测结合 | 顶点和边的有类型时序字段，例如证券价格、传感器读数、依赖关系权重 |
+| 原生时序操作 | 追加或替换观测点、修改指标、比较后更新，以及点查询、范围查询、首尾值和聚合 |
+| 多个独立图 | 独立图存储、按需加载与同时打开图数量限制 |
+| 复制基础 | 已有 HA 机制；合并后的时序数据仍须通过故障切换与恢复验证 |
+| 放置与路由组件 | 持久身份、放置版本和路由决策；面向用户的分布式转发尚未完成 |
+| 常用接口 | Cypher、REST、RPC、Bolt 和 Python，以及明确的传输契约 |
 
-- 标签属性图模型
-- 完善的 ACID 事务处理
-- 内置 34 图分析算法
-- 支持全文/主键/二级索引
-- OpenCypher 图查询语言
-- 基于 C++/Python 的存储过程
+应用可以沿着 `SUPPLIES` 关系选取供应商并读取其观测；设备场景则沿着
+`FEEDS` 关系读取上下游机器的指标。GraphFin 提供存储和查询基础，
+领域模型和统计分析由上层应用实现。
 
-性能和可扩展性：
-
-- LDBC SNB世界记录保持者 (2022/9/1 https://ldbcouncil.org/benchmarks/snb/)
-- 支持存储多达数十TB的数据
-- 每秒访问数百万个顶点
-- 快速批量导入
-
-TuGraph的文档在[链接](https://tugraph-db.readthedocs.io/zh_CN/latest)，欢迎访问我们的[官网](https://www.tugraph.org)。
-
-## 2. 快速上手
-
-一个简单的方法是使用docker进行设置，可以在[DockerHub](https://hub.docker.com/u/tugraph)中找到, 名称为`tugraph/tugraph-runtime-[os]:[tugraph version]`,
-例如， `tugraph/tugraph-runtime-centos7:4.5.1`。
-
-更多详情请参考 [快速上手文档](./docs/zh-CN/source/3.quick-start/1.preparation.md) 和 [业务开发指南](./docs/zh-CN/source/development_guide.md).
-
-## 3. 从源代码编译
-
-建议在Linux系统中构建TuGraph，Docker环境是个不错的选择。如果您想设置一个新的环境，请参考[Dockerfile](ci/images).
-
-以下是编译TuGraph的步骤：
-
-1. 如果需要web接口运行`deps/build_deps.sh`，不需要web接口则跳过此步骤
-2. 根据容器系统信息执行`cmake .. -DOURSYSTEM=centos`或者`cmake .. -DOURSYSTEM=ubuntu`
-3. `make`
-4. `make package` 或者 `cpack --config CPackConfig.cmake`
-
-示例：`tugraph/tugraph-compile-centos7`Docker环境
-
-```bash
-$ git clone --recursive https://github.com/TuGraph-family/tugraph-db.git
-$ cd tugraph-db
-$ deps/build_deps.sh
-$ mkdir build && cd build
-$ cmake .. -DOURSYSTEM=centos7
-$ make
-$ make package
+```cypher
+CALL db.createVertexLabel('Sensor', 'id', 'id', 'INT64', false);
+CALL db.createSeriesField('Sensor', 'readings',
+  [{name:'temperature', type:'DOUBLE'}], {}) YIELD field RETURN field;
+CREATE (s:Sensor {id:1});
+MATCH (s:Sensor {id:1})
+CALL series.append(s, 'readings',
+  {ts:datetime('2024-01-02 00:00:00'), temperature:21.5})
+YIELD written RETURN written;
+MATCH (s:Sensor {id:1}) RETURN series.latest(s, 'readings') AS latest;
 ```
 
-## 4. 开发
+请在新图中逐条执行。可运行的[遥测示例](demo/SeriesTelemetry/telemetry.py)与
+[金融示例](demo/SeriesFinancial/financial.py)演示客户端请求和数据导出。
 
-我们已为在DockerHub中编译准备了环境docker镜像，可以帮助开发人员轻松入门，名称为 `tugraph/tugraph-compile-[os]:[compile version]`, 例如， `tugraph/tugraph-compile-centos7:1.3.4`。
+## 本地启动
 
-可以访问 [技术规划](docs/zh-CN/source/12.contributor-manual/5.roadmap.md) 来了解TuGraph进展。
+按照[开发环境快速开始](docs/getting-started.md)准备环境、编译本仓库并启动服务。
+上游 TuGraph 的运行镜像不包含本次合并的功能。
 
-如需贡献，请阅读 [如何贡献](docs/zh-CN/source/12.contributor-manual/1.contributing.md)。
+```bash
+# 准备好文档指定的编译镜像后：
+CLEAN=0 JOBS=2 BUILD_TYPE=RelWithDebInfo bash ci/phase0/build.sh
 
-注意：如果您想贡献代码，需要签署[个人贡献者许可协议](docs/zh-CN/source/12.contributor-manual/3.individual-cla.md)或者[公司贡献者许可协议](docs/zh-CN/source/12.contributor-manual/4.corporate-cla.md)。
+# 复用二进制；以下命令不会重新编译：
+bash ci/merge/run.sh unit
+bash ci/merge/run.sh smoke
+```
 
-## 5. 合作伙伴
+运行器隔离测试数据库，必测用例被跳过时判定失败，并记录源码、二进制和镜像来源。
+[测试计划](docs/testing/post-merge.md)分别定义快速回归、三节点 HA 和规模／长时间运行验证。
 
-<table cellspacing="0" cellpadding="0">
-  <tr align="center">
-    <td height="80"><a href="https://github.com/CGCL-codes/YiTu"><img src="docs/images/partners/hust.png" width="300" alt="HUST" /></a></td>
-    <td height="80"><a href="http://kw.fudan.edu.cn/"><img src="docs/images/partners/fu.png" width="300" alt="FU" /></a></td>
-    <td height="80"><img src="docs/images/partners/zju.png" width="300" alt="ZJU" /></td>
-  </tr>
-  <tr align="center">
-    <td height="80"><a href="http://www.whaleops.com/"><img src="docs/images/partners/whaleops.png" width="300" alt="WhaleOps" /></a></td>
-    <td height="80"><a href="https://github.com/oceanbase/oceanbase"><img src="docs/images/partners/oceanbase.png" width="300" alt="OceanBase" /></a></td>
-    <td height="80"><a href="https://github.com/secretflow/secretflow"><img src="docs/images/partners/secretflow.png" width="300" alt="SecretFlow" /></a></td>
-  </tr>
-</table>
+## 能力边界
 
-## 6. 联系我们
+- 每个时间戳目前只有一个可修改观测点。修订历史、知识时间查询和时态图选择仍在规划中。
+- 时间戳精度为微秒，不携带时区标识。应用必须约定统一时间基准。
+- 范围查询包含两端；有界流式读取和稳定游标接口尚待实现。
+- 追加会替换已有时间点。基于值的 CAS 不等同于请求去重或修订令牌协议。
+- 新写入的 DOUBLE 指标必须是有限值。集合与 INT64 处理遵循
+  [客户端契约](docs/architecture/09-series-client-contracts.md)。
+- 整图分片不等于图内分片、跨分片查询、分布式事务或在线迁移。
 
-官网: [tugraph.tech](https://tugraph.tech)
+部署前请阅读[能力矩阵](docs/product.md)、[路线图](docs/roadmap.md)与[发布清单](RELEASE.md)。
+上方图片仅表达产品概念，不代表已通过验证的集群拓扑。
 
-Slack (在线开发沟通):
-[TuGraph.slack](https://join.slack.com/t/tugraph/shared_invite/zt-1hha8nuli-bqdkwn~w4zH1vlk0QvqIfg)
+## 开发与致谢
 
-通过微信公众号、钉钉群、邮箱和电话联系我们:
-![contacts](./docs/images/contact-dingding_zh.JPG)
+GraphFin 是 [TuGraph](https://github.com/TuGraph-family/tugraph-db) 的衍生项目，
+保留上游作者、版权声明及 [Apache-2.0 许可证](LICENSE)。
+为兼容既有集成，保留 `lgraph_*` 可执行文件和 API 名称；引擎兼容版本 `4.5.2`
+与 GraphFin 产品发布版本分开管理。
 
-## 7. 致谢
-
-感谢对这个项目做过贡献的个人开发者，名单如下：
-
-<a href="https://github.com/TuGraph-family/tugraph-db/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=TuGraph-family/tugraph-db" />
-</a>
-
-生成 By [contrib.rocks](https://contrib.rocks).
-
-
+欢迎在本仓库提交问题与改进。提交格式示例：
+`test(series): cover snapshot restore across tenants`。
+继承的上游参考手册与当前产品文档分别索引，避免将历史说明误当成当前支持承诺。

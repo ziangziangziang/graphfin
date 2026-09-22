@@ -1,0 +1,45 @@
+name: merge-qualification
+
+# Explicit opt-in until a compatible runner and all required dependencies exist.
+# Reuses a pre-provisioned pinned image. Builds once, then runs independent gates.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: merge-qualification-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    runs-on: [self-hosted, Linux, ARM64, graphfin]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Documentation checks
+        run: python3 ci/release/check_docs.py
+      - name: Build merged binaries once
+        run: CLEAN=0 JOBS=2 BUILD_TYPE=RelWithDebInfo bash ci/phase0/build.sh
+      - name: Core merge gate
+        run: bash ci/merge/run.sh unit
+      - name: Joint lifecycle gate
+        if: ${{ !cancelled() }}
+        run: bash ci/merge/run.sh smoke
+      - name: Required client gate
+        if: ${{ !cancelled() }}
+        run: bash ci/merge/run.sh clients
+      - name: Three-node series HA gate
+        if: ${{ !cancelled() }}
+        run: bash ci/merge/run.sh ha
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: merge-qualification-${{ github.sha }}
+          path: ${{ runner.temp }}/graphfin-merge-results
+          if-no-files-found: error
+    env:
+      MERGE_RESULTS: ${{ runner.temp }}/graphfin-merge-results

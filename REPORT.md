@@ -1,33 +1,97 @@
-# Development Status Report — TuGraph Scaling Project
+# Development Status Report — GraphFin
 
 **For:** lead software engineer and architect review
-**Branch:** `performance` · **HEAD:** `60b32355b`
-**Date:** 2026-09-21
-**Scope:** Phases 0–4 (control plane), Phase 3 HA hardening, Phase 5 foundations,
-memory review, and resolution of `REVIEW.md` findings 1–6.
+**Branch:** `perf-series-merge`
+**Date:** 2026-09-22
+**Scope:** merged performance/time-series candidate, release qualification, and
+the historical whole-graph sharding control-plane work.
+
+> This report contains historical control-plane evidence from the performance
+> workstream. It is not a release sign-off. For the current candidate gate,
+> use [RELEASE.md](RELEASE.md) and [TASK.md](TASK.md). The latest merged HA
+> series failover run failed both cases; the candidate remains unsigned-off.
 
 ---
 
 ## 1. Executive summary
 
-The tree contains a complete, unit-tested **whole-graph sharding control plane**
+The tree contains a substantial, unit-tested **whole-graph sharding control plane**
 (cluster metadata, shard lifecycle, placement, routing, migration state) on top
 of the previously delivered multi-graph scaling (lazy loading, 100k graphs) and
 a hardened 3-node HA replica group (chaos-tested, soak-validated).
 
-**What is proven (with evidence):**
+**Historical control-plane evidence reported by the performance workstream:**
 - 34/34 cluster unit tests pass on the build host, including transaction-scoped
   staging, fencing, placement strategies, migration lifecycle, and a bounded
   memory-footprint assertion.
 - 11/11 HA chaos integration tests pass repeatedly (5 consecutive full-suite
   runs observed); a 3-node soak reached 300 kills / 300 acked / 0 failures, and
   a 3-shard soak reached 404 kills with per-replica reconciliation.
-- A **24-hour Phase 3 acceptance soak is running now** on the test host.
+- A 24-hour Phase 3 acceptance soak was reported by the historical workstream;
+  it is not current merged-release evidence and must not be reused as the
+  current candidate's sign-off artifact.
+
+**Current merged-candidate evidence (2026-09-22, fixed candidate):** the strict
+C++ unit gate passed 110/110 (evidence `unit-p6uuknon`), the joint
+financial/telemetry smoke gate passed 4/4 (`smoke-sh_x0e7u`), the live client
+gate passed 14/14 with `neo4j==4.4.6` (`clients-gjxcjgat`), and the HA series
+failover gate passed 2/2 with zero skips and zero failures (`ha-aha_pbu5`).
+All four ran on the same source/build snapshot: base commit `701fbfb9` plus
+the recorded dirty-content manifest, `lgraph_server`
+`5010f5ecabbefbe3162483c500e8c06c326152fc95a4a21e721fafd40485d178`,
+`unit_test`
+`3e3d33a349ec17a75e1e2649bbde65ceb8feca79545dad92439a0910808a0e38`,
+compile image
+`sha256:2350a9a1f998b6898b169d28015c60c49b488def8980b9553a657819763afedf`.
+The candidate must still be frozen into an immutable commit and re-qualified
+clean before any tag, package, or publication step.
 
 **What is explicitly not done:** live multi-shard request forwarding, a
 replicated control plane, receiver-side fence wiring into the server write path,
 admin procedures, migration data movement, production hardening, and
-intra-graph sharding. The 24–72 h acceptance result is pending the running soak.
+intra-graph sharding.
+
+---
+
+## HA series failover blocker — diagnosis and fix (2026-09-22)
+
+The merged HA series gate (`test_merge_series_ha.py`, MERGE-09 baseline) failed
+every strict run until this fix, with varying symptoms across runs: `Not a
+leader` on graph creation, `No such graph` on schema writes, and exact-value
+reconciliation timeouts with `Vertex 0 has no time series field [samples]` on
+followers. Investigation separated a harness routing defect from a product
+replication defect; neither was converted into a skip and the oracle (exact
+per-replica value reconciliation after leader loss and restart) is unchanged.
+
+Harness fix (test-only, `test_merge_series_ha.py`, `ha_util.py`): the
+`cypher_on_leader` helper pinned the first live node with no rotation, so a
+transient login failure or leadership change produced 90 s of follower
+redirects. Graph creation now uses explicit leader discovery plus
+`callCypherToLeader` on a leader-connected client, waits until the new graph
+is listed before seeding, and every retry client is logged out.
+
+Product fix (`src/cypher/parser/clause.h`, `QueryPart::ReadOnly`): a
+standalone `CALL <mutating-procedure> ... YIELD ... RETURN ...` statement
+parses as a regular query whose procedure call lands in `iq_call_clause`,
+which the v1 read-only decider ignored. HA therefore classified these writes
+as reads and executed them leader-local without raft replication. Evidence:
+the raft commit index did not advance for
+`CALL db.createSeriesField(...) YIELD field RETURN field` (advance +0 on all
+replicas) while the identical statement without trailing `RETURN` advanced it
+(+1 everywhere); follower server logs show `AlterLabelAddFields` never ran
+there. The fix checks `iq_call_clause` exactly like `sa_call_clause`.
+Regression coverage:
+`TestSeriesTransaction.MutatingProcedureCallsWithReturnClassifyAsWrites`
+(classifier expectations for series DDL, in-query appends/CAS, and pure
+reads). Incremental rebuilds reused the existing tree (client/tool relink
+~137 s in `phase0-logs/build-20260922-181414.log`; engine-fix rebuild with
+full unit-test relink in `phase0-logs/build-20260922-185044.log`; no clean
+rebuilds).
+
+Result: strict HA gate 2/2 passed, zero skips, zero failures
+(`/tmp/graphfin-merge-results/ha-aha_pbu5`), on the same binaries that pass
+unit (110/110), smoke (4/4), and clients (14/14). The current merged-release HA evidence is the failed
+series failover gate recorded above; the historical soak does not close it.
 
 ---
 

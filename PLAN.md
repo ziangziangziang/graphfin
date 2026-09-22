@@ -1,4 +1,15 @@
-# Build plan in response to PROJECT.md (M0–M8)
+# GraphFin build plan in response to PROJECT.md (M0–M8)
+
+> Time-series work-stream plan. The merged PROJECT.md retains the performance
+> branch's phases, so its headings are not the M0–M8 references below. Use the
+> [combined roadmap](docs/roadmap.md) and [post-merge tests](docs/testing/post-merge.md)
+> to coordinate both streams; retain these detailed series design inputs.
+
+> **Current merged-release status (2026-09-22):** GraphFin `0.1.0-alpha` is in
+> qualification. The strict unit gate is 109/109, the joint smoke gate is 4/4,
+> and the client gate is 14/14 with `neo4j==4.4.6`. The latest HA series gate
+> failed both cases, so the project is not signed off. Use [TASK.md](TASK.md) to
+> delegate the remaining diagnosis, packaging, publication, and review work.
 
 ## Guiding rules
 
@@ -179,7 +190,8 @@ shutdown/eviction behavior.
 
 ## Status ledger
 
-Done (gated, committed on `timeseries`):
+Historical series work completed on `timeseries` and merged into the current
+GraphFin candidate:
 
 - R1–R6 correctness set: positional-identity DDL guards, fast-alter
   no-default invariant + load recovery, atomic decode counter, LIST/MAP
@@ -224,13 +236,14 @@ Partial (landed, plan still lists remainder):
 - Benchmarks (methodology + small baselines; 10M/11.7M profiles need the
   M2 importer; budgets outstanding).
 
-Blocked (needs principal/infra, not this stream):
+Open or blocked for the current GraphFin candidate:
 
 - M1 design decision (gates Phase 1/2/5 implementation).
 - Full-binary TSan (prebuilt libvsag.so → libgomp preempts interceptors).
 - Full-binary ASan unit_test link (prebuilt librocksdb.a lacks RTTI).
 - Genuine v4.5.2 release binary (no tags upstream).
-- HA replication evidence (multi-node setup).
+- HA replication evidence (the latest merged series failover gate failed both
+  cases and needs diagnosis).
 - M5+ design reviews (bitemporal model, cursors, export format).
 
 ## Session log (archived)

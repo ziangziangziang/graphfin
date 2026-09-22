@@ -1,8 +1,26 @@
-# Architecture and Engineering Review
+# Architecture and Engineering Review — GraphFin
 
-**Date:** 2026-09-21
+> This is the architectural review of the performance/sharding workstream, not
+> a release approval. The current product is GraphFin `0.1.0-alpha`. The merged
+> qualification has 110/110 unit tests, 4/4 joint smoke cases, and 14/14 live
+> client cases passing; the latest HA series failover gate failed both cases.
+> Resolve that blocker and complete the gates in [TASK.md](TASK.md) before
+> sign-off or publication.
+>
+> Addendum 2026-09-22: the HA blocker is resolved by a product fix plus
+> harness hardening (see [TASK.md](TASK.md) workstream A and `REPORT.md` §
+> "HA series failover blocker"). Current fixed-candidate evidence: unit
+> 110/110 (`unit-p6uuknon`), smoke 4/4 (`smoke-sh_x0e7u`), clients 14/14
+> with `neo4j==4.4.6` (`clients-gjxcjgat`), HA 2/2 with zero skips/failures
+> (`ha-aha_pbu5`). This addendum records evidence only; it does not change
+> the review disposition. Freeze to an immutable commit, re-qualify clean,
+> and complete the remaining TASK.md workstreams before sign-off or
+> publication.
 
-**Reviewed branch / HEAD:** `performance` / `4dd816d83`
+**Date:** 2026-09-22
+
+**Reviewed branch / HEAD:** historical `performance` workstream; current
+merged candidate is `perf-series-merge`
 
 **Implementation revision cited by REPORT.md:** `60b32355b`
 

@@ -1,0 +1,10 @@
+{
+  "name": "GraphFin",
+  "slug": "graphfin",
+  "version_file": "VERSION",
+  "status": "alpha-release-preparation",
+  "upstream": "TuGraph",
+  "engine_compatibility_version": "4.5.2",
+  "repository": "https://github.com/ziangziangziang/graphfin",
+  "identity_status": "confirmed"
+}
