@@ -24,7 +24,8 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from phase0_util import (DEFAULT_PASSWORD, DEFAULT_USER, ServerHandle, cypher)
+from phase0_util import (DEFAULT_PASSWORD, DEFAULT_USER, ServerHandle, create_graph,
+                           cypher)
 
 log = logging.getLogger(__name__)
 
@@ -210,6 +211,100 @@ def test_restart_preserves_series(srv, rpc):
             rpc2.logout()
         except Exception:
             pass
+
+
+def ensure_neo4j_driver():
+    # The live Bolt test needs the real driver package, which is not vendored.
+    # Install once when network allows; the caller skips otherwise.
+    try:
+        import neo4j  # noqa: F401
+        return True
+    except ImportError:
+        pass
+    try:
+        r = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-q", "--timeout", "30",
+             "neo4j==4.4.6"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=240)
+    except Exception:
+        return False
+    if r.returncode != 0:
+        return False
+    try:
+        import neo4j  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def test_live_bolt_driver_series(srv):
+    if not ensure_neo4j_driver():
+        pytest.skip("neo4j driver package unavailable (offline environment)")
+    # M0: assertions through a real Bolt driver package (session, packstream
+    # transport, driver-side hydration) — not in-process conversion.
+    from neo4j import GraphDatabase
+
+    driver = GraphDatabase.driver(
+        "bolt://127.0.0.1:%d" % srv.bolt_port,
+        auth=(DEFAULT_USER, DEFAULT_PASSWORD), encrypted=False)
+    try:
+        with driver.session(database="default") as s:
+            assert s.run("CALL db.createVertexLabel('Live', 'id', 'id', 'INT64', false)").data() == []  # noqa: E501
+            assert s.run(
+                "CALL db.createSeriesField('Live', 'prices', "
+                "[{name:'close', type:'DOUBLE'}, {name:'volume', type:'INT64'}], "
+                "{bucket_max_points:100}) YIELD field RETURN field").data() == [
+                {"field": "prices"}]
+            s.run("CREATE (c:Live {id:1})").consume()
+            assert s.run(
+                "MATCH (c:Live {id:1}) CALL series.append(c, 'prices', {ts: "
+                "datetime('2024-01-02 00:00:00'), close: 12.5, volume: 7}) "
+                "YIELD written RETURN written").data() == [{"written": 1}]
+            # Scalars arrive as driver natives.
+            assert s.run(
+                "MATCH (c:Live {id:1}) RETURN series.count(c, 'prices') AS n"
+            ).data() == [{"n": 1}]
+            # Collection cells cross as JSON text; the client parses them.
+            point_raw = s.run(
+                "MATCH (c:Live {id:1}) RETURN series.at(c, 'prices', "
+                "datetime('2024-01-02 00:00:00')) AS point").data()[0]["point"]
+            assert isinstance(point_raw, str)
+            point = json.loads(point_raw)
+            assert point["close"] == 12.5 and point["volume"] == 7
+            summary = json.loads(s.run(
+                "MATCH (c:Live {id:1}) RETURN c.prices AS summary").data()[0]["summary"])
+            assert summary["count"] == 1 and summary["measures"] == ["close", "volume"]
+            # A DATETIME scalar arrives as a driver datetime (naive local).
+            dt = s.run("RETURN datetime('2024-01-02 00:00:00') AS dt").data()[0]["dt"]
+            assert (dt.year, dt.month, dt.day) == (2024, 1, 2)
+            assert (dt.hour, dt.minute, dt.second) == (0, 0, 0)
+            # Nulls, INT64 extremes, empties, JSON-looking strings.
+            row = s.run("RETURN null AS n, 9223372036854775807 AS mx, "
+                        "0-9223372036854775807-1 AS mn").data()[0]
+            assert row["n"] is None
+            assert row["mx"] == 9223372036854775807
+            assert row["mn"] == -9223372036854775808
+            row = s.run("RETURN [] AS e, {} AS m").data()[0]
+            assert row["e"] == "[]" and row["m"] == "{}"
+            s.run("CALL db.createVertexLabel('LiveDoc', 'id', 'id', 'INT64', false, "
+                  "'note', 'STRING', true)").consume()
+            s.run("CREATE (d:LiveDoc {id:1, note:'{\"a\":1}'})").consume()
+            row = s.run("MATCH (d:LiveDoc {id:1}) RETURN d.note AS note").data()[0]
+            assert row["note"] == '{"a":1}'
+            # Malformed measures fail through the driver and preserve data.
+            try:
+                s.run("MATCH (c:Live {id:1}) CALL series.update(c, 'prices', 'close', "
+                      "datetime('2024-01-02 00:00:00'), [99]) "
+                      "YIELD written RETURN written").data()
+                raise AssertionError("malformed update unexpectedly succeeded")
+            except Exception as e:
+                assert "declared type" in str(e)
+            point = json.loads(s.run(
+                "MATCH (c:Live {id:1}) RETURN series.at(c, 'prices', "
+                "datetime('2024-01-02 00:00:00')) AS point").data()[0]["point"])
+            assert point["close"] == 12.5
+    finally:
+        driver.close()
 
 
 def test_bundled_rest_client_login_and_cypher(srv):
@@ -444,5 +539,50 @@ def test_tool_backup_restore(tmp_path):
                     pass
         finally:
             restored.cleanup()
+    finally:
+        srv.cleanup()
+
+
+def test_eviction_reopen_preserves_series(tmp_path):
+    # M0: with max_open_graphs=2 and a 1s idle timeout, opening a third graph
+    # and idling evicts the LRU graphs; evicted graphs reopen from disk with
+    # schema + series buckets intact.
+    import time
+
+    db_dir = str(tmp_path / "evict_db")
+    srv = ServerHandle(db_dir, extra_args=["--max_open_graphs", "2",
+                                           "--graph_idle_timeout_s", "1"])
+    srv.start()
+    try:
+        c = srv.rpc()
+        try:
+            for g in ("ev1", "ev2", "ev3"):
+                create_graph(c, g)
+                cypher(c, "CALL db.createVertexLabel('E', 'id', 'id', 'INT64', false)",
+                       graph=g)
+                cypher(c, "CALL db.createSeriesField('E', 'p', "
+                          "[{name:'v', type:'INT64'}], {}) YIELD field RETURN field",
+                       graph=g)
+                cypher(c, "CREATE (x:E {id:1})", graph=g)
+                cypher(c, "MATCH (x:E {id:1}) CALL series.append(x, 'p', "
+                          "{ts: datetime('2024-01-01 00:00:00'), v: 1}) "
+                          "YIELD written RETURN written", graph=g)
+            # Let the idle timeout evict, then churn all three so eviction +
+            # reopen cycle repeatedly with reads interleaved.
+            time.sleep(3)
+            for _ in range(3):
+                for g in ("ev1", "ev2", "ev3"):
+                    assert cypher(
+                        c, "MATCH (x:E {id:1}) RETURN series.count(x, 'p') AS n",
+                        graph=g) == [{"n": 1}]
+            for g in ("ev1", "ev2", "ev3"):
+                pt = cypher(c, "MATCH (x:E {id:1}) RETURN series.at(x, 'p', "
+                               "datetime('2024-01-01 00:00:00')) AS point", graph=g)
+                assert pt[0]["point"]["v"] == 1
+        finally:
+            try:
+                c.logout()
+            except Exception:
+                pass
     finally:
         srv.cleanup()
