@@ -88,8 +88,10 @@ def rpc(srv):
         pass
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="function")
 def rest(srv):
+    # Fresh login per test: mid-file server restarts invalidate tokens, so a
+    # shared connection goes stale with 401s.
     return Rest(srv.http_port)
 
 
@@ -173,6 +175,21 @@ def test_rest_series_wire_types(rest):
         raise AssertionError("malformed update unexpectedly succeeded")
     except CypherError as e:
         assert "declared type" in str(e)
+    _, rows = rest.cypher(
+        "MATCH (c:Wire {id:1}) RETURN series.at(c, 'prices', "
+        "datetime('2024-01-02 00:00:00')) AS point")
+    assert json.loads(rows[0][0])["close"] == 12.5
+
+    # R8: non-finite doubles are rejected over REST, stored point preserved.
+    for bad in ("toFloat('NaN')", "toFloat('Infinity')", "toFloat('-Infinity')"):
+        try:
+            rest.cypher(
+                "MATCH (c:Wire {id:1}) CALL series.update(c, 'prices', 'close', "
+                "datetime('2024-01-02 00:00:00'), %s) "
+                "YIELD written RETURN written" % bad)
+            raise AssertionError("non-finite update unexpectedly succeeded: %s" % bad)
+        except CypherError as e:
+            assert "finite" in str(e), str(e)
     _, rows = rest.cypher(
         "MATCH (c:Wire {id:1}) RETURN series.at(c, 'prices', "
         "datetime('2024-01-02 00:00:00')) AS point")
@@ -324,6 +341,23 @@ def test_live_bolt_driver_series(srv):
                 "MATCH (c:Live {id:1}) RETURN series.at(c, 'prices', "
                 "datetime('2024-01-02 00:00:00')) AS point").data()[0]["point"])
             assert point["close"] == 12.5
+            # R7 through the live driver: CAS applies on match, conflicts on
+            # stale expectation; R8: non-finite rejected.
+            assert s.run(
+                "MATCH (c:Live {id:1}) CALL series.update_cas(c, 'prices', 'close', "
+                "datetime('2024-01-02 00:00:00'), 12.5, 20.0) "
+                "YIELD written RETURN written").data() == [{"written": 1}]
+            assert s.run(
+                "MATCH (c:Live {id:1}) CALL series.update_cas(c, 'prices', 'close', "
+                "datetime('2024-01-02 00:00:00'), 12.5, 30.0) "
+                "YIELD written RETURN written").data() == [{"written": 0}]
+            try:
+                s.run("MATCH (c:Live {id:1}) CALL series.update(c, 'prices', 'close', "
+                      "datetime('2024-01-02 00:00:00'), toFloat('NaN')) "
+                      "YIELD written RETURN written").data()
+                raise AssertionError("non-finite update unexpectedly succeeded")
+            except Exception as e:
+                assert "finite" in str(e)
     finally:
         driver.close()
 
@@ -343,7 +377,8 @@ def test_bundled_rest_client_login_and_cypher(srv):
             ["created 1 vertices, created 0 edges."]]
         assert c.call_cypher("default", "MATCH (n:Sdk) RETURN n.id AS id") == [[5]]
         # Collection normalization through the SDK: LIST/MAP cells arrive as
-        # JSON text (wire contract); the client parses them by header type.
+        # JSON text (wire contract); callers parse them explicitly until the
+        # M4 metadata design lands (headers cannot distinguish them today).
         assert c.call_cypher(
             "default",
             "CALL db.createSeriesField('Sdk', 'prices', "
@@ -362,6 +397,99 @@ def test_bundled_rest_client_login_and_cypher(srv):
         assert json.loads(point_raw)["close"] == 3.5
     finally:
         assert c.logout() is True
+
+
+def test_bundled_client_error_handling(srv):
+    # R9: every HTTP status and body shape maps to a documented
+    # TuGraphRestError carrying status + message; error text never comes
+    # back as successful query rows.
+    from TuGraphRestClient import TuGraphRestClient, TuGraphRestError
+
+    try:
+        TuGraphRestClient("http://127.0.0.1:%d/" % srv.http_port,
+                          DEFAULT_USER, "wrong-password")
+        raise AssertionError("bad-password login unexpectedly succeeded")
+    except IOError as e:
+        assert "Failed to login" in str(e)
+
+    c = TuGraphRestClient("http://127.0.0.1:%d/" % srv.http_port,
+                          DEFAULT_USER, DEFAULT_PASSWORD)
+    try:
+        try:
+            c.call_cypher("default", "MATCH (n WHERE")
+            raise AssertionError("malformed cypher unexpectedly succeeded")
+        except TuGraphRestError as e:
+            assert e.status_code == 500, e.status_code
+            assert e.message, "empty error message"
+        try:
+            c.call_cypher("default", "RETURN 1 AS n")
+        except TuGraphRestError:
+            raise AssertionError("valid query unexpectedly failed")
+        # Expired/forged token: 401 surfaces as an exception, not rows.
+        c.http_headers["Authorization"] = "Bearer forged-token"
+        try:
+            c.call_cypher("default", "RETURN 1 AS n")
+            raise AssertionError("forged-token call unexpectedly succeeded")
+        except TuGraphRestError as e:
+            assert e.status_code == 401, e.status_code
+    finally:
+        try:
+            c.logout()
+        except Exception:
+            pass
+
+
+def test_bundled_client_offline_error_shapes():
+    # R9: response-shape matrix without a server.
+    import asyncio
+
+    from TuGraphRestClient import TuGraphRestClient
+
+    c = TuGraphRestClient.__new__(TuGraphRestClient)
+    c.host = "http://unused/"
+    c.http_headers = {}
+
+    class Resp:
+        def __init__(self, status, text):
+            self.status_code = status
+            self.text = text
+
+    def run(coro_fn):
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(coro_fn())
+        finally:
+            loop.close()
+
+    ok, js = run(lambda: c.__get_result__(
+        lambda: _coro(Resp(200, '{"result": [[1]]}'))))
+    assert ok and js == {"result": [[1]]}
+    ok, js = run(lambda: c.__get_result__(
+        lambda: _coro(Resp(200, '{"errorCode": "200", "result": []}'))))
+    assert ok
+    ok, js = run(lambda: c.__get_result__(
+        lambda: _coro(Resp(200, '{"errorCode": "400"}'))))
+    assert not ok
+    ok, js = run(lambda: c.__get_result__(
+        lambda: _coro(Resp(500, '{"error_message": "boom"}'))))
+    assert not ok and js["http_status"] == 500 and js["error_message"] == "boom"
+    ok, js = run(lambda: c.__get_result__(
+        lambda: _coro(Resp(500, '{"errorMessage": "legacy"}'))))
+    assert not ok and js["error_message"] == "legacy"
+    ok, js = run(lambda: c.__get_result__(lambda: _coro(Resp(500, ""))))
+    assert not ok and "500" in js["error_message"]
+    ok, js = run(lambda: c.__get_result__(lambda: _coro(Resp(200, "not json"))))
+    assert ok  # 200 with unparseable body: no error envelope to honor
+    ok, js = run(lambda: c.__get_result__(_failing_coro))
+    assert not ok and js["http_status"] == 0
+
+
+async def _coro(value):
+    return value
+
+
+async def _failing_coro():
+    raise ConnectionError("down")
 
 
 def test_bolt_series_wire_types(srv):
@@ -440,6 +568,34 @@ def test_bolt_series_wire_types(srv):
             "MATCH (c:Bolt {id:1}) RETURN series.at(c, 'prices', "
             "datetime('2024-01-02 00:00:00')) AS point")
         assert json.loads(rows[0][0])["close"] == 12.5
+
+        # R7 over Bolt: matching CAS applies, stale CAS conflicts explicitly.
+        _, rows, _ = b.run(
+            "MATCH (c:Bolt {id:1}) CALL series.update_cas(c, 'prices', 'close', "
+            "datetime('2024-01-02 00:00:00'), 12.5, 20.0) YIELD written RETURN written")
+        assert rows == [[1]]
+        _, rows, _ = b.run(
+            "MATCH (c:Bolt {id:1}) CALL series.update_cas(c, 'prices', 'close', "
+            "datetime('2024-01-02 00:00:00'), 12.5, 30.0) YIELD written RETURN written")
+        assert rows == [[0]]
+        _, rows, _ = b.run(
+            "MATCH (c:Bolt {id:1}) RETURN series.at(c, 'prices', "
+            "datetime('2024-01-02 00:00:00')) AS point")
+        assert json.loads(rows[0][0])["close"] == 20.0
+
+        # R8 over Bolt: non-finite doubles are rejected, point preserved.
+        try:
+            b.run("MATCH (c:Bolt {id:1}) CALL series.update(c, 'prices', 'close', "
+                  "datetime('2024-01-02 00:00:00'), toFloat('Infinity')) "
+                  "YIELD written RETURN written")
+            raise AssertionError("non-finite update unexpectedly succeeded")
+        except BoltError as e:
+            assert "finite" in str(e)
+        b.reset()
+        _, rows, _ = b.run(
+            "MATCH (c:Bolt {id:1}) RETURN series.at(c, 'prices', "
+            "datetime('2024-01-02 00:00:00')) AS point")
+        assert json.loads(rows[0][0])["close"] == 20.0
     finally:
         b.close()
 
@@ -650,13 +806,25 @@ def test_eviction_reopen_preserves_series(tmp_path):
         srv.cleanup()
 
 
-def idempotent_retry(fn, retries=5, interval=0.5):
-    # Retry transport-level failures for idempotent series operations (same
-    # point rewritten: append/update/clear/DDL reads). Semantic CypherError
-    # results are returned, never retried: retrying a type error cannot help.
+# Operations this helper may retry. Point writes and reads are safe to
+# repeat under an ordered exclusive writer (same bytes rewritten). DDL and
+# series.clear are excluded: replaying them can drop or hide data that
+# arrived after the original request (R7). Concurrent mutable ingestion
+# must use series.update_cas with expectations, not blind retry.
+RETRYABLE_OPS = frozenset({"point-write", "read"})
+
+
+def idempotent_retry(fn, op="point-write", retries=5, interval=0.5):
+    # Retry transport-level failures for idempotent series operations under
+    # an ordered exclusive writer. Semantic CypherError results are raised,
+    # never retried: retrying a type error cannot help. Anything outside
+    # RETRYABLE_OPS (notably clear and DDL) is refused outright.
     import time
     import httpx as _httpx
 
+    if op not in RETRYABLE_OPS:
+        raise ValueError("op %r is not safe for automatic retry; concurrent "
+                         "mutable ingestion must use series.update_cas" % (op,))
     last = None
     for _ in range(retries):
         try:
@@ -738,3 +906,71 @@ def test_fresh_client_journey(srv):
     except CypherError:
         pass
     assert calls == [1]
+
+
+def test_lost_response_replay_keeps_correction(rest):
+    # R7 acceptance: A writes 1.0 and its response is lost (ignored here);
+    # B corrects to 2.0; A replays blindly through CAS with its stale belief
+    # (expected 1.0). The replay must lose explicitly (written=0) and the
+    # correction must survive. An unconditional replay would store 1.0.
+    rest.cypher("CALL db.createVertexLabel('Replay', 'id', 'id', 'INT64', false)")
+    rest.cypher("CALL db.createSeriesField('Replay', 'prices', "
+                "[{name:'v', type:'DOUBLE'}], {}) YIELD field RETURN field")
+    rest.cypher("CREATE (c:Replay {id:1})")
+    # A: committed; response lost (result deliberately ignored).
+    rest.cypher("MATCH (c:Replay {id:1}) CALL series.append(c, 'prices', "
+                "{ts: datetime('2024-01-02 00:00:00'), v: 1.0}) "
+                "YIELD written RETURN written")
+    # B: correction, committed and observed.
+    _, rows = rest.cypher(
+        "MATCH (c:Replay {id:1}) CALL series.update(c, 'prices', 'v', "
+        "datetime('2024-01-02 00:00:00'), 2.0) YIELD written RETURN written")
+    assert rows == [[1]]
+    # A replays against its stale belief via CAS: explicit conflict.
+    _, rows = rest.cypher(
+        "MATCH (c:Replay {id:1}) CALL series.update_cas(c, 'prices', 'v', "
+        "datetime('2024-01-02 00:00:00'), 1.0, 9.0) YIELD written RETURN written")
+    assert rows == [[0]]
+    _, rows = rest.cypher(
+        "MATCH (c:Replay {id:1}) RETURN series.at(c, 'prices', "
+        "datetime('2024-01-02 00:00:00')) AS point")
+    assert json.loads(rows[0][0])["v"] == 2.0
+    # CAS with a current expectation still applies (normal correction path).
+    _, rows = rest.cypher(
+        "MATCH (c:Replay {id:1}) CALL series.update_cas(c, 'prices', 'v', "
+        "datetime('2024-01-02 00:00:00'), 2.0, 3.0) YIELD written RETURN written")
+    assert rows == [[1]]
+    _, rows = rest.cypher(
+        "MATCH (c:Replay {id:1}) RETURN series.at(c, 'prices', "
+        "datetime('2024-01-02 00:00:00')) AS point")
+    assert json.loads(rows[0][0])["v"] == 3.0
+
+
+def test_clear_is_not_auto_retryable(rest):
+    # R7: replaying a clear erases points that arrived after the original
+    # request, so clear is excluded from automatic retry. Demonstrate the
+    # hazard, then assert the helper refuses clear-kind operations.
+    rest.cypher("CALL db.createVertexLabel('Clr', 'id', 'id', 'INT64', false)")
+    rest.cypher("CALL db.createSeriesField('Clr', 'prices', "
+                "[{name:'v', type:'INT64'}], {}) YIELD field RETURN field")
+    rest.cypher("CREATE (c:Clr {id:1})")
+    rest.cypher("MATCH (c:Clr {id:1}) CALL series.append(c, 'prices', "
+                "{ts: datetime('2024-01-02 00:00:00'), v: 1}) "
+                "YIELD written RETURN written")
+    # Original clear, committed.
+    _, rows = rest.cypher("MATCH (c:Clr {id:1}) CALL series.clear(c, 'prices') "
+                          "YIELD cleared RETURN cleared")
+    assert rows == [[1]]
+    # A new point arrives after the clear ...
+    rest.cypher("MATCH (c:Clr {id:1}) CALL series.append(c, 'prices', "
+                "{ts: datetime('2024-01-03 00:00:00'), v: 2}) "
+                "YIELD written RETURN written")
+    # ... and a replayed clear would erase it: this is why clear must never
+    # be auto-retried. The helper refuses such operations outright.
+    try:
+        idempotent_retry(lambda: rest.cypher(
+            "MATCH (c:Clr {id:1}) CALL series.clear(c, 'prices') "
+            "YIELD cleared RETURN cleared"), op="clear")
+        raise AssertionError("clear retry unexpectedly allowed")
+    except ValueError as e:
+        assert "not safe for automatic retry" in str(e)

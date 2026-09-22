@@ -13,6 +13,16 @@ log = logging.getLogger(__name__)
 requests = httpx.AsyncClient()
 warnings.simplefilter("ignore", UserWarning)
 
+
+class TuGraphRestError(Exception):
+    """Documented client exception: preserves the server HTTP status and
+    message instead of returning error text as successful query rows."""
+
+    def __init__(self, status_code, message):
+        super().__init__("[HTTP %s] %s" % (status_code, message))
+        self.status_code = status_code
+        self.message = message
+
 class TuGraphRestClient:
 
     def __init__(self, host, username, password):
@@ -50,12 +60,27 @@ class TuGraphRestClient:
 
     def call_cypher(self, graph, cypher, timeout=0):
         data = {"script": cypher, "graph": graph, "timeout": timeout}
-        r = self._sync(partial(self.__post__, 'cypher', data))
+        r = self._sync(partial(self.__post_raw__, 'cypher', data))
+        if not r[0]:
+            raise TuGraphRestError(r[1].get("http_status"), r[1].get("error_message"))
+        js = r[1]
         # Current servers answer flat {"result": ...}; older ones wrapped it
         # as {"data": {"result": ...}}.
-        if isinstance(r, dict) and "result" in r:
-            return r["result"]
-        return r["data"]["result"]
+        if isinstance(js, dict) and "result" in js:
+            return js["result"]
+        return js["data"]["result"]
+
+    async def __post_raw__(self, relative_url, data_dict=None):
+        # Like __post__, but preserves the (ok, payload) outcome for callers
+        # that raise documented errors instead of shaping error rows.
+        get_func = partial(
+                requests.post,
+                url=self.host + relative_url,
+                headers=self.http_headers,
+                json=data_dict,
+                timeout=None
+        )
+        return await self.__get_result__(get_func)
 
     def delete_specified_files(self, file_name):
         data = {"fileName" : file_name, "flag" : '0'}
@@ -191,20 +216,28 @@ class TuGraphRestClient:
         if (r[0]):
             return r[1]
         else:
-            return {"data":{"result":r[1]["errorMessage"]}}
+            err = r[1].get("errorMessage", r[1].get("error_message", r[1]))
+            return {"data":{"result":err}}
 
 
     async def __get_result__(self, get_func):
-        r = await get_func()
-        js = {}
+        # Never returns None and never indexes blindly: every HTTP status and
+        # every body shape (JSON, empty, malformed, legacy envelopes) maps to
+        # a (bool, dict) outcome with the server message preserved.
+        try:
+            r = await get_func()
+        except Exception as e:
+            return (False, {"http_status": 0, "error_message": str(e)})
         try:
             js = json.loads(r.text or "{}")
-        except Exception as e:
-            logging.error(e)
-        if r.status_code == 200:
-            # Current servers answer flat JSON with no error envelope; older
-            # ones carried errorCode == "200" on success.
-            if js.get("errorCode", "200") == "200":
-                return (True, js)
-            else:
-                return (False, js)
+        except Exception:
+            js = {}
+        if not isinstance(js, dict):
+            js = {"result": js}
+        status = getattr(r, "status_code", 0)
+        if status == 200 and js.get("errorCode", "200") == "200":
+            return (True, js)
+        msg = js.get("error_message", js.get("errorMessage", ""))
+        if not msg and status != 200:
+            msg = "HTTP %s with no error body" % (status,)
+        return (False, {"http_status": status, "error_message": msg, "body": js})
