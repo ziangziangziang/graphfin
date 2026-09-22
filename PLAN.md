@@ -173,8 +173,15 @@ shutdown/eviction behavior.
   procurement risks — start sourcing in Phase 0; (4) isolate benchmark runs
   from dev test runs.
 
-## Immediate next (this session)
+## Session log
 
-1. REST login fix (`userName` → `user`) + regression test — M4 item, one-liner.
-2. Phase 0.1 escalation note (image blockers documented in REPORT.md).
-3. M1 identity design inputs for principal review.
+- REST login fix + bundled-client regression: done (`fix(client)`).
+- M1 identity design inputs (Option A/B): drafted above, awaiting principal.
+- M0 follow-ups landed after the plan: eviction/reopen test
+  (`--max_open_graphs 2` + idle timeout churn), live Bolt assertions via the
+  real `neo4j==4.4.6` driver package, benchmark methodology
+  (`test_series_bench.py`, baselines logged, never gated), telemetry +
+  financial executable examples (`demo/SeriesTelemetry`, `demo/SeriesFinancial`).
+- Still blocked: full-binary sanitizer runs (image), genuine v4.5.2 fixture
+  (no tags upstream), HA replication evidence, M1 design decision (gates
+  Phase 1/2/5 implementation).
