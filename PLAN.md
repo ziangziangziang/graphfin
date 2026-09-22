@@ -173,7 +173,55 @@ shutdown/eviction behavior.
   procurement risks — start sourcing in Phase 0; (4) isolate benchmark runs
   from dev test runs.
 
-## Session log
+## Status ledger
+
+Done (gated, committed on `timeseries`):
+
+- R1–R6 correctness set: positional-identity DDL guards, fast-alter
+  no-default invariant + load recovery, atomic decode counter, LIST/MAP
+  rejection, bucket-option validation, DATETIME-domain timestamps.
+- Decoder allocation cap + adversarial fuzz battery (gate).
+- TSan harness over shared store traffic: clean. ASan/UBSan 20k-mutation
+  fuzz: clean. (Full-binary runs blocked — see below.)
+- Upstream defects found by sanitizers and fixed: unlocked
+  `ThreadIdAssigner` release, misaligned LMDB version loads, ANY-header
+  collection-cell server abort.
+- S5 matrix: 8 distinct writers, same-series contention with abort-rate
+  logging, reader/writer overlap, 500×500 OHLCV, durable restart, SIGKILL
+  recovery, stopped-copy + `lgraph_backup` restore, merge-base pre-series
+  fixture + upgrade test.
+- Clients: REST wire suite, in-process Bolt conversion suite, live TCP
+  driver suite, live `neo4j==4.4.6` driver suite, bundled-client login fix
+  (`fix(client)`) + regression test.
+- Gate provenance (hashes, real XML parsing, freshness/completeness).
+- Benchmark methodology module with baselines (never gated).
+- Telemetry + financial executable examples.
+- M1 identity design inputs (Option A/B) — awaiting principal decision.
+- Build cost: version metadata isolated behind `lgraph::version::*`
+  (`fix(build)`); a docs-only commit now recompiles 1 TU instead of ~239
+  (measured). M4 fresh-client journey test with idempotent-retry guidance.
+- Benchmarks: contention/latency profile (writes p50/p95/p99, scans,
+  transport retries), fine-grained 1s-cadence profile (full-span vs narrow
+  reads), eviction counter asserted via lifecycle metrics.
+
+Partial (landed, plan still lists remainder):
+
+- Eviction/reopen (server-level churn green; constrained-memory observer
+  and iterator/txn/store lifetime asserts open).
+- Pre-series fixture (merge-base binary; true v4.5.2 files open).
+- Benchmarks (methodology + small baselines; 10M/11.7M profiles need the
+  M2 importer; budgets outstanding).
+
+Blocked (needs principal/infra, not this stream):
+
+- M1 design decision (gates Phase 1/2/5 implementation).
+- Full-binary TSan (prebuilt libvsag.so → libgomp preempts interceptors).
+- Full-binary ASan unit_test link (prebuilt librocksdb.a lacks RTTI).
+- Genuine v4.5.2 release binary (no tags upstream).
+- HA replication evidence (multi-node setup).
+- M5+ design reviews (bitemporal model, cursors, export format).
+
+## Session log (archived)
 
 - REST login fix + bundled-client regression: done (`fix(client)`).
 - M1 identity design inputs (Option A/B): drafted above, awaiting principal.
