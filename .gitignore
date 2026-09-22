@@ -129,3 +129,8 @@ phase0-results/
 
 # Remote test-host notes (contains host credentials; never commit)
 TEST-REMOTE.md
+.opencode/
+AGENTS.md
+USE_CASE.md
+REVIEW.md
+REPORT.md
