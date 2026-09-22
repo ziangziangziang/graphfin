@@ -30,23 +30,31 @@ class TuGraphRestClient:
 
     def logout(self):
         r = self._sync(partial(self.__post__, 'logout'))
-        if isinstance(r['data'], str):
-            if r['data'] == '':
+        data = r.get('data', r) if isinstance(r, dict) else r
+        if isinstance(data, str):
+            if data == '':
                 return True
             else:
                 return False
+        # Flat success responses (e.g. {}) also mean the session ended.
+        return True
 
     def refresh_token(self):
         r = self._sync(partial(self.__post__, 'refresh'))
-        if isinstance(r['data'], str):
+        data = r.get('data', r) if isinstance(r, dict) else r
+        if isinstance(data, str):
             return None
         else:
-            return r["data"]["authorization"]
+            return data.get("authorization", data.get("jwt"))
 
 
     def call_cypher(self, graph, cypher, timeout=0):
         data = {"script": cypher, "graph": graph, "timeout": timeout}
         r = self._sync(partial(self.__post__, 'cypher', data))
+        # Current servers answer flat {"result": ...}; older ones wrapped it
+        # as {"data": {"result": ...}}.
+        if isinstance(r, dict) and "result" in r:
+            return r["result"]
         return r["data"]["result"]
 
     def delete_specified_files(self, file_name):
@@ -127,20 +135,29 @@ class TuGraphRestClient:
 
     async def __login__(self):
         try:
+            # The server requires `user` (not `userName`) and answers with a
+            # flat object carrying `jwt`; older servers wrapped it as
+            # data.authorization. Accept both shapes.
             j_data = {}
-            j_data["userName"] = self.username
+            j_data["user"] = self.username
             j_data["password"] = self.password
             r = await self.__post__('login', j_data)
-            jwt = r['data']['authorization']
-            self.http_headers["Authorization"] = "" + jwt
+            data = r.get('data', r)
+            jwt = data.get('authorization', data.get('jwt'))
+            if not jwt:
+                raise IOError('login response carries no token: %s' % (r,))
+            self.http_headers["Authorization"] = "Bearer " + jwt
         except Exception as e:
             raise IOError('Failed to login to server {}: {}'.format(self.host, e))
 
     async def __refresh__(self):
         try:
             r = await self.__post__('refresh')
-            jwt = r['data']['authorization']
-            self.http_headers["Authorization"] = "" + jwt
+            data = r.get('data', r)
+            jwt = data.get('authorization', data.get('jwt'))
+            if not jwt:
+                raise IOError('refresh response carries no token: %s' % (r,))
+            self.http_headers["Authorization"] = "Bearer " + jwt
         except Exception as e:
             raise IOError('Failed to login to server {}: {}'.format(self.host, e))
 
@@ -157,7 +174,9 @@ class TuGraphRestClient:
         if (r[0]):
             return r[1]
         else:
-            return {"data":{"result":r[1]["errorMessage"]}}
+            # Current servers report `error_message`; older ones `errorMessage`.
+            err = r[1].get("errorMessage", r[1].get("error_message", r[1]))
+            return {"data":{"result":err}}
 
 
     async def __post_binary__(self, relative_url, data=None):
@@ -183,7 +202,9 @@ class TuGraphRestClient:
         except Exception as e:
             logging.error(e)
         if r.status_code == 200:
-            if js["errorCode"] == "200":
+            # Current servers answer flat JSON with no error envelope; older
+            # ones carried errorCode == "200" on success.
+            if js.get("errorCode", "200") == "200":
                 return (True, js)
             else:
                 return (False, js)
