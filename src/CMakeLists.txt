@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.1)
-project(TuGraphSrc C CXX)
+project(GraphFinSrc C CXX)
 
 set(LGRAPH_SRC_DIR ${PROJECT_SOURCE_DIR})
 
@@ -17,6 +17,9 @@ include(BuildBoltLib.cmake)
 install(TARGETS lgraph lgraph_python_api lgraph_server lgraph_db_python
         RUNTIME DESTINATION bin
         LIBRARY DESTINATION lib64/lgraph)
+# GraphFin product alias for the server. lgraph_server stays installed as the
+# compatibility name; both must start (see ci/release/check_server_alias.sh).
+install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink lgraph_server \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/bin/graphfin_server)")
 install(DIRECTORY
         ${CMAKE_CURRENT_LIST_DIR}/restful/server/resource
         DESTINATION share/lgraph)

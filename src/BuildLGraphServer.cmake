@@ -144,6 +144,15 @@ set(TARGET_SERVER lgraph_server)
 add_executable(${TARGET_SERVER}
         server/server_main.cpp)
 
+# GraphFin product name. lgraph_server remains the compatibility name:
+# both binaries are the same executable and must start identically.
+add_custom_command(TARGET lgraph_server
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E create_symlink
+        lgraph_server
+        ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/graphfin_server
+        COMMENT "Creating graphfin_server alias for lgraph_server")
+
 target_link_libraries(${TARGET_SERVER}
         ${TARGET_SERVER_LIB}
         librocksdb.a

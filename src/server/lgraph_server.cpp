@@ -191,7 +191,7 @@ int LGraphServer::Start() {
         header << "\n"
                << "**********************************************************************"
                << "\n"
-               << "*                  TuGraph Graph Database v" << version
+                << "*                 GraphFin Graph Database v" << version
                << std::string(26 - version.size(), ' ') << "*"
                << "\n"
                << "*                                                                    *"
