@@ -1,0 +1,8 @@
+# CodeQL default-setup config.
+#
+# src/cython/*.py are Cython sources (built via add_cython_target in
+# src/BuildCythonExtension.cmake), not Python: e.g. `new OlapOnDB[Empty](...)`
+# is valid Cython but a Python parse error. Exclude them so the Python
+# analyzer doesn't report spurious "could not process file" warnings.
+paths-ignore:
+  - src/cython/**
