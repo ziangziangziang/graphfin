@@ -1,17 +1,17 @@
-name: Alipay Cloud Devops Codescan
+name: code-scan
 on:
   push:
     branches:
       - main
-      - master
+  workflow_dispatch:
 
+# Disabled placeholder: the previous Alipay Cloud DevOps codescan required
+# Aliyun credentials (ALI_PID / ALI_PK) that this repository does not have.
+# Keep the workflow file so the intent is visible, but do nothing until a
+# scan environment for ziangziangziang/graphfin is provisioned.
 jobs:
-  deployment:
+  scan:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - name: codeScan
-        if: ${{ github.repository == 'TuGraph-family/tugraph-db' }}
-        uses: TuGraph-family/alipay-cloud-devops-codescan@main
-        with:
-          parent_uid: ${{ secrets.ALI_PID }}
-          private_key: ${{ secrets.ALI_PK }}
+      - run: echo "code scan disabled: no scan environment provisioned for this repository."

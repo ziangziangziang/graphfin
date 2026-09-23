@@ -1,6 +1,6 @@
 {
-  "name": "TuGraph Phase 0 (arm64 Linux, CentOS 7 / GCC 8.4)",
-  "image": "tugraph-compile-arm64:local",
+  "name": "GraphFin Phase 0 (arm64 Linux, CentOS 7 / GCC 8.4)",
+  "image": "graphfin-compile-arm64:local",
   "runArgs": [
     "--platform=linux/arm64",
     "--ulimit", "nofile=1048576:1048576",
@@ -9,7 +9,7 @@
   "workspaceFolder": "/workspace",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
   "mounts": [
-    "source=tugraph-phase0-data,target=/data,type=volume"
+    "source=graphfin-phase0-data,target=/data,type=volume"
   ],
   "remoteEnv": {
     "LD_LIBRARY_PATH": "/usr/local/lib64/lgraph:/usr/local/lib64:/usr/local/lib:/usr/lib/jvm/java-11-openjdk/lib/server",

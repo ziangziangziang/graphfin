@@ -27,7 +27,7 @@ PHASE0_WORKDIR="${PHASE0_WORKDIR:-/workspace}"
 # not representative of a normal Linux filesystem and would distort the
 # storage/backup/restore numbers. The named volume lives in the Docker VM's
 # own filesystem instead.
-PHASE0_DATA_VOLUME="${PHASE0_DATA_VOLUME:-tugraph-phase0-data}"
+PHASE0_DATA_VOLUME="${PHASE0_DATA_VOLUME:-graphfin-phase0-data}"
 
 # Applies to every container that starts an lgraph_server.
 PHASE0_ULIMIT_NOFILE="${PHASE0_ULIMIT_NOFILE:-1048576:1048576}"

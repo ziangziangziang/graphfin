@@ -12,8 +12,8 @@ Design notes (learned against this build):
     expected value appears (eventual consistency) rather than reading once.
   * The default 500ms election timeout flaps on a busy host; ha_util raises it.
 
-Runs in the dedicated Phase 3 HA workflow (.github/workflows/phase3-ha.yml,
-TEST_TYPE=ha) and supports a manual invocation via the HA_WORK_DIR env var.
+Runs locally (TEST_TYPE=ha via the Phase 0 tooling) and supports a manual
+invocation via the HA_WORK_DIR env var.
 """
 
 import json

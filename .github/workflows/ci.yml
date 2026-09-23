@@ -3,14 +3,10 @@ name: ci
 on:
   push:
     branches:
-      # Scheduled workflows aside, push-triggered CI must accept both names
-      # during the master -> main default-branch transition. Drop `master`
-      # once GitHub's default branch is switched to `main`.
       - main
-      - master
 
 env:
-  TEST_TAG: tugraph/tugraph-ut:test
+  TEST_TAG: graphfin/graphfin-ut:test
 
 # Issues TODO:
 # 1. Seems GitHub limits the output passed among jobs up to 1MB,

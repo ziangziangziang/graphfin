@@ -1,6 +1,6 @@
 # Phase 0 — Reproducible build, tests and graph-count baseline
 
-This directory contains the Phase 0 tooling for the TuGraph scaling project.
+This directory contains the Phase 0 tooling for the GraphFin scaling project.
 The goal of Phase 0 is a trustworthy baseline: a reproducible build, documented
 architecture, automated correctness tests, and graph-count measurements that a
 later phase can diff against. **Phase 0 makes no engine behavior changes.**
@@ -20,7 +20,6 @@ later phase can diff against. **Phase 0 makes no engine behavior changes.**
 | Baseline results | `benchmark/scaling/results/` |
 | Architecture report | `docs/architecture/` |
 | Risk register and components to change | `docs/architecture/07-scalability-risks.md` |
-| CI workflow | `.github/workflows/phase0-baseline.yml` |
 | Dev environment | `.devcontainer/devcontainer.json` |
 
 ## Runbook
@@ -69,7 +68,7 @@ x86-only `-msse4.2` flag and the build dies. See
 `env/Dockerfile.phase0` for the Cython 3.0 requirement.
 
 **Benchmark scratch space is not on the bind mount.** Benchmark databases live
-in the named Docker volume `tugraph-phase0-data` (mounted at `/data`). On macOS
+in the named Docker volume `graphfin-phase0-data` (mounted at `/data`). On macOS
 the repo bind mount is virtiofs, whose mmap/fsync behaviour is not
 representative of a Linux filesystem and would distort storage, snapshot and
 restore numbers.

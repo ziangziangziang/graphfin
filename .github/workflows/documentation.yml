@@ -1,9 +1,7 @@
 name: GraphFin website
 on:
   push:
-    # Accept both names during the master -> main default-branch transition.
-    # Drop `master` once GitHub's default branch is switched to `main`.
-    branches: [main, master]
+    branches: [main]
     paths: ["site/**", "assets/**", ".github/workflows/documentation.yml"]
   workflow_dispatch:
 
@@ -16,7 +14,7 @@ concurrency:
 
 jobs:
   build:
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -44,7 +42,7 @@ jobs:
           path: site/dist
 
   deploy:
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     permissions:

@@ -40,7 +40,7 @@ separate experiment per graph count.
 ## Running
 
 All runs happen inside the pinned arm64 container. Scratch databases live in a
-named Docker volume (`tugraph-phase0-data`), **not** in the repo bind mount:
+named Docker volume (`graphfin-phase0-data`), **not** in the repo bind mount:
 on macOS the bind mount is virtiofs, whose mmap/fsync behaviour is not
 representative of a Linux filesystem and would distort storage, snapshot and
 restore numbers.

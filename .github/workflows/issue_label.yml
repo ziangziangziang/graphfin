@@ -25,9 +25,9 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.issue.number }}
           body: |
-            Hello @${{ github.event.issue.user.login }}, thank you for your proposal/feedback. Now the problem/reason is clear. Welcome to [contribute a Pull Request](https://github.com/TuGraph-family/tugraph-db/blob/master/docs/en-US/source/6.contributor-manual/1.contributing.md) for it. We will review it ASAP. Looking forward to your contribution!
+            Hello @${{ github.event.issue.user.login }}, thank you for your proposal/feedback. Now the problem/reason is clear. Welcome to [contribute a Pull Request](https://github.com/ziangziangziang/graphfin/blob/main/docs/en-US/source/6.contributor-manual/1.contributing.md) for it. We will review it ASAP. Looking forward to your contribution!
 
-            你好 @${{ github.event.issue.user.login }}，感谢你的提议/反馈，现在问题已经明确。欢迎直接在此仓库 [贡献一个 Pull Request](https://github.com/TuGraph-family/tugraph-db/blob/master/docs/zh-CN/source/6.contributor-manual/1.contributing.md) 来解决这个问题，我们会尽快进行 Review，期待您的贡献。
+            你好 @${{ github.event.issue.user.login }}，感谢你的提议/反馈，现在问题已经明确。欢迎直接在此仓库 [贡献一个 Pull Request](https://github.com/ziangziangziang/graphfin/blob/main/docs/zh-CN/source/6.contributor-manual/1.contributing.md) 来解决这个问题，我们会尽快进行 Review，期待您的贡献。
 
       - name: more info needed
         if: github.event.label.name == 'more info needed'
