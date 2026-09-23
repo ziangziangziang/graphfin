@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#101315" />
+    <meta
+      name="description"
+      content="GraphFin is a property-graph database with native time-series data. Relationships and observations, together."
+    />
+    <meta
+      property="og:title"
+      content="GraphFin — Relationships and observations, together."
+    />
+    <meta
+      property="og:description"
+      content="A graph database with native time-series data, built for connected financial intelligence."
+    />
+    <meta property="og:type" content="website" />
+    <link rel="icon" type="image/svg+xml" href="../assets/logo.svg" />
+    <title>GraphFin — Relationships and observations, together.</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main" data-i18n="skip">Skip to content</a>
+    <header class="header">
+      <a class="brand" href="#" aria-label="GraphFin home"
+        ><img src="../assets/logo.svg" alt="" width="32" height="32" /><span
+          >GraphFin<span class="brand-dot">.</span></span
+        ></a
+      >
+      <nav id="navigation" aria-label="Main navigation">
+        <a href="#why" data-i18n="whyNav">Why GraphFin</a>
+        <a href="#use-cases" data-i18n="casesNav">Use Cases</a>
+        <a href="#reliability" data-i18n="reliabilityNav">Reliability</a>
+        <a href="__SOURCE_BASE__/docs/README.md" data-i18n="docs">Docs</a>
+        <a class="nav-github" href="https://github.com/ziangziangziang/graphfin"
+          >GitHub <span aria-hidden="true">↗</span></a
+        >
+      </nav>
+      <div class="header-tools">
+        <button
+          class="language"
+          id="language"
+          type="button"
+          aria-label="Switch to Chinese"
+          hidden
+        >
+          中<span aria-hidden="true"> / </span><span class="selected">EN</span>
+        </button>
+        <button
+          class="menu"
+          id="menu"
+          type="button"
+          aria-controls="navigation"
+          aria-expanded="false"
+          hidden
+        >
+          <span data-i18n="menu">Menu</span><span aria-hidden="true">☰</span>
+        </button>
+      </div>
+    </header>
+    <main id="main">
+      <section
+        class="hero"
+        id="hero"
+        aria-labelledby="hero-title"
+        data-scene-section="hero"
+      >
+        <div class="hero-content">
+          <p class="eyebrow">
+            <span class="status-dot" aria-hidden="true"></span
+            ><span data-i18n="eyebrow">THE TIME-SERIES GRAPH DATABASE</span>
+          </p>
+          <h1 id="hero-title">
+            <span data-i18n="headlineOne">Relationships</span><br /><span
+              data-i18n="headlineTwo"
+              >and observations,</span
+            ><br /><span class="muted" data-i18n="headlineThree"
+              >together.</span
+            >
+          </h1>
+          <p class="hero-description" data-i18n="description">
+            A graph database with native time-series data, built for connected
+            financial intelligence.
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="#why"
+              ><span data-i18n="explore">Explore GraphFin</span
+              ><span aria-hidden="true">↗</span></a
+            >
+            <a class="button secondary" href="__SOURCE_BASE__/docs/README.md"
+              ><span data-i18n="readDocs">Read the docs</span
+              ><span aria-hidden="true">→</span></a
+            >
+          </div>
+          <a
+            class="source-link"
+            href="https://github.com/ziangziangziang/graphfin"
+            ><svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <path
+                d="M12 .7a11.4 11.4 0 0 0-3.6 22.2c.6.1.8-.2.8-.6v-2.2c-3.2.7-3.9-1.4-3.9-1.4-.5-1.4-1.3-1.8-1.3-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.1 1.2A11 11 0 0 1 12 5.7c1 0 2 .1 2.8.4 2.2-1.5 3.1-1.2 3.1-1.2.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.1v3.4c0 .4.2.7.8.6A11.4 11.4 0 0 0 12 .7Z"
+              /></svg
+            ><span data-i18n="githubSource">Open source on GitHub</span
+            ><span aria-hidden="true">↗</span></a
+          >
+        </div>
+        <figure
+          class="hero-visual"
+          id="hero-visual"
+          aria-label="A graphene lattice carrying a connected gold signal"
+        >
+          <img
+            class="hero-fallback"
+            src="../assets/hero.png"
+            alt="GraphFin: a carbon lattice shaped like a G, with connected gold bonds carrying a signal."
+            width="1448"
+            height="1086"
+            fetchpriority="high"
+          />
+          <div class="scene-host" id="scene-host" aria-hidden="true"></div>
+          <figcaption class="visual-caption">
+            <span class="caption-rule" aria-hidden="true"></span
+            ><span data-i18n="structure">STRUCTURE BECOMES SIGNAL</span>
+          </figcaption>
+          <button
+            class="motion-control"
+            id="motion"
+            type="button"
+            aria-pressed="false"
+            hidden
+            data-i18n="pause"
+          >
+            Pause animation
+          </button>
+        </figure>
+        <div class="hero-bottom">
+          <span class="hero-index"
+            >01 / <span data-i18n="introduction">INTRODUCTION</span></span
+          ><a href="#why"
+            ><span data-i18n="scroll">Follow the connections</span
+            ><span aria-hidden="true">↓</span></a
+          ><span class="hero-note" data-i18n="native"
+            >PROPERTY GRAPH · NATIVE TIME SERIES</span
+          >
+        </div>
+      </section>
+      <section
+        class="content-section"
+        id="why"
+        data-scene-section="why"
+        aria-labelledby="why-title"
+      >
+        <div class="section-label">
+          <span>02</span><span data-i18n="whyNav">Why GraphFin</span>
+        </div>
+        <div class="section-body">
+          <h2 id="why-title" data-i18n="whyTitle">Context meets history.</h2>
+          <p data-i18n="whyText">
+            Relationships tell you where to look. Observations tell you what
+            changed. GraphFin brings both into one data model, with native
+            time-series fields on vertices and edges.
+          </p>
+          <a class="text-link" href="__SOURCE_BASE__/docs/product.md"
+            ><span data-i18n="productLink">Explore the data model</span>
+            <span aria-hidden="true">↗</span></a
+          >
+        </div>
+        <div class="concept" aria-hidden="true">
+          <span class="concept-node"></span><span class="concept-bond"></span
+          ><span class="concept-node active"></span
+          ><span class="concept-label">relationship + observation(t)</span>
+        </div>
+      </section>
+      <section
+        class="content-section"
+        id="use-cases"
+        data-scene-section="use-cases"
+        aria-labelledby="cases-title"
+      >
+        <div class="section-label">
+          <span>03</span><span data-i18n="casesNav">Use Cases</span>
+        </div>
+        <div class="section-body">
+          <h2 id="cases-title" data-i18n="casesTitle">
+            Connected financial intelligence.
+          </h2>
+          <p data-i18n="casesText">
+            Companies, funds, securities, and suppliers. Prices, holdings, and
+            exposures over time. Investment analytics is the first use case for
+            a general-purpose database.
+          </p>
+          <a
+            class="text-link"
+            href="__SOURCE_BASE__/demo/SeriesFinancial/financial.py"
+            ><span data-i18n="financeLink">Read the financial example</span>
+            <span aria-hidden="true">↗</span></a
+          >
+        </div>
+        <span class="section-aside" data-i18n="casesAside"
+          >RELATIONSHIPS → OBSERVATIONS → INSIGHT</span
+        >
+      </section>
+      <section
+        class="content-section"
+        id="reliability"
+        data-scene-section="reliability"
+        aria-labelledby="reliability-title"
+      >
+        <div class="section-label">
+          <span>04</span><span data-i18n="reliabilityNav">Reliability</span>
+        </div>
+        <div class="section-body">
+          <h2 id="reliability-title" data-i18n="reliabilityTitle">
+            One graph. One transaction boundary.
+          </h2>
+          <p data-i18n="reliabilityText">
+            Graph records and series buckets share a transactional store.
+            GraphFin is currently in alpha; recovery, isolation, and replication
+            evidence is documented with its qualification boundaries.
+          </p>
+          <a class="text-link" href="__SOURCE_BASE__/docs/testing/post-merge.md"
+            ><span data-i18n="reliabilityLink"
+              >Review the qualification plan</span
+            >
+            <span aria-hidden="true">↗</span></a
+          >
+        </div>
+        <span class="section-aside" data-i18n="alpha"
+          >0.1.0-ALPHA · UNDER EVALUATION</span
+        >
+      </section>
+    </main>
+    <footer>
+      <div>
+        <a class="footer-brand" href="#">GraphFin</a>
+        <p data-i18n="tagline">Relationships and observations, together.</p>
+      </div>
+      <div class="footer-owner">
+        <span
+          >© <span id="year">2026</span>
+          <a href="mailto:ziang.zhang@idefinity.com">Ziang Zhang</a></span
+        ><span lang="zh-CN">深圳市想法无限科技有限公司</span
+        ><a href="__SOURCE_BASE__/LICENSE" data-i18n="license"
+          >Open source · Apache 2.0</a
+        >
+      </div>
+    </footer>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

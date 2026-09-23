@@ -15,6 +15,7 @@
 #include "fma-common/string_formatter.h"
 
 #include "core/global_config.h"
+#include "core/version_info.h"
 
 std::map<std::string, std::string> lgraph::GlobalConfig::FormatAsOptions() const {
     std::map<std::string, std::string> options;
@@ -43,6 +44,9 @@ std::map<std::string, std::string> lgraph::GlobalConfig::FormatAsOptions() const
     }
     AddOption(options, "durable", durable);
     AddOption(options, "optimistic transaction", txn_optimistic);
+    AddOption(options, "lmdb notls", lmdb_notls);
+    AddOption(options, "max open graphs", max_open_graphs);
+    AddOption(options, "monitor host", monitor_host);
     AddOption(options, "Backup log enable", enable_backup_log);
     AddOption(options, "Whether the token is unlimited", unlimited_token);
     AddOption(options, "reset admin password if you forget", reset_admin_password);
@@ -62,6 +66,7 @@ std::map<std::string, std::string> lgraph::GlobalConfig::FormatAsOptions() const
     AddOption(options, "number of bolt io threads", bolt_io_thread_num);
     AddOption(options, "bolt raft port", bolt_raft_port);
     AddOption(options, "bolt raft node id", bolt_raft_node_id);
+    AddOption(options, "bolt raft logstore path", bolt_raft_logstore_path);
     return options;
 }
 
@@ -110,6 +115,11 @@ std::map<std::string, lgraph::FieldData> lgraph::GlobalConfig::ToFieldDataMap() 
     v["enable_backup_log"] = FieldData(enable_backup_log);
     v[lgraph::_detail::OPT_DB_DURABLE] = FieldData(durable);
     v[lgraph::_detail::OPT_TXN_OPTIMISTIC] = FieldData(txn_optimistic);
+    v["lmdb_notls"] = FieldData(lmdb_notls);
+    v["lmdb_max_dbs"] = FieldData(lmdb_max_dbs);
+    v["max_graphs"] = FieldData(max_graphs);
+    v["max_open_graphs"] = FieldData(max_open_graphs);
+    v["graph_idle_timeout_s"] = FieldData(graph_idle_timeout_s);
     v[lgraph::_detail::OPT_IP_CHECK_ENABLE] = FieldData(enable_ip_check);
     v[lgraph::_detail::OPT_AUDIT_LOG_ENABLE] = FieldData(enable_audit_log);
     v["enable_fulltext_index"] = FieldData(ft_index_options.enable_fulltext_index);
@@ -154,18 +164,13 @@ int lgraph::GlobalConfig::PrintVersion(std::string &config_file, std::string &cm
     }
     // check if dumping version
     if (print_version) {
-        std::string version;
-        version.append(std::to_string(lgraph::_detail::VER_MAJOR))
-            .append(".")
-            .append(std::to_string(lgraph::_detail::VER_MINOR))
-            .append(".")
-            .append(std::to_string(lgraph::_detail::VER_PATCH));
-        LOG_INFO() << "TuGraph v" << version << ", compiled from " << GIT_BRANCH
-                  << " branch, commit " << GIT_COMMIT_HASH << " (web commit " << WEB_GIT_COMMIT_HASH
-                  << ").";
-        LOG_INFO() << "  CPP compiler version: " << CXX_COMPILER_ID << " " << CXX_COMPILER_VERSION
-                  << ".";
-        LOG_INFO() << "  Python version : " << PYTHON_LIB_VERSION << ".";
+        LOG_INFO() << "TuGraph v" << lgraph::version::ShortVersion() << ", compiled from "
+                   << lgraph::version::GitBranch() << " branch, commit "
+                   << lgraph::version::GitCommitHash() << " (web commit "
+                   << lgraph::version::WebGitCommitHash() << ").";
+        LOG_INFO() << "  CPP compiler version: " << lgraph::version::CxxCompilerId() << " "
+                   << lgraph::version::CxxCompilerVersion() << ".";
+        LOG_INFO() << "  Python version : " << lgraph::version::PythonLibVersion() << ".";
         return 0;
     }
     return 1;
@@ -275,6 +280,45 @@ fma_common::Configuration lgraph::GlobalConfig::InitConfig
         .Comment("Whether to use pthread mode in brpc, default is bthread.");
     argparser.Add(txn_optimistic, lgraph::_detail::OPT_TXN_OPTIMISTIC, true)
         .Comment("Enable optimistic multi-writer transaction for Cypher.");
+    argparser.Add(lmdb_notls, "lmdb_notls", true)
+        .Comment(
+            "Open LMDB environments with MDB_NOTLS. Required to open more than about"
+            " 1000 graphs: without it LMDB uses one pthread TLS key per environment"
+            " and the process hits the fixed PTHREAD_KEYS_MAX (1024) limit, failing"
+            " with EAGAIN. Set to false only to restore the previous behaviour.");
+    argparser.Add(max_open_graphs, "max_open_graphs", true)
+        .SetMin(1)
+        .Comment(
+            "Maximum number of graphs physically open at one time. Registered"
+            " graphs beyond this are opened lazily and evicted LRU.");
+    argparser.Add(graph_idle_timeout_s, "graph_idle_timeout_s", true)
+        .SetMin(0)
+        .Comment(
+            "Evict graphs idle longer than this many seconds (0 = only evict"
+            " when the open count exceeds max_open_graphs).");
+    argparser.Add(graph_open_admission_timeout_s, "graph_open_admission_timeout_s", true)
+        .SetMin(0)
+        .Comment(
+            "When max_open_graphs is reached and every open graph is pinned by"
+            " an outstanding reference, wait this many seconds for a lease to be"
+            " released before failing the open with a retryable error instead of"
+            " exceeding the bound. 0 = fail immediately.");
+    argparser.Add(monitor_host, "monitor_host", true)
+        .Comment(
+            "Prometheus scrape endpoint (host:port, e.g. 0.0.0.0:8080). Empty"
+            " disables it. When set, exposes /metrics with resource gauges plus"
+            " tugraph_graph_cache_* lifecycle counters.");
+    argparser.Add(max_graphs, "max_graphs", true)
+        .SetMin(0)
+        .Comment(
+            "Maximum number of graphs this instance will host. 0 means no"
+            " application-level limit. Replaces the former hard-coded 4096.");
+    argparser.Add(lmdb_max_dbs, "lmdb_max_dbs", true)
+        .Comment(
+            "Max named tables per LMDB environment. LMDB reserves per-env structures"
+            " sized by this number, so it drives the per-graph memory cost of hosting"
+            " many graphs. Reduce it (e.g. 1024) when hosting many graphs with small"
+            " schemas.");
     argparser.Add(http_disable_auth, "disable_auth", true)
         .Comment("Disable authentication for REST.");
     argparser.Add(enable_ip_check, lgraph::_detail::OPT_IP_CHECK_ENABLE, true)
@@ -367,6 +411,8 @@ fma_common::Configuration lgraph::GlobalConfig::InitConfig
     argparser.Add(bolt_raft_election_tick, "bolt_raft_election_tick", true)
         .Comment("Bolt raft election tick.");
 
+    argparser.Add(bolt_raft_logstore_path, "bolt_raft_logstore_path", true)
+        .Comment("Bolt raft logstore path. Defaults to <db_dir>/raftlog if empty.");
     argparser.Add(bolt_raft_logstore_cache, "bolt_raft_logstore_cache", true)
         .Comment("Bolt raft logstore cache in MB.");
     argparser.Add(bolt_raft_logstore_threads, "bolt_raft_logstore_threads", true)

@@ -1,35 +1,59 @@
-name: Build and Deploy
-on: [push]
+name: GraphFin website
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", "assets/**", ".github/workflows/documentation.yml"]
+  workflow_dispatch:
+
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: graphfin-pages-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build-and-deploy:
-    concurrency: ci-${{ github.ref }} # Recommended if you intend to make multiple deployments in quick succession.
+  build:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
     steps:
-      - name: Checkout 🛎️
-        uses: actions/checkout@v4
-
+      - name: Checkout
+        uses: actions/checkout@v5
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: "20"
-          cache: "yarn"
-          cache-dependency-path: docs/docusaurus/yarn.lock
-
-      - name: Install Pandoc
-        run: sudo apt-get update && sudo apt-get install -y pandoc && pandoc --version
-
-      - name: Install and Build 🔧 # This example project is built using npm and outputs the result to the 'build' folder. Replace with the commands required to build your project, or remove this step entirely if your site is pre-built.
-        run: |
-          export NODE_OPTIONS="--max_old_space_size=8192"
-          cd docs/docusaurus
-          # 配置使用公共 npm 镜像源
-          yarn config set registry https://registry.npmmirror.com
-          yarn install --network-timeout 600000 --ignore-engines
-          yarn build
-
-      - name: Deploy 🚀
-        uses: JamesIves/github-pages-deploy-action@v4
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+        env:
+          SITE_BASE_PATH: /${{ github.event.repository.name }}/
+          SITE_SOURCE_REF: ${{ github.head_ref || github.ref_name }}
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+      - name: Upload static site
+        uses: actions/upload-pages-artifact@v4
         with:
-          folder: docs/docusaurus/build # The folder the action should deploy.
+          path: site/dist
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure Pages
+        uses: actions/configure-pages@v6
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v5

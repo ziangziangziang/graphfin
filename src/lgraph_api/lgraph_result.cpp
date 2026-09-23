@@ -123,6 +123,24 @@ void Record::Insert(const std::string &key, const std::vector<FieldData> &value)
     length_++;
 }
 
+void Record::Insert(const std::string &key, const std::vector<json> &value) {
+    // ANY is what a Cypher expression of inferred-but-unknown type carries,
+    // which is what RETURN of a list or map produces.
+    if (!HasKey(key) || (header[key] != LGraphType::LIST && header[key] != LGraphType::ANY)) {
+        throw std::runtime_error(FMA_FMT("[Result ERROR] the variable {} is not exist", key));
+    }
+    record[key] = std::shared_ptr<ResultElement>(new ResultElement(value));
+    length_++;
+}
+
+void Record::Insert(const std::string &key, const std::map<std::string, json> &value) {
+    if (!HasKey(key) || (header[key] != LGraphType::MAP && header[key] != LGraphType::ANY)) {
+        throw std::runtime_error(FMA_FMT("[Result ERROR] the variable {} is not exist", key));
+    }
+    record[key] = std::shared_ptr<ResultElement>(new ResultElement(value));
+    length_++;
+}
+
 void Record::Insert(const std::string &key, const lgraph_api::VertexIterator &vertex_it) {
     if (!HasKey(key) || header[key] != LGraphType::NODE) {
         throw std::runtime_error(

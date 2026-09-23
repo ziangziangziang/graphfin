@@ -13,6 +13,7 @@
  */
 
 #pragma once
+#include <limits>
 #include <map>
 #include <string>
 #include <vector>
@@ -506,7 +507,72 @@ R"(
      * openCypher artifact and as a built-in graph in the openCypher TCK.
      * see https://github.com/opencypher/openCypher/tree/master/tck/graphs/yago
      */
-    static void create_yago(const std::string& dir = "./lgraph_db") {
+    /** The Person whose series fixture carries a hole, so a read can be checked
+     *  against a null measure as well as against values. */
+    static constexpr const char* kSeriesPersonWithNullMeasure = "Vanessa Redgrave";
+
+    /** The Person whose series fixture overflows an INT64 sum, so the checked
+     *  integer aggregation has a behavioral probe. */
+    static constexpr const char* kSeriesPersonWithOverflowSum = "Roy Redgrave";
+
+    /**
+     * Adds the time-series fixture on top of an imported YAGO.
+     *
+     * The field is declared and filled here rather than in yago.conf because a CSV
+     * cannot express series points - that is the bulk-import stage - and the
+     * import config has no way to say "series" yet, so putting it in the import
+     * would mean pulling that stage forward.
+     *
+     * Every Person gets the same three daily points starting 2024-01-01, with
+     * close 10/11/12 and volume 100/200/300, so golden reads can be checked
+     * against fixed values; one Person additionally has a null close on the middle
+     * day so the null path is covered too.
+     */
+    static void AddSeriesFixture(const std::string& dir) {
+        using namespace lgraph;
+        lgraph_api::Galaxy galaxy(dir, _detail::DEFAULT_ADMIN_NAME, _detail::DEFAULT_ADMIN_PASS,
+                                  false, false);
+        auto db = galaxy.OpenGraph("default");
+
+        FieldSpec prices("prices", FieldType::BLOB, true);
+        prices.series = true;
+        prices.series_spec.measures = {lgraph_api::SeriesMeasureSpec{"close", FieldType::DOUBLE},
+                                       lgraph_api::SeriesMeasureSpec{"volume", FieldType::INT64}};
+        if (!db.AlterVertexLabelAddFields("Person", {prices}, {FieldData()})) {
+            throw std::runtime_error("series fixture: could not add the field to Person");
+        }
+
+        const int64_t day = 86400LL * 1000000LL;
+        const int64_t day0 = DateTime("2024-01-01 00:00:00").MicroSecondsSinceEpoch();
+        auto txn = db.CreateWriteTxn();
+        for (auto vit = txn.GetVertexIterator(); vit.IsValid(); vit.Next()) {
+            if (vit.GetLabel() != "Person") continue;
+            const int64_t vid = vit.GetId();
+            std::vector<series::MeasureValue> p0{series::MeasureValue::Double(10.0),
+                                                 series::MeasureValue::Int64(100)};
+            std::vector<series::MeasureValue> p1{series::MeasureValue::Double(11.0),
+                                                 series::MeasureValue::Int64(200)};
+            std::vector<series::MeasureValue> p2{series::MeasureValue::Double(12.0),
+                                                 series::MeasureValue::Int64(300)};
+            if (vit.GetField("name").AsString() == kSeriesPersonWithNullMeasure) {
+                p1[0] = series::MeasureValue::Null();
+            }
+            if (vit.GetField("name").AsString() == kSeriesPersonWithOverflowSum) {
+                // Two volumes no INT64 accumulator can add: min/max/mean stay
+                // well-defined, but the integer sum has to refuse.
+                p0[1] = series::MeasureValue::Int64(std::numeric_limits<int64_t>::max() - 100);
+                p1[1] = series::MeasureValue::Int64(std::numeric_limits<int64_t>::max() - 200);
+            }
+            if (!txn.GetTxn()->SetVertexSeriesPoint(vid, "prices", day0, p0) ||
+                !txn.GetTxn()->SetVertexSeriesPoint(vid, "prices", day0 + day, p1) ||
+                !txn.GetTxn()->SetVertexSeriesPoint(vid, "prices", day0 + 2 * day, p2)) {
+                throw std::runtime_error("series fixture: could not write a point");
+            }
+        }
+        txn.Commit();
+    }
+
+    static void create_yago(const std::string& dir = "./lgraph_db", bool with_series = false) {
         using namespace lgraph;
         WriteYagoFiles();
         import_v3::Importer::Config config;
@@ -521,6 +587,13 @@ R"(
 
         import_v3::Importer importer(config);
         importer.DoImportOffline();
+        // Opt-in: every other suite runs against the pristine import so the
+        // series field cannot leak into unrelated expectations.
+        if (with_series) AddSeriesFixture(dir);
+    }
+
+    static void create_yago_with_series(const std::string& dir = "./lgraph_db") {
+        create_yago(dir, true);
     }
 
     // add edge constraints for yago
@@ -586,7 +659,8 @@ R"(
         YAGO = 2,
         MINI_FINBENCH = 3,
         MINI_SNB = 4,
-        FB = 5
+        FB = 5,
+        YAGO_SERIES = 6
     };
 
     static std::string ToString(GRAPH_DATASET_TYPE dataset_type) {
@@ -597,6 +671,7 @@ R"(
             {GRAPH_DATASET_TYPE::MINI_FINBENCH, "MINI_FINBENCH"},
             {GRAPH_DATASET_TYPE::MINI_SNB, "MINI_SNB"},
             {GRAPH_DATASET_TYPE::FB, "FaceBook"},
+            {GRAPH_DATASET_TYPE::YAGO_SERIES, "YAGO_SERIES"},
         };
         auto it = dataset_type_to_string.find(dataset_type);
         if (it == dataset_type_to_string.end()) {
@@ -614,6 +689,7 @@ R"(
             {"MINI_FINBENCH", GRAPH_DATASET_TYPE::MINI_FINBENCH},
             {"MINI_SNB", GRAPH_DATASET_TYPE::MINI_SNB},
             {"FaceBook", GRAPH_DATASET_TYPE::FB},
+            {"YAGO_SERIES", GRAPH_DATASET_TYPE::YAGO_SERIES},
         };
         auto it = string_to_dataset_type.find(str);
         if (it == string_to_dataset_type.end()) {
@@ -629,7 +705,7 @@ R"(
         std::vector<GRAPH_DATASET_TYPE> all_types = {
             GRAPH_DATASET_TYPE::CURRENT, GRAPH_DATASET_TYPE::EMPTY, GRAPH_DATASET_TYPE::YAGO,
             GRAPH_DATASET_TYPE::MINI_FINBENCH, GRAPH_DATASET_TYPE::MINI_SNB,
-            GRAPH_DATASET_TYPE::FB};
+            GRAPH_DATASET_TYPE::FB, GRAPH_DATASET_TYPE::YAGO_SERIES};
         for (auto& it : all_types) {
             ret += ToString(it);
             if (it != all_types.back()) {
@@ -650,6 +726,10 @@ R"(
         case GRAPH_DATASET_TYPE::YAGO:
             fma_common::FileSystem::GetFileSystem(dir).RemoveDir(dir);
             create_yago(dir);
+            return;
+        case GRAPH_DATASET_TYPE::YAGO_SERIES:
+            fma_common::FileSystem::GetFileSystem(dir).RemoveDir(dir);
+            create_yago_with_series(dir);
             return;
         case GRAPH_DATASET_TYPE::MINI_FINBENCH:
             fma_common::FileSystem::GetFileSystem(dir).RemoveDir(dir);

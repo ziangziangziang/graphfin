@@ -1,0 +1,285 @@
+{
+  "config": {
+    "binary": "/workspace/build/output/lgraph_server",
+    "config_file": "/workspace/build/output/lgraph_standalone.json",
+    "graphs": [
+      1,
+      100
+    ],
+    "max_size_gb": 1,
+    "phases": [
+      "startup",
+      "create",
+      "query",
+      "throughput"
+    ],
+    "repeated_queries": 1000,
+    "sample_interval": 0.5,
+    "server_extra_args": [],
+    "settle_seconds": 3.0,
+    "throughput_seconds": 10.0,
+    "throughput_threads": 4
+  },
+  "env": {
+    "captured_at_utc": "2026-09-19T02:51:18Z",
+    "container": {
+      "cgroup": "0::/",
+      "image_id": "sha256:2350a9a1f998b6898b169d28015c60c49b488def8980b9553a657819763afedf"
+    },
+    "cpu": {
+      "affinity": 10,
+      "count": 10,
+      "model": "ARM (implementer=0x61, part=0x000, architecture=8, variant=0x0)"
+    },
+    "host": {
+      "arch": "aarch64",
+      "hostname": "93539bd67c20",
+      "kernel": "7.0.14-orbstack-00380-ga7e0a2dc9535",
+      "os_id": "centos",
+      "os_release": "CentOS Linux 7 (AltArch)",
+      "platform": "Linux-7.0.14-orbstack-00380-ga7e0a2dc9535-aarch64-with-centos-7.9.2009-AltArch"
+    },
+    "lib_version": "1.0.0",
+    "limits": {
+      "cgroup_cpu_max": "400000 100000",
+      "cgroup_pids_max": "max",
+      "max_map_count": "262144",
+      "nofile_hard": 1048576,
+      "nofile_soft": 1048576,
+      "threads_max": "64275"
+    },
+    "memory": {
+      "cgroup_limit_bytes": "6442450944",
+      "mem_available_kb": "7602388 kB",
+      "mem_total_kb": "8196572 kB",
+      "swap_total_kb": "9245140 kB"
+    },
+    "python": {
+      "executable": "/usr/local/bin/python3",
+      "version": "3.6.9"
+    },
+    "source": {
+      "git_commit": "672e4b1998b78e5dbd45ae44950e86b48c841437",
+      "git_describe": "v4.3.1-144-g672e4b1-dirty"
+    },
+    "storage": {
+      "data_dir": "/data",
+      "data_dir_fstype": "btrfs",
+      "data_dir_mountpoint": "/data"
+    }
+  },
+  "finished_at_utc": "2026-09-19T02:51:39Z",
+  "phase0_bench_version": "1.0.0",
+  "runs": {
+    "1": {
+      "create": {
+        "created": 0,
+        "error": null,
+        "note": "only the auto-created default graph",
+        "seconds": null,
+        "wall_seconds": 0.0
+      },
+      "final_peaks": {
+        "startup": {
+          "fds": 3,
+          "maps": 85,
+          "rss_kb": 25864,
+          "threads": 10,
+          "vmpeak_kb": 490844,
+          "vmsize_kb": 490844
+        },
+        "steady": null
+      },
+      "first_query": {
+        "default_seconds": 0.004589,
+        "error": null,
+        "seconds": null,
+        "wall_seconds": 0.005
+      },
+      "graphs_target": 1,
+      "repeated_query": {
+        "error": null,
+        "graphs_spread_over": 1,
+        "latency": {
+          "max_ms": 0.351,
+          "mean_ms": 0.227,
+          "min_ms": 0.2,
+          "n": 1000,
+          "p50_ms": 0.224,
+          "p95_ms": 0.255,
+          "p99_ms": 0.283,
+          "sum_seconds": 0.227
+        },
+        "qps": 4396.7,
+        "queries": 1000,
+        "seconds": null,
+        "wall_seconds": 0.235
+      },
+      "startup": {
+        "bolt_port": 38241,
+        "error": null,
+        "http_port": 37817,
+        "rpc_port": 41885,
+        "seconds": 0.1781,
+        "wall_seconds": 0.181
+      },
+      "startup_metrics": {
+        "error": null,
+        "peaks": {
+          "fds": 3,
+          "maps": 85,
+          "rss_kb": 25864,
+          "threads": 10,
+          "vmpeak_kb": 490844,
+          "vmsize_kb": 490844
+        },
+        "sample": {
+          "fds": 25,
+          "maps": 241,
+          "rss_kb": 66476,
+          "t": 2226083.564662974,
+          "threads": 74,
+          "vmpeak_kb": 4297147292,
+          "vmsize_kb": 4297147292
+        },
+        "seconds": null,
+        "wall_seconds": 0.0
+      },
+      "throughput": {
+        "error": null,
+        "errors": 0,
+        "read_threads": 4,
+        "read_tps": 713.6,
+        "reads": 7136,
+        "seconds": 10.0,
+        "wall_seconds": 10.024,
+        "write_threads": 2,
+        "write_tps": 2220.4,
+        "writes": 22204
+      }
+    },
+    "100": {
+      "create": {
+        "buckets": {
+          "1-9": {
+            "max_ms": 1.168,
+            "mean_ms": 0.799,
+            "min_ms": 0.652,
+            "n": 9,
+            "p50_ms": 0.759,
+            "p95_ms": 1.046,
+            "p99_ms": 1.144,
+            "sum_seconds": 0.007
+          },
+          "10-99": {
+            "max_ms": 1.274,
+            "mean_ms": 0.92,
+            "min_ms": 0.81,
+            "n": 90,
+            "p50_ms": 0.905,
+            "p95_ms": 1.043,
+            "p99_ms": 1.185,
+            "sum_seconds": 0.083
+          }
+        },
+        "created": 99,
+        "error": null,
+        "latency": {
+          "max_ms": 1.274,
+          "mean_ms": 0.909,
+          "min_ms": 0.652,
+          "n": 99,
+          "p50_ms": 0.897,
+          "p95_ms": 1.058,
+          "p99_ms": 1.176,
+          "sum_seconds": 0.09
+        },
+        "requested": 99,
+        "seconds": null,
+        "total_seconds": 0.09,
+        "wall_seconds": 0.09
+      },
+      "final_peaks": {
+        "startup": {
+          "fds": 13,
+          "maps": 231,
+          "rss_kb": 63976,
+          "threads": 72,
+          "vmpeak_kb": 4297117076,
+          "vmsize_kb": 4297117076
+        },
+        "steady": null
+      },
+      "first_query": {
+        "default_seconds": 0.003189,
+        "error": null,
+        "last_graph": "g00099",
+        "last_graph_seconds": 0.00031,
+        "seconds": null,
+        "wall_seconds": 0.004
+      },
+      "graphs_target": 100,
+      "repeated_query": {
+        "error": null,
+        "graphs_spread_over": 100,
+        "latency": {
+          "max_ms": 0.322,
+          "mean_ms": 0.242,
+          "min_ms": 0.211,
+          "n": 1000,
+          "p50_ms": 0.24,
+          "p95_ms": 0.273,
+          "p99_ms": 0.295,
+          "sum_seconds": 0.242
+        },
+        "qps": 4123.9,
+        "queries": 1000,
+        "seconds": null,
+        "wall_seconds": 0.25
+      },
+      "startup": {
+        "bolt_port": 37209,
+        "error": null,
+        "http_port": 34707,
+        "rpc_port": 46879,
+        "seconds": 0.1133,
+        "wall_seconds": 0.114
+      },
+      "startup_metrics": {
+        "error": null,
+        "peaks": {
+          "fds": 13,
+          "maps": 231,
+          "rss_kb": 63976,
+          "threads": 72,
+          "vmpeak_kb": 4297117076,
+          "vmsize_kb": 4297117076
+        },
+        "sample": {
+          "fds": 25,
+          "maps": 238,
+          "rss_kb": 66688,
+          "t": 2226093.951553173,
+          "threads": 74,
+          "vmpeak_kb": 4297170332,
+          "vmsize_kb": 4297170332
+        },
+        "seconds": null,
+        "wall_seconds": 0.0
+      },
+      "throughput": {
+        "error": null,
+        "errors": 0,
+        "read_threads": 4,
+        "read_tps": 710.1,
+        "reads": 7101,
+        "seconds": 10.0,
+        "wall_seconds": 10.034,
+        "write_threads": 2,
+        "write_tps": 2065.5,
+        "writes": 20655
+      }
+    }
+  },
+  "started_at_utc": "2026-09-19T02:51:18Z"
+}

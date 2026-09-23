@@ -49,11 +49,14 @@ set(LGRAPH_CORE_SRC
         core/lgraph_date_time.cpp
         core/lightning_graph.cpp
         core/schema.cpp
+        core/series_encoding.cpp
+        core/series_store.cpp
         core/sync_file.cpp
         core/thread_id.cpp
         core/transaction.cpp
         core/vertex_index.cpp
         core/vector_index.cpp
+        core/version_info.cpp
         core/faiss_ivf_flat.cpp
         core/vsag_hnsw.cpp
         core/wal.cpp

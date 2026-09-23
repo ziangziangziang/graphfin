@@ -26,7 +26,20 @@ cmake .. -DCMAKE_BUILD_TYPE=Coverage -DBUILD_PROCEDURE=$WITH_PROCEDURE
 fi
 make -j2
 
-if [[ "$TEST" == "ut" ]]; then
+if [[ "$TEST" == "ha" ]]; then
+  # HA integration tests: build lgraph_server and run HA-specific pytest tests.
+  cd $WORKSPACE/build/output
+  cp ../../src/client/python/TuGraphClient/TuGraphClient.py .
+  cp ../../src/client/python/TuGraphClient/TuGraphRestClient.py .
+  cp -r ../../test/integration/* ./
+  # Run only HA tests, skip the rest.
+  # Phase0 and regular tests are often not needed for HA-focused CI runs.
+  pytest ./ -k "ha" -v --deselect test_ha_procedure.py \
+    --deselect test_ha_python_client.py \
+    --deselect test_ha_backup.py --deselect test_ha_import.py
+  cd $WORKSPACE
+  exit 0
+elif [[ "$TEST" == "ut" ]]; then
   # build tugraph db management
   #cd $WORKSPACE/deps/tugraph-db-management/
   #sh local_build.sh
@@ -51,7 +64,11 @@ if [[ "$TEST" == "ut" ]]; then
   cd $WORKSPACE
   bash ./ci/codecov.sh $WORKSPACE/build $WORKSPACE/testresult
   # Uploading report to CodeCov
-  bash <(curl -s https://codecov.io/bash) -f $WORKSPACE/testresult/coverage.info -t $CODECOV_TOKEN || echo "Codecov did not collect coverage reports"
+  if [[ -n "${CODECOV_TOKEN}" ]]; then
+    bash <(curl -s https://codecov.io/bash) -f $WORKSPACE/testresult/coverage.info -t $CODECOV_TOKEN || echo "Codecov did not collect coverage reports"
+  else
+    echo "CODECOV_TOKEN not set; skipping Codecov upload"
+  fi
   python3  ./ci/lcov_cobertura.py $WORKSPACE/testresult/coverage.info --output $WORKSPACE/testresult/coverage.xml --demangle
 else
   # build java client
@@ -80,7 +97,11 @@ else
   cp -r ../../learn/examples/* ./
   cp -r ../../demo/movie .
   if [[ "$WITH_PROCEDURE" == "OFF" ]]; then
-      rm -rf test_algo.py test_sampling.py test_train.py test_algo_v2.py
+      # Algorithm/procedure suites need BUILD_PROCEDURE=ON; the exclusion list
+      # lives in test/suites.json (procedure_off_exclusions). suites.py fails
+      # loudly on catalog errors so OFF can never miscount as a pass.
+      # shellcheck disable=SC2046
+      rm -f $(python3 ./test/suites.py --suite main-it --field procedure_off_exclusions)
   fi
   pytest ./
   # codecov
@@ -88,6 +109,10 @@ else
   mkdir testresult
   bash ./ci/codecov.sh $WORKSPACE/build $WORKSPACE/testresult
   # Uploading report to CodeCov
-  bash <(curl -s https://codecov.io/bash) -f $WORKSPACE/testresult/coverage.info -t $CODECOV_TOKEN || echo "Codecov did not collect coverage reports"
+  if [[ -n "${CODECOV_TOKEN}" ]]; then
+    bash <(curl -s https://codecov.io/bash) -f $WORKSPACE/testresult/coverage.info -t $CODECOV_TOKEN || echo "Codecov did not collect coverage reports"
+  else
+    echo "CODECOV_TOKEN not set; skipping Codecov upload"
+  fi
   python3  ./ci/lcov_cobertura.py $WORKSPACE/testresult/coverage.info --output $WORKSPACE/testresult/coverage.xml --demangle
 fi

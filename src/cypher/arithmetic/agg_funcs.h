@@ -224,8 +224,11 @@ class CollectAggCtx : public AggCtx {
                     auto ret = uset.emplace(args[i].constant.ToString());
                     if (!ret.second) continue;
                 }
-                if (args[i].IsArray()) {
-                    result.constant.array->emplace_back(args[i].constant.ToString());
+                if (args[i].constant.array != nullptr || args[i].constant.map != nullptr) {
+                    // Keep a collected list or map as a value. Flattening it with
+                    // ToString() here would defeat the result path, which now
+                    // carries nesting, and would make collect(list) return strings.
+                    result.constant.array->emplace_back(args[i].constant);
                 } else {
                     result.constant.array->emplace_back(args[i].constant.scalar);
                 }

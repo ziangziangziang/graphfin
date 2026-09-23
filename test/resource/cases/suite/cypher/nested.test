@@ -1,0 +1,12 @@
+# Nested values keep their types through the result path: a string that looks
+# like JSON stays a string, and empty containers stay [] and {} rather than
+# becoming null.
+RETURN ['[]', '{}'] AS xs;
+
+RETURN [1, {a:'b'}] AS nested;
+
+RETURN {a:1, b:'x'} AS m;
+
+RETURN [] AS e, {} AS o;
+
+RETURN [1, '[]', null] AS mixed;

@@ -17,6 +17,7 @@
 //
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <random>
 #include <stack>
 #include <string>
@@ -33,6 +34,7 @@
 #include "cypher/arithmetic/arithmetic_expression.h"
 #include "cypher/filter/filter.h"
 #include "db/galaxy.h"
+#include "tools/json.hpp"
 
 #define CHECK_NODE(e)                                                                      \
     do {                                                                                   \
@@ -55,6 +57,68 @@
 #define VALIDATE_IT(e) (e.node->ItRef() && e.node->PullVid() >= 0)
 
 #define VALIDATE_EIT(e) (e.relationship->ItRef() && e.relationship->ItRef()->IsValid())
+
+namespace cypher {
+namespace detail {
+
+/**
+ * Turns parsed JSON into a Cypher value. Used for function results that are
+ * text by construction but containers by contract - currently properties(),
+ * whose iterators dump an entity as JSON text. Numbers that fit INT64 stay
+ * integers; anything bigger becomes a double.
+ */
+inline cypher::FieldData JsonToCypherFieldData(const nlohmann::json &j) {
+    using json = nlohmann::json;
+    switch (j.type()) {
+    case json::value_t::object: {
+        cypher::FieldData::CYPHER_FIELD_DATA_MAP m;
+        for (auto it = j.begin(); it != j.end(); ++it) {
+            m.emplace(it.key(), JsonToCypherFieldData(it.value()));
+        }
+        return cypher::FieldData(std::move(m));
+    }
+    case json::value_t::array: {
+        cypher::FieldData::CYPHER_FIELD_DATA_LIST list;
+        for (const auto &v : j) list.emplace_back(JsonToCypherFieldData(v));
+        return cypher::FieldData(std::move(list));
+    }
+    case json::value_t::string:
+        return cypher::FieldData(lgraph::FieldData(j.get<std::string>()));
+    case json::value_t::boolean:
+        return cypher::FieldData(lgraph::FieldData(j.get<bool>()));
+    case json::value_t::number_integer:
+        return cypher::FieldData(lgraph::FieldData(j.get<int64_t>()));
+    case json::value_t::number_unsigned: {
+        const uint64_t u = j.get<uint64_t>();
+        if (u <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+            return cypher::FieldData(lgraph::FieldData(static_cast<int64_t>(u)));
+        }
+        return cypher::FieldData(lgraph::FieldData(static_cast<double>(u)));
+    }
+    case json::value_t::number_float:
+        return cypher::FieldData(lgraph::FieldData(j.get<double>()));
+    case json::value_t::null:
+    case json::value_t::discarded:
+    default:
+        return cypher::FieldData(lgraph::FieldData());
+    }
+}
+
+/**
+ * Parses an entity dump into the map it describes. Text that is not valid
+ * JSON - a DATETIME renders bare and unquoted, a missing value as NUL - stays
+ * a string, exactly as the old result path left it.
+ */
+inline cypher::FieldData PropertiesTextToFieldData(const std::string &text) {
+    const nlohmann::json j = nlohmann::json::parse(text, nullptr, false);
+    if (j.is_discarded() || !j.is_object()) {
+        return cypher::FieldData(lgraph::FieldData(text));
+    }
+    return JsonToCypherFieldData(j);
+}
+
+}  // namespace detail
+}  // namespace cypher
 
 namespace cypher {
 
@@ -138,11 +202,14 @@ cypher::FieldData BuiltinFunction::Properties(RTContext *ctx, const Record &reco
     auto operand = args[1];
     auto r = operand.Evaluate(ctx, record);
     lgraph::FieldData res;
+    bool from_text = false;
     if (r.type == Entry::NODE && r.node && VALIDATE_IT(r)) {
         if (!r.node->IsValidAfterMaterialize(ctx)) CYPHER_INTL_ERR();
         res = lgraph::FieldData(r.node->ItRef()->Properties());
+        from_text = true;
     } else if (r.type == Entry::RELATIONSHIP && r.relationship && VALIDATE_EIT(r)) {
         res = lgraph::FieldData(r.relationship->ItRef()->Properties());
+        from_text = true;
     } else if (r.type == Entry::CONSTANT && r.constant.array) {
         auto ret = cypher::FieldData::Array(0);
         lgraph::VIter vit;
@@ -153,7 +220,7 @@ cypher::FieldData BuiltinFunction::Properties(RTContext *ctx, const Record &reco
             if (s.rfind("V[", 0) == 0) {
                 auto vid = static_cast<int64_t>(std::stoll(s.substr(2, s.size() - 3)));
                 vit.Initialize(ctx->txn_->GetTxn().get(), lgraph::VIter::VERTEX_ITER, vid);
-                ret.array->emplace_back(lgraph::FieldData(vit.Properties()));
+                ret.array->emplace_back(detail::PropertiesTextToFieldData(vit.Properties()));
             } else if (s.rfind("E[", 0) == 0) {
                 auto euidVec = fma_common::Split(s.substr(2, s.size() - 3), "_");
                 euid.src = static_cast<int64_t>(std::stoll(euidVec[0]));
@@ -161,7 +228,7 @@ cypher::FieldData BuiltinFunction::Properties(RTContext *ctx, const Record &reco
                 euid.lid = static_cast<uint16_t>(std::stoll(euidVec[2]));
                 euid.eid = static_cast<int64_t>(std::stoll(euidVec[3]));
                 eit.Initialize(ctx->txn_->GetTxn().get(), euid);
-                ret.array->emplace_back(lgraph::FieldData(eit.Properties()));
+                ret.array->emplace_back(detail::PropertiesTextToFieldData(eit.Properties()));
             } else {
                 throw lgraph::CypherException("Invalid argument of " + std::string(__func__));
             }
@@ -170,7 +237,11 @@ cypher::FieldData BuiltinFunction::Properties(RTContext *ctx, const Record &reco
     } else {
         throw lgraph::CypherException("Invalid argument of " + std::string(__func__));
     }
-    return cypher::FieldData(res);
+    // The iterator dumps an entity as JSON text, but the value's type is a map:
+    // parse it here, where the provenance is known, because the generic result
+    // path no longer parses strings that look like JSON.
+    return from_text ? detail::PropertiesTextToFieldData(res.AsString())
+                     : cypher::FieldData(res);
 }
 
 cypher::FieldData BuiltinFunction::Head(RTContext *ctx, const Record &record,
@@ -1433,6 +1504,373 @@ cypher::FieldData BuiltinFunction::Bin(RTContext *ctx, const Record &record,
     if (!r.IsString()) CYPHER_ARGUMENT_ERROR();
     auto bin = ::lgraph::FieldData::BlobFromBase64(r.constant.scalar.AsString());
     return cypher::FieldData(bin);
+}
+
+namespace {
+
+/** Reads a series.* timestamp argument: a DATETIME or INT64 microseconds. */
+bool SeriesArgToMicros(const cypher::Entry &e, int64_t *micros) {
+    if (e.type != cypher::Entry::CONSTANT) return false;
+    if (e.constant.scalar.IsDateTime()) {
+        *micros = e.constant.scalar.AsDateTime().MicroSecondsSinceEpoch();
+        return true;
+    }
+    if (e.constant.IsInteger()) {
+        *micros = e.constant.scalar.AsInt64();
+        return true;
+    }
+    return false;
+}
+
+/** What a series.* call reads: the element, and the field's measure names.
+ *
+ * The names come from the schema, not the buckets - and resolving them here
+ * reads no buckets at all, so a point lookup pays only for the buckets it
+ * returns instead of the whole history. The summary read (`RETURN n.prices`)
+ * is the one place that scans, via ProbeVertexSeries/ProbeEdgeSeries. */
+struct SeriesTarget {
+    bool is_edge = false;
+    lgraph::VertexId vid = -1;
+    lgraph::EdgeUid euid;
+    std::vector<lgraph::series::MeasureRef> measures;
+};
+
+/**
+ * Evaluates the (element, field) prologue every series.* function shares.
+ *
+ * Asking the schema also establishes that the field really is a series, which
+ * turns a typo into a clear error instead of an empty result.
+ */
+void ResolveSeriesTarget(RTContext *ctx, const Record &record,
+                         const std::vector<ArithExprNode> &args, SeriesTarget *target,
+                         std::string *field) {
+    auto elem = args[1].Evaluate(ctx, record);
+    auto f = args[2].Evaluate(ctx, record);
+    if (!f.IsString()) {
+        THROW_CODE(InputError, "series.* expects the field name as a string");
+    }
+    *field = f.constant.scalar.AsString();
+    uint16_t field_id = 0;
+    std::vector<lgraph::series::MeasureColumn> columns;
+    lgraph::series::BucketPolicy policy;
+    if (elem.IsRelationship()) {
+        auto eit = elem.relationship->ItRef();
+        if (!eit || !eit->IsValid()) {
+            THROW_CODE(InputError, "series.* expects a live edge as its first argument");
+        }
+        target->is_edge = true;
+        target->euid = eit->GetUid();
+        if (!ctx->txn_->GetTxn()->ResolveEdgeSeriesSchema(target->euid, *field, &field_id,
+                                                          &columns, &policy,
+                                                          &target->measures)) {
+            THROW_CODE(InputError, "Edge {} has no time series field [{}]",
+                       cypher::_detail::EdgeUid2String(target->euid), *field);
+        }
+        return;
+    }
+    if (!elem.IsNode() || !VALIDATE_IT(elem)) {
+        THROW_CODE(InputError, "series.* expects a vertex or an edge as its first argument");
+    }
+    target->vid = elem.node->PullVid();
+    if (!ctx->txn_->GetTxn()->ResolveVertexSeriesSchema(target->vid, *field, &field_id,
+                                                        &columns, &policy,
+                                                        &target->measures)) {
+        THROW_CODE(InputError, "Vertex {} has no time series field [{}]", target->vid, *field);
+    }
+}
+
+/** Store reads dispatched on the target's element kind. */
+std::string SeriesTargetDesc(const SeriesTarget &target) {
+    if (target.is_edge) {
+        return "edge " + cypher::_detail::EdgeUid2String(target.euid);
+    }
+    return "vertex " + std::to_string(target.vid);
+}
+bool TxnSeriesRange(lgraph::Transaction &txn, const SeriesTarget &target, const std::string &field,
+                    int64_t t0, int64_t t1, std::vector<lgraph::series::Point> *points) {
+    if (target.is_edge) return txn.GetEdgeSeriesRange(target.euid, field, t0, t1, points);
+    return txn.GetVertexSeriesRange(target.vid, field, t0, t1, points);
+}
+
+bool TxnSeriesCount(lgraph::Transaction &txn, const SeriesTarget &target, const std::string &field,
+                    int64_t t0, int64_t t1, size_t *count) {
+    if (target.is_edge) return txn.GetEdgeSeriesCount(target.euid, field, t0, t1, count);
+    return txn.GetVertexSeriesCount(target.vid, field, t0, t1, count);
+}
+
+bool TxnSeriesLatest(lgraph::Transaction &txn, const SeriesTarget &target,
+                     const std::string &field, lgraph::series::Point *point) {
+    if (target.is_edge) return txn.GetEdgeSeriesLatest(target.euid, field, point);
+    return txn.GetVertexSeriesLatest(target.vid, field, point);
+}
+
+bool TxnSeriesEarliest(lgraph::Transaction &txn, const SeriesTarget &target,
+                       const std::string &field, lgraph::series::Point *point) {
+    if (target.is_edge) return txn.GetEdgeSeriesEarliest(target.euid, field, point);
+    return txn.GetVertexSeriesEarliest(target.vid, field, point);
+}
+
+/** One point as a map: `ts` plus one entry per measure, absent ones as null. */
+cypher::FieldData PointToMap(const lgraph::series::Point &p,
+                             const std::vector<lgraph::series::MeasureRef> &measures) {
+    cypher::FieldData::CYPHER_FIELD_DATA_MAP m;
+    m.emplace("ts", cypher::FieldData(lgraph::FieldData(lgraph::DateTime(p.ts))));
+    for (size_t i = 0; i < measures.size() && i < p.values.size(); ++i) {
+        const auto &v = p.values[i];
+        if (v.is_null) {
+            m.emplace(measures[i].name, cypher::FieldData(lgraph::FieldData()));
+        } else if (measures[i].type == lgraph::series::MeasureType::DOUBLE) {
+            m.emplace(measures[i].name, cypher::FieldData(lgraph::FieldData(v.d)));
+        } else {
+            m.emplace(measures[i].name, cypher::FieldData(lgraph::FieldData(v.i)));
+        }
+    }
+    return cypher::FieldData(std::move(m));
+}
+
+/** Reads [t0, t1] and hands it back as a list of points, oldest first. */
+cypher::FieldData SeriesPointsAsList(RTContext *ctx, const SeriesTarget &target,
+                                     const std::string &field, int64_t t0, int64_t t1) {
+    std::vector<lgraph::series::Point> points;
+    if (!TxnSeriesRange(*ctx->txn_->GetTxn(), target, field, t0, t1, &points)) {
+        THROW_CODE(InternalError, "Corrupt series in field [{}] of {}", field,
+                       SeriesTargetDesc(target));
+    }
+    cypher::FieldData::CYPHER_FIELD_DATA_LIST list;
+    list.reserve(points.size());
+    for (const auto &p : points) {
+        list.emplace_back(PointToMap(p, target.measures));
+    }
+    return cypher::FieldData(std::move(list));
+}
+
+enum class SeriesAgg { MEAN, MIN, MAX, SUM };
+
+/**
+ * series.mean/min/max/sum: one measure of one series over a window.
+ *
+ * This walks the points rather than asking the store to aggregate, because the
+ * store has no aggregate entry point yet. Correct but reads what a store-level
+ * aggregate would not have to; noted as a follow-up, not a semantic choice.
+ */
+cypher::FieldData SeriesAggregate(RTContext *ctx, const Record &record,
+                                  const std::vector<ArithExprNode> &args, SeriesAgg agg) {
+    if (args.size() != 4 && args.size() != 6) CYPHER_ARGUMENT_ERROR();
+    SeriesTarget target;
+    std::string field;
+    ResolveSeriesTarget(ctx, record, args, &target, &field);
+
+    auto mv = args[3].Evaluate(ctx, record);
+    if (!mv.IsString()) {
+        THROW_CODE(InputError, "series mean/min/max/sum expects the measure name as a string");
+    }
+    const std::string measure = mv.constant.scalar.AsString();
+    size_t idx = target.measures.size();
+    for (size_t i = 0; i < target.measures.size(); ++i) {
+        if (target.measures[i].name == measure) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx == target.measures.size()) {
+        THROW_CODE(InputError, "Series field [{}] has no measure [{}]", field, measure);
+    }
+
+    int64_t t0 = lgraph::series::kMinTs;
+    int64_t t1 = lgraph::series::kMaxTs;
+    if (args.size() == 6) {
+        if (!SeriesArgToMicros(args[4].Evaluate(ctx, record), &t0) ||
+            !SeriesArgToMicros(args[5].Evaluate(ctx, record), &t1)) {
+            THROW_CODE(InputError, "series mean/min/max/sum expects DATETIME or INT64 bounds");
+        }
+    }
+
+    std::vector<lgraph::series::Point> points;
+    if (!TxnSeriesRange(*ctx->txn_->GetTxn(), target, field, t0, t1, &points)) {
+        THROW_CODE(InternalError, "Corrupt series in field [{}] of {}", field,
+                       SeriesTargetDesc(target));
+    }
+
+    const bool is_double = target.measures[idx].type == lgraph::series::MeasureType::DOUBLE;
+    // Each aggregate accumulates only what it needs: min/max never touch a
+    // sum, so a series whose values overflow an INT64 sum still has a
+    // well-defined min, max and (floating-point) mean. The integer sum is
+    // overflow-checked and refuses rather than wrapping; the integer mean
+    // accumulates in a double for the same reason. Double sums keep IEEE
+    // semantics (overflow becomes inf).
+    size_t seen = 0;
+    double dsum = 0;
+    double dmin = 0;
+    double dmax = 0;
+    double dmean = 0;
+    int64_t isum = 0;
+    int64_t imin = 0;
+    int64_t imax = 0;
+    for (const auto &p : points) {
+        if (idx >= p.values.size()) continue;
+        const auto &v = p.values[idx];
+        if (v.is_null) continue;  // a null measure does not take part, like Cypher's aggregates
+        if (is_double) {
+            if (seen == 0) {
+                dmin = dmax = v.d;
+            } else {
+                dmin = std::min(dmin, v.d);
+                dmax = std::max(dmax, v.d);
+            }
+            if (agg == SeriesAgg::SUM || agg == SeriesAgg::MEAN) dsum += v.d;
+        } else {
+            if (seen == 0) {
+                imin = imax = v.i;
+            } else {
+                imin = std::min(imin, v.i);
+                imax = std::max(imax, v.i);
+            }
+            if (agg == SeriesAgg::SUM) {
+                if (__builtin_add_overflow(isum, v.i, &isum)) {
+                    THROW_CODE(InputError,
+                               "Series sum of measure [{}] overflows INT64;"
+                               " narrow the window or aggregate fewer points",
+                               measure);
+                }
+            } else if (agg == SeriesAgg::MEAN) {
+                dmean += static_cast<double>(v.i);
+            }
+        }
+        ++seen;
+    }
+
+    if (agg == SeriesAgg::SUM) {
+        // Empty window: 0, matching Cypher's own sum().
+        return is_double ? cypher::FieldData(lgraph::FieldData(dsum))
+                         : cypher::FieldData(lgraph::FieldData(isum));
+    }
+    if (seen == 0) {
+        // Empty window: null, matching Cypher's min/max/avg.
+        return cypher::FieldData(lgraph::FieldData());
+    }
+    switch (agg) {
+    case SeriesAgg::MEAN:
+        // Always a double: the mean of integers is fractional.
+        return cypher::FieldData(lgraph::FieldData(
+            is_double ? dsum / static_cast<double>(seen) : dmean / static_cast<double>(seen)));
+    case SeriesAgg::MIN:
+        return is_double ? cypher::FieldData(lgraph::FieldData(dmin))
+                         : cypher::FieldData(lgraph::FieldData(imin));
+    case SeriesAgg::MAX:
+        return is_double ? cypher::FieldData(lgraph::FieldData(dmax))
+                         : cypher::FieldData(lgraph::FieldData(imax));
+    case SeriesAgg::SUM:
+        break;
+    }
+    return cypher::FieldData();
+}
+
+}  // namespace
+
+cypher::FieldData BuiltinFunction::SeriesRange(RTContext *ctx, const Record &record,
+                                               const std::vector<ArithExprNode> &args) {
+    if (args.size() != 5) CYPHER_ARGUMENT_ERROR();
+    SeriesTarget target;
+    std::string field;
+    ResolveSeriesTarget(ctx, record, args, &target, &field);
+    int64_t t0 = 0;
+    int64_t t1 = 0;
+    if (!SeriesArgToMicros(args[3].Evaluate(ctx, record), &t0) ||
+        !SeriesArgToMicros(args[4].Evaluate(ctx, record), &t1)) {
+        THROW_CODE(InputError, "series.range expects two DATETIME or INT64 bounds");
+    }
+    return SeriesPointsAsList(ctx, target, field, t0, t1);
+}
+
+cypher::FieldData BuiltinFunction::SeriesAt(RTContext *ctx, const Record &record,
+                                            const std::vector<ArithExprNode> &args) {
+    if (args.size() != 4) CYPHER_ARGUMENT_ERROR();
+    SeriesTarget target;
+    std::string field;
+    ResolveSeriesTarget(ctx, record, args, &target, &field);
+    int64_t t = 0;
+    if (!SeriesArgToMicros(args[3].Evaluate(ctx, record), &t)) {
+        THROW_CODE(InputError, "series.at expects a DATETIME or INT64 timestamp");
+    }
+    std::vector<lgraph::series::Point> points;
+    if (!TxnSeriesRange(*ctx->txn_->GetTxn(), target, field, t, t, &points)) {
+        THROW_CODE(InternalError, "Corrupt series in field [{}] of {}", field,
+                       SeriesTargetDesc(target));
+    }
+    if (points.empty()) return cypher::FieldData(lgraph::FieldData());  // no such point
+    return PointToMap(points.front(), target.measures);
+}
+
+cypher::FieldData BuiltinFunction::SeriesLatest(RTContext *ctx, const Record &record,
+                                                const std::vector<ArithExprNode> &args) {
+    if (args.size() != 3) CYPHER_ARGUMENT_ERROR();
+    SeriesTarget target;
+    std::string field;
+    ResolveSeriesTarget(ctx, record, args, &target, &field);
+    lgraph::series::Point p;
+    if (!TxnSeriesLatest(*ctx->txn_->GetTxn(), target, field, &p)) {
+        THROW_CODE(InternalError, "Corrupt series in field [{}] of {}", field,
+                       SeriesTargetDesc(target));
+    }
+    if (p.values.empty()) return cypher::FieldData(lgraph::FieldData());  // empty series
+    return PointToMap(p, target.measures);
+}
+
+cypher::FieldData BuiltinFunction::SeriesEarliest(RTContext *ctx, const Record &record,
+                                                  const std::vector<ArithExprNode> &args) {
+    if (args.size() != 3) CYPHER_ARGUMENT_ERROR();
+    SeriesTarget target;
+    std::string field;
+    ResolveSeriesTarget(ctx, record, args, &target, &field);
+    lgraph::series::Point p;
+    if (!TxnSeriesEarliest(*ctx->txn_->GetTxn(), target, field, &p)) {
+        THROW_CODE(InternalError, "Corrupt series in field [{}] of {}", field,
+                       SeriesTargetDesc(target));
+    }
+    if (p.values.empty()) return cypher::FieldData(lgraph::FieldData());  // empty series
+    return PointToMap(p, target.measures);
+}
+
+cypher::FieldData BuiltinFunction::SeriesCount(RTContext *ctx, const Record &record,
+                                               const std::vector<ArithExprNode> &args) {
+    if (args.size() != 3 && args.size() != 5) CYPHER_ARGUMENT_ERROR();
+    SeriesTarget target;
+    std::string field;
+    ResolveSeriesTarget(ctx, record, args, &target, &field);
+    int64_t t0 = lgraph::series::kMinTs;
+    int64_t t1 = lgraph::series::kMaxTs;
+    if (args.size() == 5) {
+        if (!SeriesArgToMicros(args[3].Evaluate(ctx, record), &t0) ||
+            !SeriesArgToMicros(args[4].Evaluate(ctx, record), &t1)) {
+            THROW_CODE(InputError, "series.count expects DATETIME or INT64 bounds");
+        }
+    }
+    size_t count = 0;
+    if (!TxnSeriesCount(*ctx->txn_->GetTxn(), target, field, t0, t1, &count)) {
+        THROW_CODE(InternalError, "Corrupt series in field [{}] of {}", field,
+                       SeriesTargetDesc(target));
+    }
+    return cypher::FieldData(lgraph::FieldData(static_cast<int64_t>(count)));
+}
+
+cypher::FieldData BuiltinFunction::SeriesMean(RTContext *ctx, const Record &record,
+                                              const std::vector<ArithExprNode> &args) {
+    return SeriesAggregate(ctx, record, args, SeriesAgg::MEAN);
+}
+
+cypher::FieldData BuiltinFunction::SeriesMin(RTContext *ctx, const Record &record,
+                                             const std::vector<ArithExprNode> &args) {
+    return SeriesAggregate(ctx, record, args, SeriesAgg::MIN);
+}
+
+cypher::FieldData BuiltinFunction::SeriesMax(RTContext *ctx, const Record &record,
+                                             const std::vector<ArithExprNode> &args) {
+    return SeriesAggregate(ctx, record, args, SeriesAgg::MAX);
+}
+
+cypher::FieldData BuiltinFunction::SeriesSum(RTContext *ctx, const Record &record,
+                                             const std::vector<ArithExprNode> &args) {
+    return SeriesAggregate(ctx, record, args, SeriesAgg::SUM);
 }
 
 cypher::FieldData BuiltinFunction::NativeGetEdgeField(RTContext *ctx, const Record &record,

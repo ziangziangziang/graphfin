@@ -162,8 +162,13 @@ struct Entry {
         }
     }
 
-    /* Get field value of node or relationship. */
-    lgraph::FieldData GetEntityField(RTContext *ctx, const std::string &fd) const;
+    /* Get field value of node or relationship.
+     *
+     * Returns a cypher value rather than a scalar one because a series field
+     * has no bytes in the record to return: what it reports instead is a
+     * summary map of counters and ends. Everything else is still a scalar, as
+     * before. */
+    cypher::FieldData GetEntityField(RTContext *ctx, const std::string &fd) const;
 
     bool CheckEntityEfficient(RTContext *ctx) const;
 

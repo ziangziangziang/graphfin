@@ -29,7 +29,7 @@ MATCH (n:Person) RETURN varianceP(n.age);
 MATCH (n:Person) RETURN collect(n.age) /* 13,33,44 */;
 [{"collect(n.age)":[13,33,44]}]
 MATCH (n:Person) RETURN collect([n.name,n.age]) /* [[A, 13], [B, 33], [C, 44], [D, null], [E, null]] */;
-[{"collect([n.name,n.age])":"[[A,13],[B,33],[C,44],[D,NUL],[E,NUL]]"}]
+[{"collect([n.name,n.age])":[["A",13],["B",33],["C",44],["D",null],["E",null]]}]
 MATCH (n {name: 'A'})-[]->(x) RETURN label(n), n.age, count(*) /* Person,13,3.000000 */;
 [{"count(*)":3,"label(n)":"Person","n.age":13}]
 MATCH (n {name: 'A'})-[]->(x) RETURN label(n), n, count(*) /* Person,V[0],3.000000 */;

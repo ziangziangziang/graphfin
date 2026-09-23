@@ -46,6 +46,32 @@ else (ENABLE_ASAN)
     message("Address Sanitizer is disabled.")
 endif (ENABLE_ASAN)
 
+option(LGRAPH_COMPACT_REFCOUNT "Use compact 8-byte per-thread reference slots instead of cache-line-padded slots; cuts per-open-graph refcount memory ~8x (60 KiB -> 7.5 KiB) at the cost of false-sharing performance. Intended for memory-constrained, many-graph deployments." OFF)
+if (LGRAPH_COMPACT_REFCOUNT)
+    message("Compact refcounts are enabled (memory-optimized build).")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DLGRAPH_COMPACT_REFCOUNT=1")
+else (LGRAPH_COMPACT_REFCOUNT)
+    message("Compact refcounts are disabled.")
+endif (LGRAPH_COMPACT_REFCOUNT)
+
+option(ENABLE_TSAN "Enable Thread Sanitizer." OFF)
+if (ENABLE_TSAN)
+    message("Thread Sanitizer is enabled.")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=thread -fno-omit-frame-pointer")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=thread")
+else (ENABLE_TSAN)
+    message("Thread Sanitizer is disabled.")
+endif (ENABLE_TSAN)
+
+option(ENABLE_UBSAN "Enable UndefinedBehavior Sanitizer." OFF)
+if (ENABLE_UBSAN)
+    message("UndefinedBehavior Sanitizer is enabled.")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=undefined -fno-omit-frame-pointer")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=undefined")
+else (ENABLE_UBSAN)
+    message("UndefinedBehavior Sanitizer is disabled.")
+endif (ENABLE_UBSAN)
+
 option(ENABLE_PYTHON_PLUGIN "Enable Python plugin." ON)
 if (ENABLE_ASAN)
     set(ENABLE_PYTHON_PLUGIN 0)
@@ -142,8 +168,20 @@ else ()
     message(WARNING "You are using an unsupported compiler! Compilation has only been tested with Clang and GCC.")
 endif ()
 
-# check OpenMP
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fopenmp")
+# check OpenMP (disabled under TSan: libgomp interposes the pthread symbols
+# ThreadSanitizer must intercept, and the runtime aborts at init with
+# "failed to intercept pthread_mutex_trylock". Series code uses no OpenMP
+# pragmas, so a TSan build without it still exercises the same paths.)
+if (ENABLE_TSAN)
+    message("OpenMP is disabled (Thread Sanitizer build).")
+    # -pthread at link only: compile flags stay as built (no source depends on
+    # _REENTRANT), and -fopenmp's implicit pthread linkage is replaced.
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unknown-pragmas")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pthread")
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -pthread")
+else (ENABLE_TSAN)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fopenmp")
+endif (ENABLE_TSAN)
 
 # compiling rocksdb needs c++17
 # check c++17

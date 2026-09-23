@@ -26,7 +26,9 @@
 #include "server/lgraph_server.h"
 #include "core/audit_logger.h"
 #include "core/global_config.h"
+#include "core/version_info.h"
 #include "core/full_text_index.h"
+#include "core/thread_id.h"  // LGRAPH_MAX_THREADS for the memory estimate
 #include "restful/server/rest_server.h"
 #include "server/state_machine.h"
 #include "server/ha_state_machine.h"
@@ -117,6 +119,24 @@ int LGraphServer::Start() {
     // assign AccessControllerDB enable_plugin
     AccessControlledDB::SetEnablePlugin(config_->enable_plugin);
     // adjust config
+    // Gap 1 prevention: Bolt with legacy HA requires Bolt HA to avoid
+    // silent replica divergence (docs/architecture/09-write-path-audit.md).
+    if (config_->bolt_port > 0 && config_->enable_ha && config_->bolt_raft_port == 0) {
+        LOG_ERROR() << "Bolt port requires --bolt_raft_port when running in HA mode. "
+                    << "Without Bolt Raft, Bolt writes are not replicated and "
+                    << "replica state silently diverges.";
+        return -1;
+    }
+    // Mutation-ordering contract: a deployment must select exactly ONE write
+    // replication path. Enabling legacy HA and Bolt HA together gives two
+    // independent logs with no defined relative order across conflicting
+    // writes (see docs/architecture/09-write-path-audit.md §6).
+    if (config_->enable_ha && config_->bolt_raft_port > 0) {
+        LOG_WARN() << "Both legacy HA (--enable_ha) and Bolt HA (--bolt_raft_port) are "
+                   << "enabled. Each write surface must feed exactly one authoritative "
+                   << "mutation order per shard; mixed write paths can apply conflicting "
+                   << "operations inconsistently. See docs/architecture/09-write-path-audit.md.";
+    }
     if (config_->enable_ha && config_->ha_log_dir.empty()) {
 #if LGRAPH_SHARE_DIR
         LOG_ERROR() << "HA is enabled, but ha_log_dir is not specified.";
@@ -166,17 +186,12 @@ int LGraphServer::Start() {
         }
 
         // print welcome message
-        std::string version;
-        version.append(std::to_string(lgraph::_detail::VER_MAJOR))
-            .append(".")
-            .append(std::to_string(lgraph::_detail::VER_MINOR))
-            .append(".")
-            .append(std::to_string(lgraph::_detail::VER_PATCH));
+        const std::string version = lgraph::version::ShortVersion();
         std::ostringstream header;
         header << "\n"
                << "**********************************************************************"
                << "\n"
-               << "*                  TuGraph Graph Database v" << version
+                << "*                 GraphFin Graph Database v" << version
                << std::string(26 - version.size(), ' ') << "*"
                << "\n"
                << "*                                                                    *"
@@ -190,6 +205,35 @@ int LGraphServer::Start() {
                << "Server is configured with the following parameters:\n"
                << config_->FormatAsString();
         LOG_INFO() << header.str();
+        // Memory footprint estimate for the open-graph cache, so operators can
+        // see the cost of max_open_graphs / lmdb_max_dbs before it bites.
+        // See docs/architecture/13-memory-footprint.md.
+        {
+#ifdef LGRAPH_COMPACT_REFCOUNT
+            const size_t ref_slot = sizeof(uint64_t);
+            const char* ref_mode = "compact";
+#else
+            const size_t ref_slot = 64;  // cache-line padded slot
+            const char* ref_mode = "padded";
+#endif
+            // ~2 RefCountedObj per open graph (LightningGraph + schema).
+            const size_t refcount_per_open =
+                2 * static_cast<size_t>(lgraph::LGRAPH_MAX_THREADS) * ref_slot;
+            // LMDB per-env calloc of me_dbxs/me_dbflags/me_dbiseqs, sized by maxdbs.
+            const size_t env_per_open = static_cast<size_t>(config_->lmdb_max_dbs) * 54;
+            const size_t open_graphs = static_cast<size_t>(config_->max_open_graphs);
+            const size_t est_mib =
+                (open_graphs * (refcount_per_open + env_per_open)) >> 20;
+            LOG_INFO() << FMA_FMT(
+                "Open-graph cache estimate: {} graphs x ({} B refcount[{}] + {} B env) = {} MiB",
+                open_graphs, refcount_per_open, ref_mode, env_per_open, est_mib);
+            if (est_mib >= 4096) {
+                LOG_WARN() << "Open-graph cache estimate is " << est_mib << " MiB. Lower "
+                           << "--max_open_graphs and/or --lmdb_max_dbs, or build with "
+                           << "-DLGRAPH_COMPACT_REFCOUNT=1 "
+                           << "(see docs/architecture/13-memory-footprint.md).";
+            }
+        }
         struct rlimit rlim{};
         getrlimit(RLIMIT_CORE, &rlim);
         LOG_INFO() << FMA_FMT("Core dump file limit size, soft limit: {}, hard limit: {}",

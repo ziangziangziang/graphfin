@@ -115,6 +115,14 @@ class OpCreate : public OpBase {
     }
 
     void CreateVE(RTContext *ctx) {
+        // Per-record state: CREATE must run once per input record (e.g.
+        // UNWIND ... CREATE), not only for the first one. Reset the
+        // created-node flags before this record so every record creates its
+        // own vertices/edges; the flags still dedupe shared nodes *within*
+        // a single record (e.g. (a)-[:R]->(b), (a)-[:R2]->(c)).
+        for (auto &node : pattern_graph_->GetNodes()) {
+            if (node.derivation_ == Node::CREATED) node.Visited() = false;
+        }
         for (auto &pattern : create_data_) {
             for (auto &pattern_part : pattern) {
                 auto pp_variable = std::get<0>(pattern_part);

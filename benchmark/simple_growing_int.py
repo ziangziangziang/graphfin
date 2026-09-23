@@ -43,12 +43,10 @@ def read_neighbour(no):
                 eit.Next()
             ret = len(ids)
             break
-        except Exception, e:
-            print
-            e
+        except Exception as e:
+            print(e)
     if not ok:
-        print
-        "vertex(" + no + ") not found."
+        print("vertex(" + no + ") not found.")
     txn.Abort()
     return ret
 
@@ -102,14 +100,12 @@ class BenchmarkLightningGraph:
                 else:
                     ok = False
                 break
-            except Exception, e:
-                print
-                e
+            except Exception as e:
+                print(e)
         if ok:
             eid = txn.AddEdge(vid_from, vid_to, "knows", [], [])
         else:
-            print
-            "insert of edge(" + no_from + ", " + no_to + ") faild."
+            print("insert of edge(" + no_from + ", " + no_to + ") faild.")
         txn.Commit()
 
     @__clock
@@ -164,14 +160,12 @@ class BenchmarkLightningGraph:
                         else:
                             ok = False
                         break
-                    except Exception, e:
-                        print
-                        e
+                    except Exception as e:
+                        print(e)
                 if ok:
                     eid = txn.AddEdge(vid_from, vid_to, "knows", [], [])
                 else:
-                    print
-                    "insert of edge(" + no_from + ", " + no_to + ") faild."
+                    print("insert of edge(" + no_from + ", " + no_to + ") faild.")
             txn.Commit()
         self.__clock_num = count
 

@@ -46,11 +46,14 @@ set(LGRAPH_CORE_SRC
         core/lgraph_spatial.cpp
         core/lightning_graph.cpp
         core/schema.cpp
+        core/series_encoding.cpp
+        core/series_store.cpp
         core/sync_file.cpp
         core/thread_id.cpp
         core/transaction.cpp
         core/vertex_index.cpp
         core/vector_index.cpp
+        core/version_info.cpp
         core/faiss_ivf_flat.cpp
         core/vsag_hnsw.cpp
         core/wal.cpp
@@ -64,6 +67,14 @@ set(LGRAPH_DB_SRC
         db/galaxy.cpp
         db/graph_manager.cpp
         db/token_manager.cpp)
+
+set(LGRAPH_CLUSTER_SRC
+        cluster/cluster_meta_store.cpp
+        cluster/shard_manager.cpp
+        cluster/router.cpp
+        cluster/cluster_control.cpp
+        cluster/migration_manager.cpp
+        cluster/request_router.cpp)
 
 set(LGRAPH_API_SRC
         lgraph_api/c.cpp
@@ -89,6 +100,7 @@ add_library(${TARGET_LGRAPH} SHARED
         ${LGRAPH_API_SRC}
         ${LGRAPH_CORE_SRC}
         ${LGRAPH_DB_SRC}
+        ${LGRAPH_CLUSTER_SRC}
         ${LGRAPH_ALGO_SRC}
 
         plugin/cpp_plugin.cpp

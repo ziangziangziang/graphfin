@@ -16,6 +16,7 @@
 #include "core/audit_logger.h"
 #include "core/defs.h"
 #include "core/killable_rw_lock.h"
+#include "core/version_info.h"
 #include "db/galaxy.h"
 #include "db/token_manager.h"
 #include "tools/lgraph_log.h"
@@ -69,8 +70,45 @@ lgraph::Galaxy::Galaxy(const lgraph::Galaxy::Config& config, bool create_if_not_
 }
 
 lgraph::Galaxy::~Galaxy() {
+    // Stop the idle-eviction task and wait for any in-flight run before the
+    // manager is destroyed: without this, the process-global scheduler can
+    // fire the eviction callback into freed memory after ~Galaxy returns
+    // (observed as a SIGSEGV in GraphManager::EvictIdleGraphs).
+    StopEvictionTask();
     // make sure all graphs are closed, so that they are persisted if necessary
     graphs_->CloseAllGraphs();
+}
+
+void lgraph::Galaxy::StopEvictionTask() {
+    if (evict_task_) {
+        evict_task_->Cancel();
+        evict_task_ = nullptr;
+        // The recurring task copies its function and runs it outside the task
+        // list lock, so Cancel() alone cannot stop an in-flight run. Holding
+        // graphs_lock_ write here is the drain barrier: an in-flight
+        // EvictIdleGraphsTick holds graphs_lock_ read, so acquiring write
+        // blocks until it finishes. After Cancel, no new run is scheduled.
+        AutoWriteLock l(graphs_lock_, GetMyThreadId());
+    }
+}
+
+fma_common::TimedTaskScheduler::TaskPtr lgraph::Galaxy::StartEvictionTask() {
+    auto& scheduler = fma_common::TimedTaskScheduler::GetInstance();
+    int period_s = global_config_->graph_idle_timeout_s > 0
+                       ? std::max(global_config_->graph_idle_timeout_s / 2, 5)
+                       : 5;
+    evict_task_ = scheduler.ScheduleReccurringTask(
+        period_s * 1000, [this](fma_common::TimedTask*) { EvictIdleGraphsTick(); });
+    return evict_task_;
+}
+
+void lgraph::Galaxy::EvictIdleGraphsTick() {
+    // Resolve the current manager under graphs_lock_ and hold the read lock
+    // for the whole eviction, so a concurrent CreateGraph/DeleteGraph/ModGraph
+    // copy-on-write (which takes graphs_lock_ write) can never destroy the
+    // manager while it is being evicted.
+    AutoReadLock l(graphs_lock_, GetMyThreadId());
+    if (graphs_) graphs_->EvictIdleGraphs();
 }
 
 bool lgraph::Galaxy::ValidateUser(const std::string& user, const std::string& password) {
@@ -193,17 +231,21 @@ bool lgraph::Galaxy::CreateGraph(const std::string& curr_user, const std::string
     std::unique_ptr<GraphManager> gm_new(new GraphManager(*graphs_));
     auto wt = store_->CreateWriteTxn(false);
     auto& txn = *wt;
+    DBConfig stored;
     bool r;
     if (data_file_path.empty()) {
-        r = gm_new->CreateGraph(txn, graph, config);
+        r = gm_new->CreateGraph(txn, graph, config, &stored);
     } else {
-        r = gm_new->CreateGraphWithData(txn, graph, config, data_file_path);
+        r = gm_new->CreateGraphWithData(txn, graph, config, data_file_path, &stored);
     }
     if (!r) return r;
     acl_new->AddGraph(txn, curr_user, graph);
     txn.Commit();
     acl_ = std::move(acl_new);
     graphs_ = std::move(gm_new);
+    // register in the catalog after the commit; a crash between the commit and
+    // this update self-heals on the next ReloadFromDisk
+    graphs_->CatalogPut(graph, stored);
     return r;
 }
 
@@ -216,24 +258,32 @@ bool lgraph::Galaxy::DeleteGraph(const std::string& curr_user, const std::string
     // remove graph from list and then wait till no ref so we can destroy the db
     std::unique_ptr<AclManager> acl_new(new AclManager(*acl_));
     std::unique_ptr<GraphManager> gm_new(new GraphManager(*graphs_));
-    auto gref = graphs_->GetGraphRef(graph);
+    // read the config for the directory removal below (the graph may be closed)
+    DBConfig conf = graphs_->GetGraphConfig(graph);
     auto wt = store_->CreateWriteTxn(false);
     auto& txn = *wt;
     acl_new->DelGraph(txn, curr_user, graph);
+    // DelGraph removes the kv row and the open entry (if the graph was open);
+    // a closed graph has no env to release
     auto db = gm_new->DelGraph(txn, graph);
-    if (!db) return false;
     txn.Commit();
     acl_ = std::move(acl_new);
     graphs_ = std::move(gm_new);
-    // now destroy db asynchronously
-    // since the obj has been removed from graphs_, we are now the only manager ref to the obj.
-    // so we can delete the db safely as soon as the ref count becomes zero
-    db.Assign(nullptr, [](LightningGraph* db) {
-        std::string dir = db->GetConfig().dir;
-        db->Close();
-        fma_common::FileSystem::GetFileSystem(dir).RemoveDir(dir);
-        LOG_INFO() << "GraphDB " << dir << " deleted.";
-    });
+    graphs_->CatalogRemove(graph);
+    if (db) {
+        // the graph was open: destroy it asynchronously once outstanding
+        // references drain
+        db.Assign(nullptr, [](LightningGraph* db) {
+            std::string dir = db->GetConfig().dir;
+            db->Close();
+            fma_common::FileSystem::GetFileSystem(dir).RemoveDir(dir);
+            LOG_INFO() << "GraphDB " << dir << " deleted.";
+        });
+    } else {
+        // the graph was closed: no env to close, remove the directory directly
+        fma_common::FileSystem::GetFileSystem(conf.dir).RemoveDir(conf.dir);
+        LOG_INFO() << "GraphDB " << conf.dir << " deleted.";
+    }
     return true;
 }
 
@@ -246,10 +296,12 @@ bool lgraph::Galaxy::ModGraph(const std::string& curr_user, const std::string& g
     auto& txn = *wt;
     AutoWriteLock l2(graphs_lock_, GetMyThreadId());
     std::unique_ptr<GraphManager> gm_new(new GraphManager(*graphs_));
-    bool r = gm_new->ModGraph(txn, graph_name, actions);
+    DBConfig stored;
+    bool r = gm_new->ModGraph(txn, graph_name, actions, &stored);
     if (!r) return r;
     txn.Commit();
     graphs_ = std::move(gm_new);
+    graphs_->CatalogPut(graph_name, stored);
     return true;
 }
 
@@ -480,6 +532,7 @@ void lgraph::Galaxy::LoadIpWhitelist(KvTransaction& txn) {
 
 bool lgraph::Galaxy::LoadSnapshot(const std::string& dir) {
     _HoldWriteLock(reload_lock_);
+    StopEvictionTask();
     auto confs = graphs_->ListGraphs();
     auto metaDir = GetMetaStoreDir(config_.dir);
     store_.reset(nullptr);
@@ -551,6 +604,15 @@ void lgraph::Galaxy::ReloadFromDisk(bool create_if_not_exist) {
     acl_.reset();
     store_.reset();
     LMDBKvStore::SetLastOpIdOfAllStores(-1);
+    // Engine-wide storage policy, applied here because this is the single place
+    // where the meta store and every graph environment are (re)opened, and
+    // global_config_ is never null (it falls back to dummy_global_config_).
+    // MDB_NOTLS is what allows more than ~1000 graphs to be opened: without it
+    // each environment consumes a pthread TLS key and the process hits the
+    // fixed PTHREAD_KEYS_MAX (1024) limit.
+    // See docs/architecture/07-scalability-risks.md R0.
+    LMDBKvStore::SetUseNotls(global_config_->lmdb_notls);
+    LMDBKvStore::SetMaxDbs(global_config_->lmdb_max_dbs);
     store_.reset(new LMDBKvStore(GetMetaStoreDir(config_.dir), (size_t)1 << 30, config_.durable,
                              create_if_not_exist));
     auto txn = store_->CreateWriteTxn(false);
@@ -566,6 +628,10 @@ void lgraph::Galaxy::ReloadFromDisk(bool create_if_not_exist) {
     // now load contents
     GraphManager::Config gmc(*global_config_);
     gmc.load_plugins = config_.load_plugins;
+    // stop the old eviction task before destroying the old manager: the task
+    // resolves graphs_ through this Galaxy under graphs_lock_, and this
+    // manager is about to be replaced
+    StopEvictionTask();
     graphs_.reset(new GraphManager());
     graphs_->Init(store_.get(), *txn, _detail::GRAPH_CONFIG_TABLE_NAME, config_.dir, gmc);
     acl_.reset(new AclManager());
@@ -573,6 +639,8 @@ void lgraph::Galaxy::ReloadFromDisk(bool create_if_not_exist) {
     if (graphs_->GraphExists(_detail::DEFAULT_GRAPH_DB_NAME))
         acl_->AddGraph(*txn, _detail::DEFAULT_ADMIN_NAME, _detail::DEFAULT_GRAPH_DB_NAME);
     txn->Commit();
+    // start lazy-graph eviction after the catalog is committed
+    StartEvictionTask();
 }
 
 int64_t lgraph::Galaxy::GetRaftLogIndex() const { return LMDBKvStore::GetLastOpIdOfAllStores(); }
@@ -749,12 +817,12 @@ std::tuple<int, int, int> lgraph::Galaxy::GetAndSetTuGraphVersionIfNecessary(KvT
     if (!it->IsValid()) {
         // no version info, set it
         db_info_table_->SetValue(txn, Value::ConstRef(_detail::VER_MAJOR_KEY),
-                                Value::ConstRef(lgraph::_detail::VER_MAJOR));
+                                Value::ConstRef(lgraph::version::Major()));
         db_info_table_->SetValue(txn, Value::ConstRef(_detail::VER_MINOR_KEY),
-                                Value::ConstRef(lgraph::_detail::VER_MINOR));
+                                Value::ConstRef(lgraph::version::Minor()));
         db_info_table_->SetValue(txn, Value::ConstRef(_detail::VER_PATCH_KEY),
-                                Value::ConstRef(lgraph::_detail::VER_PATCH));
-        return std::make_tuple(_detail::VER_MAJOR, _detail::VER_MINOR, _detail::VER_PATCH);
+                                Value::ConstRef(lgraph::version::Patch()));
+        return std::make_tuple(version::Major(), version::Minor(), version::Patch());
     } else {
         int major = it->GetValue().AsType<int>();
         it->GotoKey(Value::ConstRef(_detail::VER_MINOR_KEY));
@@ -771,15 +839,14 @@ void lgraph::Galaxy::CheckTuGraphVersion(KvTransaction& txn) {
     auto ver = GetAndSetTuGraphVersionIfNecessary(txn);
     int major = std::get<0>(ver);
     int minor = std::get<1>(ver);
-    if (major != _detail::VER_MAJOR) {
+    if (major != version::Major()) {
         LOG_WARN() << "Mismatching major version: DB is created with ver " << major
-                                 << ", while current TuGraph is ver " << _detail::VER_MAJOR;
+                                 << ", while current TuGraph is ver " << version::Major();
         throw std::runtime_error("Mismatch DB and software version.");
     }
-    if (minor != _detail::VER_MINOR) {
+    if (minor != version::Minor()) {
         LOG_WARN() << "DB is created with ver " << major << "." << minor
-                                 << ", while current TuGraph is ver " << _detail::VER_MAJOR << "."
-                                 << _detail::VER_MINOR
+                                 << ", while current TuGraph is ver " << version::ShortVersion()
                                  << ". TuGraph may work just fine, but be ware of compatibility "
                                     "warnings in release notes.";
     }

@@ -28,6 +28,12 @@ add_executable(unit_test
         test_cache_aligned_vector.cpp
         test_concurrent_gettime.cpp
         test_core_exception.cpp
+        test_cluster_meta_store.cpp
+        test_shard_manager.cpp
+        test_router.cpp
+        test_cluster_control.cpp
+        test_migration_manager.cpp
+        test_request_router.cpp
         test_cpp_procedure.cpp
         test_cppresetsdk_json.cpp
         test_cypher_v2.cpp
@@ -102,6 +108,10 @@ add_executable(unit_test
         test_schema.cpp
         test_schema_change.cpp
         test_schema_manager.cpp
+        test_series_encoding.cpp
+        test_series_store.cpp
+        test_series_transaction.cpp
+        test_series_bolt.cpp
         test_bolt_hydrator.cpp
         test_service.cpp
         test_snapshot.cpp

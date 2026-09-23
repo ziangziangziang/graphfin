@@ -1,4 +1,4 @@
-mport sys
+import sys
 
 output_file = sys.argv[1]
 num_vertices = sys.argv[2]

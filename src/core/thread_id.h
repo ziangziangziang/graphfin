@@ -45,7 +45,13 @@ class ThreadIdAssigner {
         return -1;
     }
 
-    static void ReleaseThreadId(int id) { occupied_()[id] = 0; }
+    static void ReleaseThreadId(int id) {
+        // Unlocked release races with concurrent GetThreadId (and with other
+        // exiting threads): the id could be handed out twice, aliasing two
+        // threads onto one LMDB reader slot / lock context. Found by TSan.
+        std::lock_guard<std::mutex> l(mutex_());
+        occupied_()[id] = 0;
+    }
 };
 
 class ThreadIdFetcher {

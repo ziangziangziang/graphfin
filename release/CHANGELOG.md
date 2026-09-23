@@ -1,4 +1,4 @@
-# Change Log for TuGraph
+# Upstream TuGraph Change Log (inherited reference)
 
 # 4.5.2 (2025-03-13)
 

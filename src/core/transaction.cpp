@@ -138,6 +138,7 @@ Transaction::Transaction(bool read_only, bool optimistic, LightningGraph* db)
       graph_(db->graph_.get()),
       index_manager_(db->index_manager_.get()),
       blob_manager_(db->blob_manager_.get()),
+      series_store_(db->series_store_.get()),
       fulltext_index_(db->fulltext_index_.get()) {
     EnterTxn();
     if (read_only) {
@@ -156,6 +157,7 @@ Transaction::Transaction(LightningGraph* db, KvTransaction& txn)
       graph_(db->graph_.get()),
       index_manager_(db->index_manager_.get()),
       blob_manager_(db->blob_manager_.get()),
+      series_store_(db->series_store_.get()),
       fulltext_index_(db->fulltext_index_.get()) {
     EnterTxn();
     curr_schema_ = managed_schema_ptr_.Get();
@@ -183,6 +185,25 @@ void DeleteBlobs(const Value& prop, Schema* schema, BlobManager* bm, KvTransacti
     }
 }
 
+/**
+ * Guards every path that writes field values into a record. A series field has
+ * no bytes in the record - its points live in the series table - so a value for
+ * it can only mean the caller wanted the series API, and silently dropping it
+ * (or storing it as an ordinary blob) would be worse than refusing.
+ */
+template <typename FieldT>
+void ThrowIfSeriesFieldRequested(const Schema* schema, size_t n_fields, const FieldT* fields) {
+    for (size_t i = 0; i < n_fields; i++) {
+        auto* fe = schema->TryGetFieldExtractor(fields[i]);
+        if (fe != nullptr && fe->GetFieldSpec().series) {
+            THROW_CODE(InputError,
+                       "Field [{}] of label [{}] is a time series: it has no value in the record. "
+                       "Write its points with series.append or series.set instead.",
+                       fe->Name(), schema->GetLabel());
+        }
+    }
+}
+
 Transaction::Transaction(Transaction&& rhs)
     : txn_(std::move(rhs.txn_)),
       read_only_(rhs.read_only_),
@@ -192,6 +213,7 @@ Transaction::Transaction(Transaction&& rhs)
       graph_(rhs.graph_),
       index_manager_(rhs.index_manager_),
       blob_manager_(rhs.blob_manager_),
+      series_store_(rhs.series_store_),
       fulltext_index_(rhs.fulltext_index_),
       fulltext_buffers_(std::move(rhs.fulltext_buffers_)),
       vertex_delta_count_(std::move(rhs.vertex_delta_count_)),
@@ -216,6 +238,7 @@ Transaction& Transaction::operator=(Transaction&& rhs) {
     graph_ = std::move(rhs.graph_);
     index_manager_ = rhs.index_manager_;
     blob_manager_ = rhs.blob_manager_;
+    series_store_ = rhs.series_store_;
     fulltext_index_ = rhs.fulltext_index_;
     fulltext_buffers_ = std::move(rhs.fulltext_buffers_);
     vertex_delta_count_ = std::move(rhs.vertex_delta_count_);
@@ -238,6 +261,7 @@ std::vector<std::pair<std::string, FieldData>> Transaction::GetVertexFields(
     for (size_t i = 0; i < schema->GetNumFields(); i++) {
         auto fe = schema->GetFieldExtractor(i);
         if (fe->IsDeleted()) continue;
+        if (fe->IsSeries()) continue;
         values.emplace_back(
             fe->Name(), GetField(schema, prop, i, blob_manager_, *txn_));
     }
@@ -416,6 +440,7 @@ void Transaction::DeleteVertex(graph::VertexIterator& it, size_t* n_in, size_t* 
         prop = schema->GetDetachedVertexProperty(*txn_, vid);
     }
     if (schema->HasBlob()) DeleteBlobs(prop, schema, blob_manager_, *txn_);
+    series_store_->DeleteElement(*txn_, series::ElementKey::FromVertex(vid));
     schema->DeleteVertexIndex(*txn_, vid, prop);
     schema->DeleteVertexCompositeIndex(*txn_, vid, prop);
     schema->DeleteVectorIndex(*txn_, vid, prop);
@@ -441,6 +466,9 @@ void Transaction::DeleteVertex(graph::VertexIterator& it, size_t* n_in, size_t* 
                         *txn_, {vid, data.vid, data.lid, data.tid, data.eid});
                 }
                 EdgeUid euid{vid, data.vid, data.lid, data.tid, data.eid};
+                // Incident edges go through this callback rather than DeleteEdge,
+                // so their series buckets have to be dropped here too.
+                series_store_->DeleteElement(*txn_, series::ElementKey::FromEdge(euid));
                 edge_schema->DeleteEdgeIndex(*txn_, euid, property);
                 if (edge_schema->DetachProperty()) {
                     edge_schema->DeleteDetachedEdgeProperty(*txn_, euid);
@@ -462,6 +490,7 @@ void Transaction::DeleteVertex(graph::VertexIterator& it, size_t* n_in, size_t* 
                         *txn_, {data.vid, vid, data.lid, data.tid, data.eid});
                 }
                 EdgeUid euid{data.vid, vid, data.lid, data.tid, data.eid};
+                series_store_->DeleteElement(*txn_, series::ElementKey::FromEdge(euid));
                 edge_schema->DeleteEdgeIndex(*txn_, euid, property);
                 if (edge_schema->DetachProperty()) {
                     edge_schema->DeleteDetachedEdgeProperty(*txn_, euid);
@@ -514,6 +543,7 @@ Transaction::DeleteEdge(EIT& eit) {
         prop = schema->GetDetachedEdgeProperty(*txn_, euid);
     }
     if (schema->HasBlob()) DeleteBlobs(prop, schema, blob_manager_, *txn_);
+    series_store_->DeleteElement(*txn_, series::ElementKey::FromEdge(euid));
     schema->DeleteEdgeIndex(*txn_, eit.GetUid(), prop);
     graph_->DeleteEdge(*txn_, eit);
     if (schema->DetachProperty()) {
@@ -939,6 +969,7 @@ Transaction::SetVertexProperty(VertexIterator& it, size_t n_fields, const FieldT
     VertexId vid = it.GetId();
     Schema* schema = curr_schema_->v_schema_manager.GetSchema(old_prop);
     FMA_DBG_ASSERT(schema);
+    ThrowIfSeriesFieldRequested(schema, n_fields, fields);
     if (schema->DetachProperty()) {
         old_prop = schema->GetDetachedVertexProperty(*txn_, vid);
     }
@@ -1118,6 +1149,7 @@ Transaction::GetEdgeFields(const EIT& it) {
     std::vector<std::pair<std::string, FieldData>> values;
     for (size_t i = 0; i < schema->GetNumFields(); i++) {
         auto fe = schema->GetFieldExtractor(i);
+        if (fe->IsSeries()) continue;
         values.emplace_back(fe->Name(), GetField(schema, prop, i, blob_manager_, *txn_));
     }
     return values;
@@ -1170,6 +1202,7 @@ Transaction::SetEdgeProperty(EIT& it, size_t n_fields, const FieldT* fields, con
     FMA_DBG_ASSERT(old_prop.IsSlice());
     auto schema = curr_schema_->e_schema_manager.GetSchema(it.GetLabelId());
     FMA_DBG_ASSERT(schema);
+    ThrowIfSeriesFieldRequested(schema, n_fields, fields);
     if (schema->DetachProperty()) {
         old_prop = schema->GetDetachedEdgeProperty(*txn_, euid);
     }
@@ -1347,6 +1380,7 @@ Transaction::AddVertex(const LabelT& label, size_t n_fields, const FieldT* field
     ThrowIfReadOnlyTxn();
     Schema* schema = curr_schema_->v_schema_manager.GetSchema(label);
     if (!schema) THROW_CODE(InputError, "Vertex label {} does not exist.", label);
+    ThrowIfSeriesFieldRequested(schema, n_fields, fields);
     Value prop = schema->HasBlob()
                      ? schema->CreateRecordWithBlobs(
                            n_fields, fields, values,
@@ -1416,6 +1450,7 @@ Transaction::AddEdge(VertexId src, VertexId dst, const LabelT& label, size_t n_f
     ThrowIfReadOnlyTxn();
     auto schema = curr_schema_->e_schema_manager.GetSchema(label);
     if (!schema) THROW_CODE(InputError, "Edge label {} does not exist", label);
+    ThrowIfSeriesFieldRequested(schema, n_fields, fields);
     Value prop = schema->HasBlob()
                      ? schema->CreateRecordWithBlobs(
                            n_fields, fields, values,
@@ -1510,6 +1545,355 @@ template void Transaction::GetEdgeFields<std::string>(const EdgeUid& uid, const 
 #define _SET_VERTEX_PROPERTY_FUNC(FT, DT)                                                      \
     template void Transaction::SetVertexProperty<FT, DT>(VertexIterator & it, size_t n_fields, \
                                                          const FT* fields, const DT* values);
+bool Transaction::ResolveVertexSeries(const graph::VertexIterator& it, const std::string& field,
+                                      uint16_t* field_id,
+                                      std::vector<series::MeasureColumn>* columns,
+                                      series::BucketPolicy* policy) {
+    Schema* schema = curr_schema_->v_schema_manager.GetSchema(it.GetProperty());
+    if (schema == nullptr) return false;
+    auto* fe = schema->TryGetFieldExtractor(field);
+    if (fe == nullptr) return false;
+    const FieldSpec& spec = fe->GetFieldSpec();
+    if (!spec.series) {
+        THROW_CODE(InputError, "Field [{}] of label [{}] is not a time series.", field,
+                   schema->GetLabel());
+    }
+    columns->clear();
+    columns->reserve(spec.series_spec.measures.size());
+    for (const auto& m : spec.series_spec.measures) {
+        series::MeasureType measure_type = series::MeasureType::DOUBLE;
+        if (!series::ToMeasureType(m.type, &measure_type)) {
+            // Unreachable through DDL: the schema checks measure types. Reaching
+            // it means a stored schema was edited by hand.
+            THROW_CODE(InternalError,
+                       "Series field [{}] of label [{}] declares measure [{}] of type [{}].",
+                       field, schema->GetLabel(), m.name, lgraph_api::to_string(m.type));
+        }
+        columns->emplace_back(series::MeasureColumn{measure_type});
+    }
+    policy->max_points = spec.series_spec.bucket_max_points;
+    policy->max_span_us = spec.series_spec.bucket_max_span_us;
+    policy->max_bytes = spec.series_spec.bucket_max_bytes;
+    *field_id = fe->GetFieldId();
+    return true;
+}
+
+bool Transaction::ResolveVertexSeriesSchema(VertexId id, const std::string& field,
+                                               uint16_t* field_id,
+                                               std::vector<series::MeasureColumn>* columns,
+                                               series::BucketPolicy* policy,
+                                               std::vector<series::MeasureRef>* measures) {
+    VertexIterator it = GetVertexIterator(id);
+    if (!it.IsValid()) return false;
+    Schema* schema = curr_schema_->v_schema_manager.GetSchema(it.GetProperty());
+    if (schema == nullptr) return false;
+    auto* fe = schema->TryGetFieldExtractor(field);
+    if (fe == nullptr) return false;
+    const FieldSpec& spec = fe->GetFieldSpec();
+    if (!spec.series) return false;
+    columns->clear();
+    measures->clear();
+    columns->reserve(spec.series_spec.measures.size());
+    measures->reserve(spec.series_spec.measures.size());
+    for (const auto& m : spec.series_spec.measures) {
+        series::MeasureType measure_type = series::MeasureType::DOUBLE;
+        if (!series::ToMeasureType(m.type, &measure_type)) {
+            // Unreachable through DDL: the schema checks measure types. Reaching
+            // it means a stored schema was edited by hand.
+            THROW_CODE(InternalError,
+                       "Series field [{}] of label [{}] declares measure [{}] of type [{}].",
+                       field, schema->GetLabel(), m.name, lgraph_api::to_string(m.type));
+        }
+        columns->emplace_back(series::MeasureColumn{measure_type});
+        measures->emplace_back(series::MeasureRef{m.name, measure_type});
+    }
+    policy->max_points = spec.series_spec.bucket_max_points;
+    policy->max_span_us = spec.series_spec.bucket_max_span_us;
+    policy->max_bytes = spec.series_spec.bucket_max_bytes;
+    *field_id = fe->GetFieldId();
+    return true;
+}
+
+bool Transaction::ProbeVertexSeries(VertexId id, const std::string& field,
+                                    series::SeriesSummary* summary) {
+    *summary = series::SeriesSummary();
+    uint16_t field_id = 0;
+    std::vector<series::MeasureColumn> columns;
+    series::BucketPolicy policy;
+    if (!ResolveVertexSeriesSchema(id, field, &field_id, &columns, &policy,
+                                   &summary->measures)) {
+        return false;
+    }
+
+    const series::ElementKey key = series::ElementKey::FromVertex(id);
+    series::Point end;
+    if (!series_store_->Count(*txn_, key, field_id, series::kMinTs, series::kMaxTs, columns,
+                              &summary->count) ||
+        !series_store_->Earliest(*txn_, key, field_id, columns, &end)) {
+        return false;
+    }
+    if (summary->count == 0) return true;
+    summary->has_points = true;
+    summary->first_ts = end.ts;
+    if (!series_store_->Latest(*txn_, key, field_id, columns, &end)) return false;
+    summary->last_ts = end.ts;
+    return true;
+}
+
+bool Transaction::SetVertexSeriesPoint(VertexId id, const std::string& field, int64_t ts,
+                                       const std::vector<series::MeasureValue>& values) {
+    ThrowIfReadOnlyTxn();
+    if (!series::IsValidSeriesTimestamp(ts)) {
+        THROW_CODE(InputError, "Series timestamp [{}] out of DATETIME range.", ts);
+    }
+    VertexIterator it = GetVertexIterator(id);
+    if (!it.IsValid()) return false;
+    uint16_t field_id = 0;
+    std::vector<series::MeasureColumn> columns;
+    series::BucketPolicy policy;
+    if (!ResolveVertexSeries(it, field, &field_id, &columns, &policy)) return false;
+    if (values.size() != columns.size()) {
+        THROW_CODE(InputError, "Series field [{}] has {} measures, but {} values were given.",
+                   field, columns.size(), values.size());
+    }
+    if (!series::MeasureValuesAreStorable(values, columns)) {
+        THROW_CODE(InputError, "Series DOUBLE measure values must be finite numbers.");
+    }
+    return series_store_->Upsert(*txn_, series::ElementKey::FromVertex(id), field_id, ts, values,
+                                 columns, policy);
+}
+
+bool Transaction::GetVertexSeriesRange(VertexId id, const std::string& field, int64_t t0,
+                                       int64_t t1, std::vector<series::Point>* points) {
+    VertexIterator it = GetVertexIterator(id);
+    if (!it.IsValid()) return false;
+    uint16_t field_id = 0;
+    std::vector<series::MeasureColumn> columns;
+    series::BucketPolicy policy;
+    if (!ResolveVertexSeries(it, field, &field_id, &columns, &policy)) return false;
+    return series_store_->Range(*txn_, series::ElementKey::FromVertex(id), field_id, t0, t1,
+                                columns, points);
+}
+
+bool Transaction::GetVertexSeriesCount(VertexId id, const std::string& field, int64_t t0,
+                                       int64_t t1, size_t* count) {
+    VertexIterator it = GetVertexIterator(id);
+    if (!it.IsValid()) return false;
+    uint16_t field_id = 0;
+    std::vector<series::MeasureColumn> columns;
+    series::BucketPolicy policy;
+    if (!ResolveVertexSeries(it, field, &field_id, &columns, &policy)) return false;
+    return series_store_->Count(*txn_, series::ElementKey::FromVertex(id), field_id, t0, t1,
+                                columns, count);
+}
+
+bool Transaction::GetVertexSeriesLatest(VertexId id, const std::string& field,
+                                        series::Point* point) {
+    VertexIterator it = GetVertexIterator(id);
+    if (!it.IsValid()) return false;
+    uint16_t field_id = 0;
+    std::vector<series::MeasureColumn> columns;
+    series::BucketPolicy policy;
+    if (!ResolveVertexSeries(it, field, &field_id, &columns, &policy)) return false;
+    return series_store_->Latest(*txn_, series::ElementKey::FromVertex(id), field_id, columns,
+                                 point);
+}
+
+bool Transaction::GetVertexSeriesEarliest(VertexId id, const std::string& field,
+                                          series::Point* point) {
+    VertexIterator it = GetVertexIterator(id);
+    if (!it.IsValid()) return false;
+    uint16_t field_id = 0;
+    std::vector<series::MeasureColumn> columns;
+    series::BucketPolicy policy;
+    if (!ResolveVertexSeries(it, field, &field_id, &columns, &policy)) return false;
+    return series_store_->Earliest(*txn_, series::ElementKey::FromVertex(id), field_id, columns,
+                                   point);
+}
+
+bool Transaction::ClearVertexSeries(VertexId id, const std::string& field) {
+    ThrowIfReadOnlyTxn();
+    VertexIterator it = GetVertexIterator(id);
+    if (!it.IsValid()) return false;
+    uint16_t field_id = 0;
+    std::vector<series::MeasureColumn> columns;
+    series::BucketPolicy policy;
+    if (!ResolveVertexSeries(it, field, &field_id, &columns, &policy)) return false;
+    series_store_->DeleteField(*txn_, series::ElementKey::FromVertex(id), field_id);
+    return true;
+}
+
+namespace {
+
+/** True when uid names a live edge. */
+bool EdgeExists(Transaction& txn, const EdgeUid& uid) {
+    graph::OutEdgeIterator eit = txn.GetOutEdgeIterator(uid, false);
+    return eit.IsValid() && eit.GetUid() == uid;
+}
+
+}  // namespace
+
+bool Transaction::ResolveEdgeSeries(const EdgeUid& uid, const std::string& field,
+                                    uint16_t* field_id,
+                                    std::vector<series::MeasureColumn>* columns,
+                                    series::BucketPolicy* policy) {
+    if (!EdgeExists(*this, uid)) return false;
+    Schema* schema = curr_schema_->e_schema_manager.GetSchema(uid.lid);
+    if (schema == nullptr) return false;
+    auto* fe = schema->TryGetFieldExtractor(field);
+    if (fe == nullptr) return false;
+    const FieldSpec& spec = fe->GetFieldSpec();
+    if (!spec.series) {
+        THROW_CODE(InputError, "Field [{}] of label [{}] is not a time series.", field,
+                   schema->GetLabel());
+    }
+    columns->clear();
+    columns->reserve(spec.series_spec.measures.size());
+    for (const auto& m : spec.series_spec.measures) {
+        series::MeasureType measure_type = series::MeasureType::DOUBLE;
+        if (!series::ToMeasureType(m.type, &measure_type)) {
+            THROW_CODE(InternalError,
+                       "Series field [{}] of label [{}] declares measure [{}] of type [{}].",
+                       field, schema->GetLabel(), m.name, lgraph_api::to_string(m.type));
+        }
+        columns->emplace_back(series::MeasureColumn{measure_type});
+    }
+    policy->max_points = spec.series_spec.bucket_max_points;
+    policy->max_span_us = spec.series_spec.bucket_max_span_us;
+    policy->max_bytes = spec.series_spec.bucket_max_bytes;
+    *field_id = fe->GetFieldId();
+    return true;
+}
+
+bool Transaction::ResolveEdgeSeriesSchema(const EdgeUid& uid, const std::string& field,
+                                          uint16_t* field_id,
+                                          std::vector<series::MeasureColumn>* columns,
+                                          series::BucketPolicy* policy,
+                                          std::vector<series::MeasureRef>* measures) {
+    if (!EdgeExists(*this, uid)) return false;
+    Schema* schema = curr_schema_->e_schema_manager.GetSchema(uid.lid);
+    if (schema == nullptr) return false;
+    auto* fe = schema->TryGetFieldExtractor(field);
+    if (fe == nullptr) return false;
+    const FieldSpec& spec = fe->GetFieldSpec();
+    if (!spec.series) return false;
+    columns->clear();
+    measures->clear();
+    columns->reserve(spec.series_spec.measures.size());
+    measures->reserve(spec.series_spec.measures.size());
+    for (const auto& m : spec.series_spec.measures) {
+        series::MeasureType measure_type = series::MeasureType::DOUBLE;
+        if (!series::ToMeasureType(m.type, &measure_type)) {
+            THROW_CODE(InternalError,
+                       "Series field [{}] of label [{}] declares measure [{}] of type [{}].",
+                       field, schema->GetLabel(), m.name, lgraph_api::to_string(m.type));
+        }
+        columns->emplace_back(series::MeasureColumn{measure_type});
+        measures->emplace_back(series::MeasureRef{m.name, measure_type});
+    }
+    policy->max_points = spec.series_spec.bucket_max_points;
+    policy->max_span_us = spec.series_spec.bucket_max_span_us;
+    policy->max_bytes = spec.series_spec.bucket_max_bytes;
+    *field_id = fe->GetFieldId();
+    return true;
+}
+
+bool Transaction::SetEdgeSeriesPoint(const EdgeUid& uid, const std::string& field, int64_t ts,
+                                     const std::vector<series::MeasureValue>& values) {
+    ThrowIfReadOnlyTxn();
+    if (!series::IsValidSeriesTimestamp(ts)) {
+        THROW_CODE(InputError, "Series timestamp [{}] out of DATETIME range.", ts);
+    }
+    uint16_t field_id = 0;
+    std::vector<series::MeasureColumn> columns;
+    series::BucketPolicy policy;
+    if (!ResolveEdgeSeries(uid, field, &field_id, &columns, &policy)) return false;
+    if (values.size() != columns.size()) {
+        THROW_CODE(InputError, "Series field [{}] has {} measures, but {} values were given.",
+                   field, columns.size(), values.size());
+    }
+    if (!series::MeasureValuesAreStorable(values, columns)) {
+        THROW_CODE(InputError, "Series DOUBLE measure values must be finite numbers.");
+    }
+    return series_store_->Upsert(*txn_, series::ElementKey::FromEdge(uid), field_id, ts, values,
+                                 columns, policy);
+}
+
+bool Transaction::GetEdgeSeriesRange(const EdgeUid& uid, const std::string& field, int64_t t0,
+                                     int64_t t1, std::vector<series::Point>* points) {
+    uint16_t field_id = 0;
+    std::vector<series::MeasureColumn> columns;
+    series::BucketPolicy policy;
+    if (!ResolveEdgeSeries(uid, field, &field_id, &columns, &policy)) return false;
+    return series_store_->Range(*txn_, series::ElementKey::FromEdge(uid), field_id, t0, t1,
+                                columns, points);
+}
+
+bool Transaction::GetEdgeSeriesCount(const EdgeUid& uid, const std::string& field, int64_t t0,
+                                     int64_t t1, size_t* count) {
+    uint16_t field_id = 0;
+    std::vector<series::MeasureColumn> columns;
+    series::BucketPolicy policy;
+    if (!ResolveEdgeSeries(uid, field, &field_id, &columns, &policy)) return false;
+    return series_store_->Count(*txn_, series::ElementKey::FromEdge(uid), field_id, t0, t1,
+                                columns, count);
+}
+
+bool Transaction::GetEdgeSeriesLatest(const EdgeUid& uid, const std::string& field,
+                                      series::Point* point) {
+    uint16_t field_id = 0;
+    std::vector<series::MeasureColumn> columns;
+    series::BucketPolicy policy;
+    if (!ResolveEdgeSeries(uid, field, &field_id, &columns, &policy)) return false;
+    return series_store_->Latest(*txn_, series::ElementKey::FromEdge(uid), field_id, columns,
+                                 point);
+}
+
+bool Transaction::GetEdgeSeriesEarliest(const EdgeUid& uid, const std::string& field,
+                                        series::Point* point) {
+    uint16_t field_id = 0;
+    std::vector<series::MeasureColumn> columns;
+    series::BucketPolicy policy;
+    if (!ResolveEdgeSeries(uid, field, &field_id, &columns, &policy)) return false;
+    return series_store_->Earliest(*txn_, series::ElementKey::FromEdge(uid), field_id, columns,
+                                   point);
+}
+
+bool Transaction::ClearEdgeSeries(const EdgeUid& uid, const std::string& field) {
+    ThrowIfReadOnlyTxn();
+    uint16_t field_id = 0;
+    std::vector<series::MeasureColumn> columns;
+    series::BucketPolicy policy;
+    if (!ResolveEdgeSeries(uid, field, &field_id, &columns, &policy)) return false;
+    series_store_->DeleteField(*txn_, series::ElementKey::FromEdge(uid), field_id);
+    return true;
+}
+
+bool Transaction::ProbeEdgeSeries(const EdgeUid& uid, const std::string& field,
+                                  series::SeriesSummary* summary) {
+    *summary = series::SeriesSummary();
+    uint16_t field_id = 0;
+    std::vector<series::MeasureColumn> columns;
+    series::BucketPolicy policy;
+    if (!ResolveEdgeSeriesSchema(uid, field, &field_id, &columns, &policy, &summary->measures)) {
+        return false;
+    }
+
+    const series::ElementKey key = series::ElementKey::FromEdge(uid);
+    series::Point end;
+    if (!series_store_->Count(*txn_, key, field_id, series::kMinTs, series::kMaxTs, columns,
+                              &summary->count) ||
+        !series_store_->Earliest(*txn_, key, field_id, columns, &end)) {
+        return false;
+    }
+    if (summary->count == 0) return true;
+    summary->has_points = true;
+    summary->first_ts = end.ts;
+    if (!series_store_->Latest(*txn_, key, field_id, columns, &end)) return false;
+    summary->last_ts = end.ts;
+    return true;
+}
+
 #define _GET_EDGE_FIELDS_FUNC(T1, T2)                                                              \
     template void Transaction::GetEdgeFields<T1, T2>(const T1& it, size_t n_fields, const T2* fds, \
                                                      FieldData* fields);

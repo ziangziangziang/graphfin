@@ -1,0 +1,44 @@
+# Phase 0 derived compile image.
+#
+# Base: the pinned tugraph-compile-arm64 image (see ../images.lock).
+#
+# WHY THIS EXISTS
+# ---------------
+# The base image ships Cython 0.29.37, but src/cython/lgraph_db_python.py uses
+# Cython 3.0 pure-Python-mode syntax (`@cython.cclass` with annotated cdef
+# attributes), so the `lgraph_db_python` target fails with:
+#
+#   /workspace/src/cython/lgraph_db_python.py:95:52:
+#     Cannot take address of Python object attribute 'db'
+#   make[2]: *** [src/lgraph_db_python.cxx] Error 1
+#
+# The repository's own ci/images Dockerfile pins `cython==3.0.0a11`, which is an
+# alpha release that was never published to PyPI, so it cannot be installed
+# directly. Cython 3.0.0 final installs and runs correctly on this image's
+# Python 3.6.9 and compiles the extension.
+#
+# This is the only change relative to the pinned base image. The base image is
+# deliberately NOT mutated, so that the originally-pinned artifact stays
+# byte-identical and the derived image has its own pinned ID.
+#
+# BUILD
+# -----
+#   cd <repo root>
+#   # arm64 (the Phase 0 baseline environment)
+#   docker build -f dev/phase0/env/Dockerfile.phase0 -t tugraph-compile-arm64:phase0 .
+#
+#   # amd64 (CI runners; base image from the upstream registry)
+#   docker build -f dev/phase0/env/Dockerfile.phase0 \
+#       --build-arg BASE_IMAGE=tugraph/tugraph-compile-centos7:latest \
+#       -t tugraph-compile-amd64:phase0 .
+#
+# Record the resulting `docker image inspect ... --format '{{.Id}}'` value in
+# dev/phase0/images.lock under [compile_phase0]. dev/phase0/container.sh verifies
+# it on every build and benchmark run.
+
+ARG BASE_IMAGE=tugraph-compile-arm64:local
+FROM ${BASE_IMAGE}
+
+RUN pip3 install --no-cache-dir cython==3.0.0 \
+    && cython --version \
+    && python3 -c "import sys; print('python', sys.version.split()[0])"

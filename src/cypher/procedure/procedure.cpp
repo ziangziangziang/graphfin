@@ -16,6 +16,7 @@
 // Created by wt on 19-1-10.
 //
 
+#include <cmath>
 #include <regex>
 #include <tuple>
 
@@ -29,6 +30,7 @@
 #include "restful/server/json_convert.h"
 #include "cypher/graph/common.h"
 #include "cypher/procedure/procedure.h"
+#include "core/version_info.h"
 #include "cypher/procedure/utils.h"
 #include "butil/endpoint.h"
 #include "cypher/monitor/memory_monitor_allocator.h"
@@ -58,8 +60,9 @@ const std::unordered_map<std::string, lgraph::FieldType> BuiltinProcedure::type_
     lgraph::field_data_helper::_detail::_FieldName2TypeDict_();
 
 void CheckProcedureYieldItem(const std::string &procedure_name,
-                                const cypher::VEC_STR &yield_items) {
+                                 const cypher::VEC_STR &yield_items) {
     auto pp = global_ptable.GetProcedure(procedure_name);
+    if (!pp) throw lgraph::CypherException("Unknown procedure: " + procedure_name);
 
     if (!yield_items.empty()) {
         for (auto &item : yield_items) {
@@ -1534,6 +1537,505 @@ void BuiltinProcedure::DbCreateEdgeLabel(RTContext *ctx, const Record *record,
     FillProcedureYieldItem("db.createEdgeLabel", yield_items, records);
 }
 
+namespace {
+
+/** A vertex or an edge addressed by a series.* procedure argument. */
+struct SeriesProcElement {
+    bool is_edge = false;
+    lgraph::VertexId vid = -1;
+    lgraph::EdgeUid euid;
+};
+
+void ExtractSeriesProcElement(const cypher::Entry &e, const std::string &proc,
+                              SeriesProcElement *out) {
+    if (e.IsNode()) {
+        out->is_edge = false;
+        out->vid = e.node->PullVid();
+        if (out->vid < 0) {
+            throw lgraph::CypherException(proc + " expects a live vertex or edge");
+        }
+        return;
+    }
+    if (e.IsRelationship()) {
+        auto eit = e.relationship->ItRef();
+        if (!eit || !eit->IsValid()) {
+            throw lgraph::CypherException(proc + " expects a live vertex or edge");
+        }
+        out->is_edge = true;
+        out->euid = eit->GetUid();
+        return;
+    }
+    throw lgraph::CypherException(proc + " expects a vertex or an edge as its first argument");
+}
+
+void ParseSeriesMeasures(const cypher::FieldData &arg, const std::string &proc,
+                         std::vector<lgraph_api::SeriesMeasureSpec> *out) {
+    if (arg.type != cypher::FieldData::ARRAY) {
+        throw lgraph::CypherException(proc + ": measures must be a list of {name, type} maps");
+    }
+    for (const auto &item : *arg.array) {
+        if (item.type != cypher::FieldData::MAP) {
+            throw lgraph::CypherException(proc + ": each measure must be a {name, type} map");
+        }
+        auto name_it = item.map->find("name");
+        auto type_it = item.map->find("type");
+        if (name_it == item.map->end() || !name_it->second.IsString() ||
+            type_it == item.map->end() || !type_it->second.IsString()) {
+            throw lgraph::CypherException(proc + ": each measure needs a 'name' string and a "
+                                           "'type' string ('DOUBLE' or 'INT64')");
+        }
+        std::string type = type_it->second.AsString();
+        std::transform(type.begin(), type.end(), type.begin(), ::tolower);
+        lgraph::FieldType measure_type;
+        if (type == "double") {
+            measure_type = lgraph::FieldType::DOUBLE;
+        } else if (type == "int64") {
+            measure_type = lgraph::FieldType::INT64;
+        } else {
+            throw lgraph::CypherException(proc + ": measure '" + name_it->second.AsString() +
+                                          "' has type '" + type_it->second.AsString() +
+                                          "', expected 'DOUBLE' or 'INT64'");
+        }
+        out->push_back({name_it->second.AsString(), measure_type});
+    }
+}
+
+int64_t ParseSeriesOptionInt(const cypher::FieldData &options, const std::string &key,
+                             int64_t fallback, const std::string &proc) {
+    auto it = options.map->find(key);
+    if (it == options.map->end()) return fallback;
+    if (!it->second.IsInteger()) {
+        throw lgraph::CypherException(proc + ": option '" + key + "' must be an integer");
+    }
+    return it->second.scalar.integer();
+}
+
+int64_t ParseSeriesTimestamp(const cypher::FieldData &v, const std::string &proc) {
+    if (v.type != cypher::FieldData::SCALAR) {
+        throw lgraph::CypherException(proc + ": timestamp must be a DATETIME or INT64");
+    }
+    int64_t ts = 0;
+    if (v.scalar.IsDateTime()) {
+        ts = v.scalar.AsDateTime().MicroSecondsSinceEpoch();
+    } else if (v.IsInteger()) {
+        ts = v.scalar.integer();
+    } else {
+        throw lgraph::CypherException(proc + ": timestamp must be a DATETIME or INT64");
+    }
+    // Stored timestamps must be readable back as DATETIME; unbounded
+    // range-query sentinels are not valid stored points.
+    if (!lgraph::series::IsValidSeriesTimestamp(ts)) {
+        throw lgraph::CypherException(proc + ": timestamp out of DATETIME range");
+    }
+    return ts;
+}
+
+lgraph::series::MeasureValue ParseSeriesMeasureValue(const cypher::FieldData &v,
+                                                     lgraph::series::MeasureType type,
+                                                     const std::string &measure,
+                                                     const std::string &proc) {
+    // An explicit null scalar means "no value" under the full-point replacement
+    // contract. Containers (LIST/MAP) are type errors and must be rejected
+    // before any mutation: mapping them to null would silently overwrite the
+    // stored value.
+    if (v.type != cypher::FieldData::SCALAR) {
+        throw lgraph::CypherException(proc + ": value for measure '" + measure +
+                                      "' must match its declared type");
+    }
+    if (v.scalar.is_null()) {
+        return lgraph::series::MeasureValue::Null();
+    }
+    if (type == lgraph::series::MeasureType::DOUBLE) {
+        // Non-finite doubles serialize as JSON null while staying non-null in
+        // the engine, silently conflating values with missing observations
+        // (R8). Reject at the public boundary; previously stored bytes still
+        // decode (codec round-trips them bit-exactly).
+        if (v.IsReal()) {
+            const double d = v.scalar.AsDouble();
+            if (!std::isfinite(d)) {
+                throw lgraph::CypherException(proc + ": value for measure '" + measure +
+                                              "' must be a finite number");
+            }
+            return lgraph::series::MeasureValue::Double(d);
+        }
+        if (v.IsInteger()) {
+            return lgraph::series::MeasureValue::Double(static_cast<double>(v.scalar.integer()));
+        }
+    } else {
+        if (v.IsInteger()) return lgraph::series::MeasureValue::Int64(v.scalar.integer());
+    }
+    throw lgraph::CypherException(proc + ": value for measure '" + measure +
+                                  "' must match its declared type");
+}
+
+void CreateSeriesFieldImpl(RTContext *ctx, const cypher::VEC_EXPR &args, bool is_vertex,
+                           const std::string &proc, const cypher::VEC_STR &yield_items,
+                           std::vector<cypher::Record> *records) {
+    CYPHER_ARG_CHECK(args.size() == 4,
+                     "e.g. db.createSeriesField(label, field, "
+                     "[{name:'close', type:'DOUBLE'}], {bucket_max_points:1000})");
+    CYPHER_ARG_CHECK(args[0].IsString() && args[1].IsString(),
+                     "label and field must be strings");
+    CYPHER_ARG_CHECK(args[2].IsArray(), "measures must be a list of {name, type} maps");
+    CYPHER_ARG_CHECK(args[3].IsMap(), "options must be a map");
+    CheckProcedureYieldItem(proc, yield_items);
+    CYPHER_DB_PROCEDURE_GRAPH_CHECK();
+    const std::string label = args[0].constant.scalar.AsString();
+    const std::string field = args[1].constant.scalar.AsString();
+    std::vector<lgraph_api::SeriesMeasureSpec> measures;
+    ParseSeriesMeasures(args[2].constant, proc, &measures);
+    lgraph::FieldSpec spec(field, lgraph::FieldType::BLOB, true);
+    spec.series = true;
+    spec.series_spec.measures = std::move(measures);
+    // Validate option keys first so misspellings cannot silently select
+    // defaults. Ranges are checked on the signed value before any narrowing
+    // conversion: casting first would wrap 2^32+1 to 1 or -1 to UINT64_MAX.
+    for (const auto &kv : *args[3].constant.map) {
+        if (kv.first != "bucket_max_points" && kv.first != "bucket_max_span_us" &&
+            kv.first != "bucket_max_bytes") {
+            throw lgraph::CypherException(proc + ": unknown option '" + kv.first +
+                                          "', expected bucket_max_points, "
+                                          "bucket_max_span_us or bucket_max_bytes");
+        }
+    }
+    const int64_t opt_points =
+        ParseSeriesOptionInt(args[3].constant, "bucket_max_points", 1000, proc);
+    const int64_t opt_span =
+        ParseSeriesOptionInt(args[3].constant, "bucket_max_span_us", 0, proc);
+    const int64_t opt_bytes =
+        ParseSeriesOptionInt(args[3].constant, "bucket_max_bytes", 1 << 20, proc);
+    // Operational limits, mirrored in CheckSeriesFieldSpec so direct API DDL
+    // cannot bypass them. Points are bounded by rewrite cost, bytes by the
+    // 16 MiB property cap, span by the signed timestamp domain.
+    static const int64_t kMaxSeriesPoints = 1000000;
+    static const int64_t kMaxSeriesBytes = 16 << 20;
+    if (opt_points <= 0 || opt_points > kMaxSeriesPoints) {
+        throw lgraph::CypherException(
+            proc + ": bucket_max_points must be in [1, 1000000]");
+    }
+    if (opt_bytes <= 0 || opt_bytes > kMaxSeriesBytes) {
+        throw lgraph::CypherException(
+            proc + ": bucket_max_bytes must be in [1, 16777216]");
+    }
+    if (opt_span < 0) {
+        throw lgraph::CypherException(proc + ": bucket_max_span_us must be >= 0");
+    }
+    spec.series_spec.bucket_max_points = static_cast<uint32_t>(opt_points);
+    spec.series_spec.bucket_max_span_us = static_cast<uint64_t>(opt_span);
+    spec.series_spec.bucket_max_bytes = static_cast<uint32_t>(opt_bytes);
+    /* close the previous txn first, in case of nested transaction */
+    if (ctx->txn_) ctx->txn_->Abort();
+    size_t n_modified = 0;
+    const bool ok = ctx->ac_db_->AlterLabelAddFields(label, {spec}, {lgraph::FieldData()},
+                                                     is_vertex, &n_modified);
+    if (!ok) throw lgraph::LabelNotExistException(label);
+    cypher::Record r;
+    r.AddConstant(lgraph::FieldData(field));
+    records->emplace_back(r.Snapshot());
+    FillProcedureYieldItem(proc, yield_items, records);
+}
+
+}  // namespace
+
+void BuiltinProcedure::DbCreateSeriesField(RTContext *ctx, const Record *record,
+                                           const VEC_EXPR &args, const VEC_STR &yield_items,
+                                           std::vector<Record> *records) {
+    CreateSeriesFieldImpl(ctx, args, true, "db.createSeriesField", yield_items, records);
+}
+
+void BuiltinProcedure::DbCreateEdgeSeriesField(RTContext *ctx, const Record *record,
+                                               const VEC_EXPR &args, const VEC_STR &yield_items,
+                                               std::vector<Record> *records) {
+    CreateSeriesFieldImpl(ctx, args, false, "db.createEdgeSeriesField", yield_items, records);
+}
+
+void BuiltinProcedure::DbDropSeriesField(RTContext *ctx, const Record *record,
+                                         const VEC_EXPR &args, const VEC_STR &yield_items,
+                                         std::vector<Record> *records) {
+    CYPHER_ARG_CHECK(args.size() == 3,
+                     "e.g. db.dropSeriesField(label_type, label, field) with label_type "
+                     "'vertex' or 'edge'");
+    CYPHER_ARG_CHECK(args[0].IsString() && args[1].IsString() && args[2].IsString(),
+                     "label_type, label and field must be strings");
+    CheckProcedureYieldItem("db.dropSeriesField", yield_items);
+    CYPHER_DB_PROCEDURE_GRAPH_CHECK();
+    const bool is_vertex = ParseIsVertex(args[0].constant.scalar.AsString());
+    const std::string label = args[1].constant.scalar.AsString();
+    const std::string field = args[2].constant.scalar.AsString();
+    /* close the previous txn first, in case of nested transaction */
+    if (ctx->txn_) ctx->txn_->Abort();
+    // Refuse to drop an ordinary field through this procedure: the bucket
+    // cleanup below only makes sense for a series.
+    {
+        auto rtxn = ctx->ac_db_->CreateReadTxn();
+        const auto specs = rtxn.GetSchema(is_vertex, label);
+        const lgraph::FieldSpec *found = nullptr;
+        for (const auto &s : specs) {
+            if (s.name == field) found = &s;
+        }
+        if (found == nullptr) {
+            THROW_CODE(InputError, "Label [{}] has no field [{}]", label, field);
+        }
+        if (!found->series) {
+            THROW_CODE(InputError, "Field [{}] of label [{}] is not a time series", field,
+                       label);
+        }
+    }
+    size_t n_modified = 0;
+    const bool ok = ctx->ac_db_->AlterLabelDelFields(label, {field}, is_vertex, &n_modified);
+    if (!ok) throw lgraph::LabelNotExistException(label);
+    Record r;
+    r.AddConstant(lgraph::FieldData(field));
+    records->emplace_back(r.Snapshot());
+    FillProcedureYieldItem("db.dropSeriesField", yield_items, records);
+}
+
+void BuiltinProcedure::SeriesAppend(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                                    const VEC_STR &yield_items, std::vector<Record> *records) {
+    CYPHER_ARG_CHECK(args.size() == 3,
+                     "e.g. series.append(node, 'prices', "
+                     "{ts: datetime('2024-01-02'), close: 11.0, volume: 200})");
+    CYPHER_ARG_CHECK(args[1].IsString(), "field must be a string");
+    CYPHER_ARG_CHECK(args[2].IsMap(), "point must be a map of ts plus measure values");
+    CheckProcedureYieldItem("series.append", yield_items);
+    CYPHER_DB_PROCEDURE_GRAPH_CHECK();
+    SeriesProcElement elem;
+    ExtractSeriesProcElement(args[0], "series.append", &elem);
+    const std::string field = args[1].constant.scalar.AsString();
+    auto txn = ctx->txn_->GetTxn();
+    uint16_t field_id = 0;
+    std::vector<lgraph::series::MeasureColumn> columns;
+    lgraph::series::BucketPolicy policy;
+    std::vector<lgraph::series::MeasureRef> measures;
+    const bool resolved = elem.is_edge
+                              ? txn->ResolveEdgeSeriesSchema(elem.euid, field, &field_id,
+                                                             &columns, &policy, &measures)
+                              : txn->ResolveVertexSeriesSchema(elem.vid, field, &field_id,
+                                                               &columns, &policy, &measures);
+    if (!resolved) {
+        THROW_CODE(InputError, "Element has no time series field [{}]", field);
+    }
+    const auto &point = *args[2].constant.map;
+    auto ts_it = point.find("ts");
+    if (ts_it == point.end()) {
+        throw lgraph::CypherException("series.append: point map needs a 'ts' entry");
+    }
+    const int64_t ts = ParseSeriesTimestamp(ts_it->second, "series.append");
+    std::vector<lgraph::series::MeasureValue> values;
+    values.reserve(measures.size());
+    for (const auto &m : measures) {
+        auto it = point.find(m.name);
+        values.emplace_back(it == point.end()
+                                ? lgraph::series::MeasureValue::Null()
+                                : ParseSeriesMeasureValue(it->second, m.type, m.name,
+                                                          "series.append"));
+    }
+    for (const auto &kv : point) {
+        if (kv.first != "ts" &&
+            std::none_of(measures.begin(), measures.end(), [&](const auto &m) {
+                return m.name == kv.first;
+            })) {
+            THROW_CODE(InputError, "series.append: unknown measure [{}] for field [{}]",
+                       kv.first, field);
+        }
+    }
+    const bool ok = elem.is_edge
+                        ? txn->SetEdgeSeriesPoint(elem.euid, field, ts, values)
+                        : txn->SetVertexSeriesPoint(elem.vid, field, ts, values);
+    if (!ok) {
+        THROW_CODE(InputError, "series.append: point does not fit the bucket byte cap");
+    }
+    Record r;
+    r.AddConstant(lgraph::FieldData(static_cast<int64_t>(1)));
+    records->emplace_back(r.Snapshot());
+    FillProcedureYieldItem("series.append", yield_items, records);
+}
+
+void BuiltinProcedure::SeriesSet(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                                 const VEC_STR &yield_items, std::vector<Record> *records) {
+    CYPHER_ARG_CHECK(args.size() == 5,
+                     "e.g. series.update(node, 'prices', 'close', "
+                     "datetime('2024-01-02'), 11.5)");
+    CYPHER_ARG_CHECK(args[1].IsString() && args[2].IsString(),
+                     "field and measure must be strings");
+    CheckProcedureYieldItem("series.update", yield_items);
+    CYPHER_DB_PROCEDURE_GRAPH_CHECK();
+    SeriesProcElement elem;
+    ExtractSeriesProcElement(args[0], "series.update", &elem);
+    const std::string field = args[1].constant.scalar.AsString();
+    const std::string measure = args[2].constant.scalar.AsString();
+    const int64_t ts = ParseSeriesTimestamp(args[3].constant, "series.update");
+    auto txn = ctx->txn_->GetTxn();
+    uint16_t field_id = 0;
+    std::vector<lgraph::series::MeasureColumn> columns;
+    lgraph::series::BucketPolicy policy;
+    std::vector<lgraph::series::MeasureRef> measures;
+    const bool resolved = elem.is_edge
+                              ? txn->ResolveEdgeSeriesSchema(elem.euid, field, &field_id,
+                                                             &columns, &policy, &measures)
+                              : txn->ResolveVertexSeriesSchema(elem.vid, field, &field_id,
+                                                               &columns, &policy, &measures);
+    if (!resolved) {
+        THROW_CODE(InputError, "Element has no time series field [{}]", field);
+    }
+    size_t idx = measures.size();
+    for (size_t i = 0; i < measures.size(); ++i) {
+        if (measures[i].name == measure) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx == measures.size()) {
+        THROW_CODE(InputError, "Series field [{}] has no measure [{}]", field, measure);
+    }
+    // Read the row first so correcting one measure keeps the others.
+    std::vector<lgraph::series::Point> points;
+    const bool read = elem.is_edge
+                          ? txn->GetEdgeSeriesRange(elem.euid, field, ts, ts, &points)
+                          : txn->GetVertexSeriesRange(elem.vid, field, ts, ts, &points);
+    if (!read) {
+        THROW_CODE(InternalError, "Corrupt series in field [{}]", field);
+    }
+    std::vector<lgraph::series::MeasureValue> values(measures.size(),
+                                                     lgraph::series::MeasureValue::Null());
+    if (!points.empty()) values = points.front().values;
+    values[idx] = ParseSeriesMeasureValue(args[4].constant, measures[idx].type, measure,
+                                          "series.update");
+    const bool ok = elem.is_edge
+                        ? txn->SetEdgeSeriesPoint(elem.euid, field, ts, values)
+                        : txn->SetVertexSeriesPoint(elem.vid, field, ts, values);
+    if (!ok) {
+        THROW_CODE(InputError, "series.set: point does not fit the bucket byte cap");
+    }
+    Record r;
+    r.AddConstant(lgraph::FieldData(static_cast<int64_t>(1)));
+    records->emplace_back(r.Snapshot());
+    FillProcedureYieldItem("series.update", yield_items, records);
+}
+
+void BuiltinProcedure::SeriesUpdateCas(RTContext *ctx, const Record *record,
+                                       const VEC_EXPR &args,
+                                       const VEC_STR &yield_items,
+                                       std::vector<Record> *records) {
+    // R7: compare-and-set for replay-safe correction under concurrent mutable
+    // ingestion. Applies only when the stored value equals `expected`
+    // (null matches a missing point or a stored null); otherwise yields
+    // written=0 and mutates nothing, so a replayed request loses to an
+    // intervening correction instead of silently undoing it. Provisional
+    // until the M5 revision model lands; unconditional series.update keeps
+    // its contract for ordered exclusive writers.
+    CYPHER_ARG_CHECK(args.size() == 6,
+                     "e.g. series.update_cas(node, 'prices', 'close', "
+                     "datetime('2024-01-02'), 11.5, 12.5)");
+    CYPHER_ARG_CHECK(args[1].IsString() && args[2].IsString(),
+                     "field and measure must be strings");
+    CheckProcedureYieldItem("series.update_cas", yield_items);
+    CYPHER_DB_PROCEDURE_GRAPH_CHECK();
+    SeriesProcElement elem;
+    ExtractSeriesProcElement(args[0], "series.update_cas", &elem);
+    const std::string field = args[1].constant.scalar.AsString();
+    const std::string measure = args[2].constant.scalar.AsString();
+    const int64_t ts = ParseSeriesTimestamp(args[3].constant, "series.update_cas");
+    auto txn = ctx->txn_->GetTxn();
+    uint16_t field_id = 0;
+    std::vector<lgraph::series::MeasureColumn> columns;
+    lgraph::series::BucketPolicy policy;
+    std::vector<lgraph::series::MeasureRef> measures;
+    const bool resolved = elem.is_edge
+                              ? txn->ResolveEdgeSeriesSchema(elem.euid, field, &field_id,
+                                                             &columns, &policy, &measures)
+                              : txn->ResolveVertexSeriesSchema(elem.vid, field, &field_id,
+                                                               &columns, &policy, &measures);
+    if (!resolved) {
+        THROW_CODE(InputError, "Element has no time series field [{}]", field);
+    }
+    size_t idx = measures.size();
+    for (size_t i = 0; i < measures.size(); ++i) {
+        if (measures[i].name == measure) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx == measures.size()) {
+        THROW_CODE(InputError, "Series field [{}] has no measure [{}]", field, measure);
+    }
+    const lgraph::series::MeasureValue expected = ParseSeriesMeasureValue(
+        args[4].constant, measures[idx].type, measure, "series.update_cas");
+    const lgraph::series::MeasureValue updated = ParseSeriesMeasureValue(
+        args[5].constant, measures[idx].type, measure, "series.update_cas");
+    std::vector<lgraph::series::Point> points;
+    const bool read = elem.is_edge
+                          ? txn->GetEdgeSeriesRange(elem.euid, field, ts, ts, &points)
+                          : txn->GetVertexSeriesRange(elem.vid, field, ts, ts, &points);
+    if (!read) {
+        THROW_CODE(InternalError, "Corrupt series in field [{}]", field);
+    }
+    // Exact match on the stored representation (doubles compare bitwise-equal
+    // via ==; non-finite values cannot be stored, so NaN != NaN never arises
+    // from a legitimate expectation).
+    lgraph::series::MeasureValue current = lgraph::series::MeasureValue::Null();
+    if (!points.empty()) current = points.front().values[idx];
+    bool match = false;
+    if (current.is_null && expected.is_null) {
+        match = true;
+    } else if (!current.is_null && !expected.is_null) {
+        match = (measures[idx].type == lgraph::series::MeasureType::DOUBLE)
+                    ? (current.d == expected.d)
+                    : (current.i == expected.i);
+    }
+    int64_t written = 0;
+    if (match) {
+        std::vector<lgraph::series::MeasureValue> values(measures.size(),
+                                                         lgraph::series::MeasureValue::Null());
+        if (!points.empty()) values = points.front().values;
+        values[idx] = updated;
+        const bool ok = elem.is_edge
+                            ? txn->SetEdgeSeriesPoint(elem.euid, field, ts, values)
+                            : txn->SetVertexSeriesPoint(elem.vid, field, ts, values);
+        if (!ok) {
+            THROW_CODE(InputError, "series.update_cas: point does not fit the bucket byte cap");
+        }
+        written = 1;
+    }
+    Record r;
+    r.AddConstant(lgraph::FieldData(written));
+    records->emplace_back(r.Snapshot());
+    FillProcedureYieldItem("series.update_cas", yield_items, records);
+}
+
+void BuiltinProcedure::SeriesClear(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                                   const VEC_STR &yield_items, std::vector<Record> *records) {
+    CYPHER_ARG_CHECK(args.size() == 2, "e.g. series.clear(node, 'prices')");
+    CYPHER_ARG_CHECK(args[1].IsString(), "field must be a string");
+    CheckProcedureYieldItem("series.clear", yield_items);
+    CYPHER_DB_PROCEDURE_GRAPH_CHECK();
+    SeriesProcElement elem;
+    ExtractSeriesProcElement(args[0], "series.clear", &elem);
+    const std::string field = args[1].constant.scalar.AsString();
+    auto txn = ctx->txn_->GetTxn();
+    size_t count = 0;
+    bool ok = false;
+    if (elem.is_edge) {
+        ok = txn->GetEdgeSeriesCount(elem.euid, field, lgraph::series::kMinTs,
+                                     lgraph::series::kMaxTs, &count);
+    } else {
+        ok = txn->GetVertexSeriesCount(elem.vid, field, lgraph::series::kMinTs,
+                                       lgraph::series::kMaxTs, &count);
+    }
+    if (!ok) {
+        THROW_CODE(InputError, "Element has no time series field [{}]", field);
+    }
+    if (elem.is_edge) {
+        txn->ClearEdgeSeries(elem.euid, field);
+    } else {
+        txn->ClearVertexSeries(elem.vid, field);
+    }
+    Record r;
+    r.AddConstant(lgraph::FieldData(static_cast<int64_t>(count)));
+    records->emplace_back(r.Snapshot());
+    FillProcedureYieldItem("series.clear", yield_items, records);
+}
+
 void BuiltinProcedure::DbAddVertexIndex(RTContext *ctx, const Record *record,
                                         const VEC_EXPR &args, const VEC_STR &yield_items,
                                         std::vector<Record> *records) {
@@ -2120,6 +2622,28 @@ void BuiltinProcedure::DbmsGraphDeleteGraph(RTContext *ctx, const cypher::Record
     FillProcedureYieldItem("dbms.graph.deleteGraph", yield_items, records);
 }
 
+void BuiltinProcedure::DbmsGraphCacheStats(RTContext *ctx, const cypher::Record *record,
+                                           const cypher::VEC_EXPR &args,
+                                           const cypher::VEC_STR &yield_items,
+                                           std::vector<cypher::Record> *records) {
+    if (ctx->txn_) ctx->txn_->Abort();
+    CYPHER_ARG_CHECK(args.empty(), FMA_FMT("Function requires 0 arguments, but {} are "
+                                           "given. Usage: dbms.graph.cacheStats()",
+                                           args.size()))
+    CheckProcedureYieldItem("dbms.graph.cacheStats", yield_items);
+    auto& m = ctx->galaxy_->GetGraphMetrics();
+    Record r;
+    r.AddConstant(lgraph::FieldData(static_cast<int64_t>(ctx->galaxy_->RegisteredGraphCount())));
+    r.AddConstant(lgraph::FieldData(static_cast<int64_t>(ctx->galaxy_->OpenGraphCount())));
+    r.AddConstant(lgraph::FieldData(m.cold_opens.load()));
+    r.AddConstant(lgraph::FieldData(m.cache_hits.load()));
+    r.AddConstant(lgraph::FieldData(m.cache_misses.load()));
+    r.AddConstant(lgraph::FieldData(m.evictions.load()));
+    r.AddConstant(lgraph::FieldData(m.evict_skipped_refs.load()));
+    records->emplace_back(r.Snapshot());
+    FillProcedureYieldItem("dbms.graph.cacheStats", yield_items, records);
+}
+
 void BuiltinProcedure::DbmsGraphListGraphs(RTContext *ctx, const cypher::Record *record,
                                            const cypher::VEC_EXPR &args,
                                            const cypher::VEC_STR &yield_items,
@@ -2260,22 +2784,20 @@ void BuiltinProcedure::DbmsSystemInfo(RTContext *ctx, const cypher::Record *reco
                                       std::vector<cypher::Record> *records) {
     CheckProcedureYieldItem("dbms.system.info", yield_items);
     if (ctx->txn_) ctx->txn_->Abort();
-    std::string version;
-    version.append(std::to_string(lgraph::_detail::VER_MAJOR))
-        .append(".")
-        .append(std::to_string(lgraph::_detail::VER_MINOR))
-        .append(".")
-        .append(std::to_string(lgraph::_detail::VER_PATCH));
+    std::string version = lgraph::version::ShortVersion();
     std::vector<std::pair<std::string, lgraph::FieldData>> info = {
         {lgraph::RestStrings::VER, lgraph::FieldData(version)},
         {lgraph::RestStrings::UP_TIME,
          lgraph::FieldData(ctx->sm_ ? ctx->sm_->GetUpTimeInSeconds() : 0.0)},
-        {lgraph::RestStrings::BRANCH, lgraph::FieldData(GIT_BRANCH)},
-        {lgraph::RestStrings::COMMIT, lgraph::FieldData(GIT_COMMIT_HASH)},
-        {lgraph::RestStrings::WEB_COMMIT, lgraph::FieldData(WEB_GIT_COMMIT_HASH)},
-        {lgraph::RestStrings::CPP_ID, lgraph::FieldData(CXX_COMPILER_ID)},
-        {lgraph::RestStrings::CPP_VERSION, lgraph::FieldData(CXX_COMPILER_VERSION)},
-        {lgraph::RestStrings::PYTHON_VERSION, lgraph::FieldData(PYTHON_LIB_VERSION)},
+        {lgraph::RestStrings::BRANCH, lgraph::FieldData(lgraph::version::GitBranch())},
+        {lgraph::RestStrings::COMMIT, lgraph::FieldData(lgraph::version::GitCommitHash())},
+        {lgraph::RestStrings::WEB_COMMIT,
+         lgraph::FieldData(lgraph::version::WebGitCommitHash())},
+        {lgraph::RestStrings::CPP_ID, lgraph::FieldData(lgraph::version::CxxCompilerId())},
+        {lgraph::RestStrings::CPP_VERSION,
+         lgraph::FieldData(lgraph::version::CxxCompilerVersion())},
+        {lgraph::RestStrings::PYTHON_VERSION,
+         lgraph::FieldData(lgraph::version::PythonLibVersion())},
     };
     for (auto &i : info) {
         Record r;
@@ -2357,6 +2879,12 @@ void BuiltinProcedure::DbmsTakeSnapshot(RTContext *ctx, const cypher::Record *re
                                            "given. Usage: dbms.takeSnapshot()",
                                            args.size()))
     if (!ctx->sm_) THROW_CODE(InputError, "Cannot be called in embedded mode.");
+    // The snapshot cold-opens graphs (GraphManager::Backup -> GetOrOpenGraphRef)
+    // and each open constructs a PluginManager, whose constructor creates a write
+    // transaction. Abort the request transaction first so that cold-open does not
+    // fail with "Nested transaction is forbidden". Same pattern as
+    // dbms.meta.refreshCount().
+    if (ctx->txn_) ctx->txn_->Abort();
     std::string path = ctx->sm_->TakeSnapshot();
     Record r;
     r.AddConstant(lgraph::FieldData(path));
@@ -3410,9 +3938,12 @@ void BuiltinProcedure::DbmsHaClusterInfo(RTContext *ctx, const Record *record,
     if (!ctx->sm_->IsInHaMode())
         THROW_CODE(InputError, "The service should be started as a high availability cluster .");
     auto peers = ctx->sm_->ListPeers();
+    auto raft = ctx->sm_->GetRaftMetrics();
     Record r;
     r.AddConstant(lgraph::FieldData(lgraph::ValueToJson(peers).serialize()));
     r.AddConstant(lgraph::FieldData(ctx->sm_->IsCurrentMaster()));
+    r.AddConstant(lgraph::FieldData(raft.current_term));
+    r.AddConstant(lgraph::FieldData(raft.commit_index));
     records->emplace_back(r.Snapshot());
     FillProcedureYieldItem("dbms.ha.clusterInfo", yield_items, records);
 }

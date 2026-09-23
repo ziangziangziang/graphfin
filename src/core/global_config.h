@@ -100,6 +100,44 @@ struct BasicConfigs {
 
     // default disable plugin load/delete
     bool enable_plugin = false;
+    // Open LMDB environments with MDB_NOTLS.
+    //
+    // Each graph is its own LMDB environment, and without MDB_NOTLS LMDB
+    // allocates one pthread thread-specific-data key per environment
+    // (src/core/lmdb/mdb.c:5211). glibc caps process-wide keys at
+    // PTHREAD_KEYS_MAX (1024), which is a compile-time constant and not an
+    // adjustable rlimit, so the process fails to open more than ~1000 graphs
+    // with EAGAIN ("Resource temporarily unavailable").
+    //
+    // Default is true. Set false only to restore the pre-fix behaviour.
+    // See docs/architecture/07-scalability-risks.md R0.
+    bool lmdb_notls = true;
+    // Max named tables (DBIs) per LMDB environment. LMDB reserves per-env
+    // structures sized by this number, so it drives the per-graph heap cost of
+    // hosting many graphs. Must be >= the tables a graph will use (base tables
+    // + per-index tables + detached property tables + plugin catalogs).
+    int lmdb_max_dbs = 10000;
+    // Maximum number of graphs this instance will host. 0 means no
+    // application-level limit; resource limits are then the natural bound.
+    // Replaces the former hard-coded MAX_NUM_GRAPHS = 4096.
+    int max_graphs = 0;
+    // Maximum number of graphs physically open (LMDB env + validator thread +
+    // ~3 fds each). Registered graphs beyond this are opened lazily on first
+    // access and evicted LRU. See docs/architecture/07-scalability-risks.md.
+    int max_open_graphs = 1000;
+    // Evict graphs idle longer than this many seconds (0 = only evict when the
+    // open count exceeds max_open_graphs).
+    int graph_idle_timeout_s = 900;
+    // When max_open_graphs is reached and every open graph is pinned by an
+    // outstanding reference, wait up to this many seconds for a lease to be
+    // released before failing the open with a retryable error (rather than
+    // exceeding the configured bound). 0 = fail immediately.
+    int graph_open_admission_timeout_s = 30;
+    // Prometheus scrape endpoint for lifecycle metrics, e.g. "0.0.0.0:8080" or
+    // ":8080". Empty (default) disables the endpoint. When set, the server
+    // exposes /metrics with the existing resource gauges plus
+    // tugraph_graph_cache_* lifecycle counters.
+    std::string monitor_host;
     BrowserOptions browser_options;
 };
 

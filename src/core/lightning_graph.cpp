@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Copyright 2022 AntGroup CO., Ltd.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -11,6 +11,8 @@
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
+#include <algorithm>
+#include <map>
 #include <memory>
 #include <boost/algorithm/string.hpp>
 #include "db/galaxy.h"
@@ -30,6 +32,10 @@ void LightningGraph::Close() {
     _HoldWriteLock(meta_lock_);
     fulltext_index_.reset();
     index_manager_.reset();
+    // The series store holds a table handle tied to the env that store_ owns,
+    // so it goes before store_ does. (blob_manager_ is left dangling here today;
+    // this one is not, so that nothing can outlive Close.)
+    series_store_.reset();
     graph_.reset();
     store_.reset();
 }
@@ -114,6 +120,9 @@ void LightningGraph::DropAllVertex() {
         }
         // clear graph data
         graph_->Drop(txn.GetTxn());
+        // clear time-series buckets: element keys carry no label, so per-element
+        // cleanup cannot run here; the whole table goes with the vertices.
+        series_store_->DeleteAll(txn.GetTxn());
         // clear count data
         graph_->DeleteAllCount(txn.GetTxn());
         txn.Commit();
@@ -283,6 +292,43 @@ bool LightningGraph::DelLabel(const std::string& label, bool is_vertex, size_t* 
     std::unique_ptr<SchemaInfo> new_schema(new SchemaInfo(*curr_schema_info.Get()));
     LabelId lid = schema->GetLabelId();
     size_t modified = 0;
+    // Time-series buckets are keyed by element with no label in the key, so the
+    // label's buckets have to go while its elements are still enumerable. This
+    // runs in the same transaction as the record deletion below, so it is
+    // atomic with it.
+    {
+        auto drop_edge_series = [&](const EdgeUid& euid) {
+            series_store_->DeleteElement(txn.GetTxn(), series::ElementKey::FromEdge(euid));
+        };
+        std::unique_ptr<graph::VertexIterator> vit(new graph::VertexIterator(
+            graph_->GetUnmanagedVertexIterator(&txn.GetTxn())));
+        while (vit->IsValid()) {
+            if (is_vertex) {
+                if (SchemaManager::GetRecordLabelId(vit->GetProperty()) != lid) {
+                    vit->Next();
+                    continue;
+                }
+                VertexId v = vit->GetId();
+                series_store_->DeleteElement(txn.GetTxn(),
+                                             series::ElementKey::FromVertex(v));
+                for (auto eit = vit->GetOutEdgeIterator(); eit.IsValid(); eit.Next()) {
+                    drop_edge_series(EdgeUid(eit.GetSrc(), eit.GetDst(), eit.GetLabelId(),
+                                             eit.GetTemporalId(), eit.GetEdgeId()));
+                }
+                for (auto eit = vit->GetInEdgeIterator(); eit.IsValid(); eit.Next()) {
+                    drop_edge_series(EdgeUid(eit.GetSrc(), eit.GetDst(), eit.GetLabelId(),
+                                             eit.GetTemporalId(), eit.GetEdgeId()));
+                }
+            } else {
+                for (auto eit = vit->GetOutEdgeIterator(); eit.IsValid(); eit.Next()) {
+                    if (eit.GetLabelId() != lid) continue;
+                    drop_edge_series(EdgeUid(eit.GetSrc(), eit.GetDst(), eit.GetLabelId(),
+                                             eit.GetTemporalId(), eit.GetEdgeId()));
+                }
+            }
+            vit->Next();
+        }
+    }
     if (schema->DetachProperty()) {
         auto table_name = schema->GetPropertyTable().Name();
         LOG_INFO() << FMA_FMT("begin to scan detached table: {}", table_name);
@@ -764,6 +810,39 @@ bool LightningGraph::AlterLabelModEdgeConstraints(const std::string& label,
     return true;
 }
 
+namespace {
+// R1: series buckets are keyed by packed-layout positional field id, but
+// Schema::SetSchema regroups fixed-width fields before variable-width fields
+// on every reopen while Schema::AddFields appends live. Adding a fixed-width
+// field (or changing a type's fixed/variable classification) behind a series
+// field (BLOB = variable-width) therefore orphans buckets on reopen, or risks
+// addressing a sibling series' buckets. Until series identity is persisted
+// independently of record layout, reject any packed-layout DDL that would
+// leave a series field's live id different from its reload-canonical id.
+// Fast-alter ids are stable and exempt.
+bool SeriesReloadIdWouldShift(const std::vector<FieldSpec>& live_specs,
+                              std::string* shifted_series) {
+    std::vector<size_t> reload_order;
+    reload_order.reserve(live_specs.size());
+    for (size_t i = 0; i < live_specs.size(); i++) {
+        if (field_data_helper::IsFixedLengthFieldType(live_specs[i].type))
+            reload_order.push_back(i);
+    }
+    for (size_t i = 0; i < live_specs.size(); i++) {
+        if (!field_data_helper::IsFixedLengthFieldType(live_specs[i].type))
+            reload_order.push_back(i);
+    }
+    for (size_t reload_id = 0; reload_id < reload_order.size(); reload_id++) {
+        const size_t live_id = reload_order[reload_id];
+        if (live_specs[live_id].series && live_id != reload_id) {
+            if (shifted_series) *shifted_series = live_specs[live_id].name;
+            return true;
+        }
+    }
+    return false;
+}
+}  // namespace
+
 bool LightningGraph::AlterLabelDelFields(const std::string& label,
                                          const std::vector<std::string>& del_fields_,
                                          bool is_vertex, size_t* n_modified) {
@@ -775,6 +854,72 @@ bool LightningGraph::AlterLabelDelFields(const std::string& label,
     std::sort(del_fields.begin(), del_fields.end());
     del_fields.erase(std::unique(del_fields.begin(), del_fields.end()), del_fields.end());
     if (del_fields.empty()) THROW_CODE(InputError, "No fields specified.");
+
+    // Series buckets are keyed by record field id. In the packed layout those
+    // ids are positional, so deleting a field compacts the ids of every field
+    // behind it: buckets of a deleted series field are dropped, and buckets of
+    // a surviving series field are re-keyed to its new id, both atomically with
+    // the schema change below. The fast-alter layout keeps stable ids, so it
+    // only needs the bucket cleanup.
+    std::vector<std::pair<std::string, size_t>> series_to_drop;
+    std::vector<std::pair<size_t, size_t>> series_to_remap;  // (old id, new id)
+    {
+        ScopedRef<SchemaInfo> curr_schema_info = schema_.GetScopedRef();
+        SchemaManager* curr_sm = is_vertex ? &curr_schema_info->v_schema_manager
+                                            : &curr_schema_info->e_schema_manager;
+        Schema* curr_schema = curr_sm->GetSchema(label);
+        if (curr_schema) {
+            std::unordered_set<std::string> del_set(del_fields.begin(), del_fields.end());
+            std::vector<size_t> del_positions;
+            for (const auto& name : del_fields) {
+                auto* fe = curr_schema->TryGetFieldExtractor(name);
+                if (fe && fe->IsSeries()) {
+                    series_to_drop.emplace_back(name, fe->GetFieldId());
+                }
+                size_t del_pos = 0;
+                if (curr_schema->TryGetFieldId(name, del_pos)) {
+                    del_positions.push_back(del_pos);
+                }
+            }
+            if (!curr_schema->GetFastAlterSchema()) {
+                for (size_t i = 0; i < curr_schema->GetNumFields(); i++) {
+                    auto* fe = curr_schema->GetFieldExtractor(i);
+                    if (fe->IsDeleted() || !fe->IsSeries()) continue;
+                    if (del_set.count(fe->Name())) continue;
+                    const size_t old_pos = fe->GetFieldId();
+                    size_t new_pos = old_pos;
+                    for (size_t del_pos : del_positions) {
+                        if (del_pos < old_pos) new_pos--;
+                    }
+                    if (new_pos != old_pos) {
+                        series_to_remap.emplace_back(old_pos, new_pos);
+                    }
+                }
+                // R1: the positional remap above keeps live reads working, but
+                // reopen regroups fixed-width fields before variable-width
+                // fields. If the surviving layout is not reload-canonical, the
+                // next reopen would shift series ids again and orphan buckets.
+                // Reject before anything commits; the caller can drop the
+                // series field first or use a fast-alter label.
+                std::vector<FieldSpec> live_specs = curr_schema->GetFieldSpecs();
+                live_specs.erase(
+                    std::remove_if(live_specs.begin(), live_specs.end(),
+                                   [&](const FieldSpec& s) {
+                                       return del_set.count(s.name) > 0;
+                                   }),
+                    live_specs.end());
+                std::string shifted;
+                if (SeriesReloadIdWouldShift(live_specs, &shifted)) {
+                    THROW_CODE(InputError,
+                               "Cannot delete field(s) from label [{}]: the packed "
+                               "layout would shift time series field [{}] on the next "
+                               "reopen and orphan its buckets. Drop the series field "
+                               "first or use a fast-alter label instead.",
+                               label, shifted);
+                }
+            }
+        }
+    }
 
     // get fids of the fields in new schema
     std::vector<size_t> new_fids;
@@ -849,6 +994,55 @@ bool LightningGraph::AlterLabelDelFields(const std::string& label,
         for (const auto &cidx : composite_index_key) {
             index_manager_->DeleteVertexCompositeIndex(txn.GetTxn(), label, cidx);
         }
+        // Drop the buckets of deleted series fields, and re-key the buckets of
+        // surviving series fields whose positional id compacts, while the
+        // label's elements are still enumerable in this transaction.
+        if (!series_to_drop.empty() || !series_to_remap.empty()) {
+            const LabelId drop_lid = curr_schema->GetLabelId();
+            auto drop_and_remap_vertex = [&](VertexId v) {
+                const series::ElementKey elem = series::ElementKey::FromVertex(v);
+                for (const auto& drop : series_to_drop) {
+                    series_store_->DeleteField(txn.GetTxn(), elem,
+                                               static_cast<uint16_t>(drop.second));
+                }
+                for (const auto& remap : series_to_remap) {
+                    series_store_->MigrateField(txn.GetTxn(), elem,
+                                                static_cast<uint16_t>(remap.first),
+                                                static_cast<uint16_t>(remap.second));
+                }
+            };
+            auto drop_and_remap_edge = [&](const EdgeUid& euid) {
+                const series::ElementKey elem = series::ElementKey::FromEdge(euid);
+                for (const auto& drop : series_to_drop) {
+                    series_store_->DeleteField(txn.GetTxn(), elem,
+                                               static_cast<uint16_t>(drop.second));
+                }
+                for (const auto& remap : series_to_remap) {
+                    series_store_->MigrateField(txn.GetTxn(), elem,
+                                                static_cast<uint16_t>(remap.first),
+                                                static_cast<uint16_t>(remap.second));
+                }
+            };
+            std::unique_ptr<graph::VertexIterator> vit(new graph::VertexIterator(
+                graph_->GetUnmanagedVertexIterator(&txn.GetTxn())));
+            while (vit->IsValid()) {
+                if (is_vertex) {
+                    if (SchemaManager::GetRecordLabelId(vit->GetProperty()) != drop_lid) {
+                        vit->Next();
+                        continue;
+                    }
+                    drop_and_remap_vertex(vit->GetId());
+                } else {
+                    for (auto eit = vit->GetOutEdgeIterator(); eit.IsValid(); eit.Next()) {
+                        if (eit.GetLabelId() != drop_lid) continue;
+                        drop_and_remap_edge(EdgeUid(eit.GetSrc(), eit.GetDst(),
+                                                    eit.GetLabelId(), eit.GetTemporalId(),
+                                                    eit.GetEdgeId()));
+                    }
+                }
+                vit->Next();
+            }
+        }
     };
 
     return _AlterLabel(is_vertex, label, setup_and_gen_new_schema, make_new_prop_and_destroy_old,
@@ -884,6 +1078,47 @@ bool LightningGraph::AlterLabelAddFields(const std::string& label,
                            fs.name);
         }
     }
+    // R1: packed-layout series identity is positional, but reopen regroups
+    // fixed-width fields before variable-width fields. Adding a fixed-width
+    // field behind a series field (BLOB = variable-width) would orphan its
+    // buckets on the next reopen. Reject before anything commits.
+    {
+        ScopedRef<SchemaInfo> curr_schema_info = schema_.GetScopedRef();
+        SchemaManager* curr_sm = is_vertex ? &curr_schema_info->v_schema_manager
+                                            : &curr_schema_info->e_schema_manager;
+        Schema* curr_schema = curr_sm->GetSchema(label);
+        if (curr_schema && !curr_schema->GetFastAlterSchema()) {
+            bool has_series = false;
+            for (const auto& f : to_add) {
+                if (f.series) {
+                    has_series = true;
+                    break;
+                }
+            }
+            if (!has_series) {
+                for (size_t i = 0; i < curr_schema->GetNumFields(); i++) {
+                    if (curr_schema->GetFieldExtractor(i)->IsSeries()) {
+                        has_series = true;
+                        break;
+                    }
+                }
+            }
+            if (has_series) {
+                std::vector<FieldSpec> live_specs = curr_schema->GetFieldSpecs();
+                for (const auto& f : to_add) live_specs.push_back(f);
+                std::string shifted;
+                if (SeriesReloadIdWouldShift(live_specs, &shifted)) {
+                    THROW_CODE(InputError,
+                               "Cannot add field(s) to label [{}]: the packed layout "
+                               "would shift time series field [{}] on the next reopen "
+                               "and orphan its buckets. Use a fast-alter label, add "
+                               "only variable-width fields, or drop the series field "
+                               "first.",
+                               label, shifted);
+                }
+            }
+        }
+    }
 
     std::vector<size_t> dst_fids;  // field ids of old fields in new record
     std::vector<size_t> src_fids;  // field ids of old fields in old record
@@ -901,6 +1136,11 @@ bool LightningGraph::AlterLabelAddFields(const std::string& label,
             }
             new_schema.AddFields(to_add);
             for (size_t i = 0; i < to_add.size(); i++) {
+                // Series fields must never carry a default: schema validation
+                // rejects set_default_value on reopen, and the record keeps no
+                // bytes for a series field anyway. Skipping here preserves the
+                // invariant through persistence (R2).
+                if (to_add[i].series) continue;
                 auto extractor = new_schema.GetFieldExtractor(to_add[i].name);
                 extractor->SetDefaultValue(default_values[i]);
             }
@@ -991,6 +1231,73 @@ bool LightningGraph::AlterLabelModFields(const std::string& label,
     std::vector<size_t> direct_copy_src_fids;
     std::vector<size_t> mod_dst_fids;
     std::vector<size_t> mod_src_fids;
+    // A series field's buckets are decoded with the measures from the schema,
+    // so redefining the measure set would orphan or misdecode stored buckets.
+    // Reject measure and series-flag changes here; bucket-cap retuning stays
+    // allowed. Positions never move in ModFields, but changing a field's type
+    // can change its fixed/variable classification, which regroups ids on the
+    // next reopen (R1) — so a reload-shift check is still required.
+    {
+        ScopedRef<SchemaInfo> curr_schema_info = schema_.GetScopedRef();
+        SchemaManager* curr_sm = is_vertex ? &curr_schema_info->v_schema_manager
+                                            : &curr_schema_info->e_schema_manager;
+        Schema* curr_schema = curr_sm->GetSchema(label);
+        if (curr_schema) {
+            for (const auto& f : to_mod) {
+                auto* fe = curr_schema->TryGetFieldExtractor(f.name);
+                if (!fe) continue;
+                const FieldSpec& old = fe->GetFieldSpec();
+                auto reject = [&](const std::string& why) {
+                    THROW_CODE(InputError,
+                               "Cannot modify time series field [{}] of label [{}]: {}. "
+                               "Drop the series field and recreate it instead.",
+                               f.name, label, why);
+                };
+                // Closing the ordinary-field-to-series conversion path: gaining
+                // the modifier would silently hide ordinary stored data with no
+                // bucket migration, so it is rejected like any other flag flip.
+                if (!old.series && f.series) {
+                    THROW_CODE(InputError,
+                               "Cannot modify field [{}] of label [{}]: it would become "
+                               "a time series and hide its stored ordinary data. Drop "
+                               "the field and recreate it as a series instead.",
+                               f.name, label);
+                }
+                if (!fe->IsSeries()) continue;
+                if (!f.series) reject("it would stop being a time series");
+                if (f.series_spec.measures.size() != old.series_spec.measures.size()) {
+                    reject("its measure set would change");
+                }
+                for (size_t i = 0; i < f.series_spec.measures.size(); i++) {
+                    const auto& want = f.series_spec.measures[i];
+                    const auto& have = old.series_spec.measures[i];
+                    if (want.name != have.name || want.type != have.type) {
+                        reject("its measure set would change");
+                    }
+                }
+            }
+            if (!curr_schema->GetFastAlterSchema()) {
+                // Simulate the post-mod live specs (same positions, new types)
+                // and reject a reload regrouping shift of any series id.
+                std::map<std::string, FieldSpec> mod_map;
+                for (const auto& f : to_mod) mod_map.emplace(f.name, f);
+                std::vector<FieldSpec> live_specs = curr_schema->GetFieldSpecs();
+                for (auto& s : live_specs) {
+                    auto it = mod_map.find(s.name);
+                    if (it != mod_map.end()) s = it->second;
+                }
+                std::string shifted;
+                if (SeriesReloadIdWouldShift(live_specs, &shifted)) {
+                    THROW_CODE(InputError,
+                               "Cannot modify field(s) of label [{}]: the change would "
+                               "shift time series field [{}] on the next reopen and "
+                               "orphan its buckets. Drop the series field first or use "
+                               "a fast-alter label instead.",
+                               label, shifted);
+                }
+            }
+        }
+    }
     auto setup_and_gen_new_schema = [&](Schema* curr_schema) -> Schema {
         if (curr_schema->GetFastAlterSchema()) {
             // check field types
@@ -3069,6 +3376,9 @@ void LightningGraph::Open() {
     // blob manager
     auto b_tbl = BlobManager::OpenTable(*txn, *store_, _detail::BLOB_TABLE);
     blob_manager_.reset(new BlobManager(*txn, std::move(b_tbl)));
+    // time-series buckets
+    auto s_tbl = series::SeriesStore::OpenTable(*txn, *store_, _detail::SERIES_TABLE);
+    series_store_.reset(new series::SeriesStore(*txn, std::move(s_tbl)));
     txn->Commit();
     if (config_.load_plugins) {
         plugin_manager_.reset(new PluginManager(

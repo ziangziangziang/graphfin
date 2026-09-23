@@ -27,7 +27,12 @@ size_t LMDBKvTable::GetVersion(LMDBKvTransaction& txn, const Value& key) {
     MDB_val k = key.MakeMdbVal();
     MDB_val v;
     int ec = mdb_get(txn.GetTxn(), dbi_, &k, &v);
-    return ec == 0 ? *(size_t*)(v.mv_data) : 0;
+    if (ec != 0) return 0;
+    // mv_data is not guaranteed 8-byte aligned; memcpy instead of a direct
+    // dereference (UBSan: misaligned size_t load; fatal on strict ARM).
+    size_t version = 0;
+    memcpy(&version, v.mv_data, sizeof(version));
+    return version;
 }
 
 static int DefaultCompareKey(const MDB_val* a, const MDB_val* b) {
@@ -122,7 +127,9 @@ Value LMDBKvTable::GetValue(KvTransaction& txn, const Value& key, bool for_updat
     if (ec == MDB_SUCCESS) {
         if (for_update) {
             DeltaStore& delta = lmdb_txn.GetDelta(*this);
-            size_t version = *(size_t*)(val.mv_data);
+            // See GetVersion: mv_data alignment is not guaranteed.
+            size_t version = 0;
+            memcpy(&version, val.mv_data, sizeof(version));
             delta.GetForUpdate(key, version);
         }
         return Value((char*)val.mv_data + sizeof(size_t), val.mv_size - sizeof(size_t));

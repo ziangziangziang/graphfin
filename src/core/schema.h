@@ -739,6 +739,22 @@ class Schema {
             s = BinaryReadFieldInfoV2IntoFieldVec(buf, fds);
             bytes_read += s;
         }
+        if (buf.GetSize() > 0) {
+            s = BinaryReadSeriesInfoV3IntoFieldVec(buf, fds);
+            bytes_read += s;
+        }
+        // Recovery for databases written before the R2 fix: the fast-alter
+        // add-field path used to stamp a (null) default value on lazily added
+        // series fields, which construction-time validation rejects. A null
+        // default carries no value and the record keeps no bytes for a series
+        // field either way, so strip the spurious flag on load. Non-null
+        // defaults stay rejected by SetSchema below, and new DDL paths never
+        // set the flag (see LightningGraph::AlterLabelAddFields).
+        for (auto& fd : fds) {
+            if (fd.series && fd.set_default_value && fd.default_value.IsNull()) {
+                fd.set_default_value = false;
+            }
+        }
         SetSchema(is_vertex_, fds, primary_field_, temporal_field_, temporal_order_,
                   edge_constraints_);
         return bytes_read;
@@ -752,7 +768,8 @@ class Schema {
                BinaryWrite(buf, primary_field_) + BinaryWrite(buf, temporal_field_) +
                BinaryWrite(buf, temporal_order_) + BinaryWrite(buf, edge_constraints_) +
                BinaryWrite(buf, detach_property_) + BinaryWrite(buf, fast_alter_schema) +
-               BinaryWriteFieldInfoV2(buf, GetFieldSpecs());
+               BinaryWriteFieldInfoV2(buf, GetFieldSpecs()) +
+               BinaryWriteSeriesInfoV3(buf, GetFieldSpecs());
     }
 
     std::string ToString() const { return fma_common::ToString(GetFieldSpecsAsMap()); }
@@ -811,6 +828,86 @@ class Schema {
             read_size += BinaryRead(buf, spec[i].deleted) + BinaryRead(buf, spec[i].id) +
                          BinaryRead(buf, spec[i].set_default_value) +
                          BinaryRead(buf, spec[i].default_value);
+        }
+        return read_size;
+    }
+
+    static bool HasSeriesField(const std::vector<FieldSpec>& spec) {
+        for (const auto& f : spec) {
+            if (f.series) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Series information is a trailing extension (V3), written only when some
+     * field actually carries a series. A schema without one therefore keeps
+     * exactly the bytes it had before series fields existed, and old dumps -
+     * which simply end after V2 - keep loading, since the reader is guarded by
+     * the same "are there bytes left" test.
+     *
+     * Layout, per series field: its index in the field vector, its name (to
+     * catch a mismatch the way V2 does), its measures as (name, type), and the
+     * three bucket knobs.
+     */
+    template <typename StreamT>
+    static size_t BinaryWriteSeriesInfoV3(StreamT& buf, const std::vector<FieldSpec>& spec) {
+        if (!HasSeriesField(spec)) return 0;
+        size_t write_size = 0;
+        size_t n_series = 0;
+        for (const auto& f : spec) {
+            if (f.series) ++n_series;
+        }
+        write_size += BinaryWrite(buf, n_series);
+        for (size_t i = 0; i < spec.size(); ++i) {
+            const FieldSpec& f = spec[i];
+            if (!f.series) continue;
+            write_size += BinaryWrite(buf, i);
+            write_size += BinaryWrite(buf, f.name);
+            write_size += BinaryWrite(buf, f.series_spec.measures.size());
+            for (const auto& m : f.series_spec.measures) {
+                write_size += BinaryWrite(buf, m.name);
+                write_size += BinaryWrite(buf, m.type);
+            }
+            write_size += BinaryWrite(buf, f.series_spec.bucket_max_points);
+            write_size += BinaryWrite(buf, f.series_spec.bucket_max_span_us);
+            write_size += BinaryWrite(buf, f.series_spec.bucket_max_bytes);
+        }
+        return write_size;
+    }
+
+    template <typename StreamT>
+    static size_t BinaryReadSeriesInfoV3IntoFieldVec(StreamT& buf, std::vector<FieldSpec>& spec) {
+        size_t read_size = 0;
+        size_t n_series = 0;
+        read_size += BinaryRead(buf, n_series);
+        FMA_ASSERT(n_series <= spec.size()) << "Deserialize series info fatal: n_series"
+                                            << n_series << " > spec.size()" << spec.size();
+        for (size_t i = 0; i < n_series; ++i) {
+            size_t field_idx = 0;
+            std::string field_name;
+            read_size += BinaryRead(buf, field_idx);
+            read_size += BinaryRead(buf, field_name);
+            FMA_ASSERT(field_idx < spec.size()) << "Deserialize series info fatal: field_idx"
+                                                << field_idx << " >= spec.size()" << spec.size();
+            FMA_ASSERT(spec[field_idx].name == field_name)
+                << "Deserialize series info fatal: field_name" << field_name << " != spec["
+                << field_idx << "].name" << spec[field_idx].name;
+            FieldSpec& fs = spec[field_idx];
+            fs.series = true;
+            size_t n_measures = 0;
+            read_size += BinaryRead(buf, n_measures);
+            FMA_ASSERT(n_measures <= _detail::MAX_SERIES_MEASURES)
+                << "Deserialize series info fatal: n_measures" << n_measures
+                << " > MAX_SERIES_MEASURES" << _detail::MAX_SERIES_MEASURES;
+            fs.series_spec.measures.resize(n_measures);
+            for (size_t m = 0; m < n_measures; ++m) {
+                read_size += BinaryRead(buf, fs.series_spec.measures[m].name);
+                read_size += BinaryRead(buf, fs.series_spec.measures[m].type);
+            }
+            read_size += BinaryRead(buf, fs.series_spec.bucket_max_points);
+            read_size += BinaryRead(buf, fs.series_spec.bucket_max_span_us);
+            read_size += BinaryRead(buf, fs.series_spec.bucket_max_bytes);
         }
         return read_size;
     }

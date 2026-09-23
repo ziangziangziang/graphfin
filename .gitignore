@@ -64,6 +64,7 @@ restful/server/build/
 server/united_server
 *.pem
 build
+build-*/
 *.ttl
 release/doc/*.html
 src/restful/server/resource/
@@ -121,3 +122,16 @@ deps/geax-front-end/.gitignore
 deps/geax-front-end/LEGAL.md
 deps/geax-front-end/README.md
 deps/geax-front-end/cpplint
+
+# Phase 0 build/benchmark logs and scratch artifacts
+phase0-logs/
+phase0-results/
+
+# Remote test-host notes (contains host credentials; never commit)
+TEST-REMOTE.md
+.opencode/
+AGENTS.md
+USE_CASE.md
+REVIEW.md
+REPORT.md
+TEST-REMOTE.md

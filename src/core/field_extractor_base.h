@@ -121,6 +121,15 @@ class FieldExtractorBase {
 
     bool IsDeleted() const { return def_.deleted; }
 
+    /**
+     * A series field carries no bytes in the record; its points live in the
+     * series table and are read through the series read API. It must be skipped
+     * whenever a field list is enumerated for display or bulk copy (property
+     * printing, `properties()`, the iterator listing, `SET n = m`), because the
+     * stored BLOB slot is empty and showing it as `null` would be wrong.
+     */
+    bool IsSeries() const { return def_.series; }
+
     VertexIndex* GetVertexIndex() const { return vertex_index_.get(); }
 
     EdgeIndex* GetEdgeIndex() const { return edge_index_.get(); }

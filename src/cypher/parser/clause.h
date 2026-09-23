@@ -340,21 +340,29 @@ struct QueryPart {
         }
     }
 
-    bool ReadOnly(std::string& name, std::string& type) const {
-        if (sa_call_clause) {
-            auto &func_name = std::get<0>(*sa_call_clause);
-            if (func_name == "db.plugin.callPlugin") {
-                auto &plugins = std::get<1>(*sa_call_clause);
-                if (plugins.size() > 2) {
-                    name = std::move(plugins[1].ToString());
-                    type = std::move(plugins[0].ToString());
-                }
-                return false;
-            } else {
-                auto pp = cypher::global_ptable.GetProcedure(func_name);
-                if (pp && !pp->read_only) return false;
+    // A CALL (standalone or in-query) to a mutating procedure makes the part a
+    // write. A standalone CALL followed by RETURN parses as a regular query
+    // whose call lands in iq_call_clause; ignoring it confined such writes to
+    // the HA leader without raft replication and diverged the followers.
+    static bool CallClauseIsReadOnly(const Clause::TYPE_CALL& call, std::string& name,
+                                     std::string& type) {
+        auto& func_name = std::get<0>(call);
+        if (func_name == "db.plugin.callPlugin") {
+            auto& plugins = std::get<1>(call);
+            if (plugins.size() > 2) {
+                name = std::move(plugins[1].ToString());
+                type = std::move(plugins[0].ToString());
             }
+            return false;
         }
+        auto pp = cypher::global_ptable.GetProcedure(func_name);
+        if (pp && !pp->read_only) return false;
+        return true;
+    }
+
+    bool ReadOnly(std::string& name, std::string& type) const {
+        if (sa_call_clause && !CallClauseIsReadOnly(*sa_call_clause, name, type)) return false;
+        if (iq_call_clause && !CallClauseIsReadOnly(*iq_call_clause, name, type)) return false;
         /* create_clause && set_clause && delete_clause must set write txn */
         return create_clause.empty() && set_clause.empty() && !delete_clause && !remove_clause &&
                merge_clause.empty();

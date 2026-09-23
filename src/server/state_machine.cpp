@@ -19,6 +19,7 @@
 #include "db/galaxy.h"
 #include "import/import_online.h"
 #include "lgraph/lgraph_types.h"
+#include "monitor/prometheus_monitor.h"
 #include "protobuf/ha.pb.h"
 #include "server/proto_convert.h"
 #include "server/state_machine.h"
@@ -31,7 +32,33 @@ using namespace fma_common;
 
 lgraph::StateMachine::StateMachine(const Config& config,
                                    std::shared_ptr<GlobalConfig> global_config)
-    : config_(config), global_config_(global_config) {}
+    : config_(config), global_config_(global_config) {
+    if (global_config_ && !global_config_->monitor_host.empty()) {
+        monitor_.reset(new monitor::ResourceMonitor(global_config_->monitor_host));
+        // Report graph lifecycle metrics every 5s. The monitor lives for the
+        // whole server lifetime, so it survives Galaxy reloads (unlike the
+        // Galaxy-owned eviction task), and the scrape endpoint stays bound.
+        auto& scheduler = fma_common::TimedTaskScheduler::GetInstance();
+        metrics_task_ = scheduler.ScheduleReccurringTask(
+            5000, [this](fma_common::TimedTask*) {
+                Galaxy* g = GetGalaxy();
+                if (!g || !monitor_) return;
+                auto& m = g->GetGraphMetrics();
+                monitor_->report_graph_metrics(
+                    static_cast<int64_t>(g->RegisteredGraphCount()),
+                    static_cast<int64_t>(g->OpenGraphCount()),
+                    m.cold_opens.load(), m.cache_hits.load(), m.cache_misses.load(),
+                    m.evictions.load(), m.evict_skipped_refs.load());
+                // Raft consensus metrics (Phase 3 HA). Non-HA returns zeros.
+                auto raft = GetRaftMetrics();
+                monitor_->report_raft_metrics(
+                    raft.current_term, raft.commit_index, raft.applied_index,
+                    raft.is_leader, 0, 0);
+            });
+        LOG_INFO() << "Prometheus metrics endpoint enabled on "
+                   << global_config_->monitor_host;
+    }
+}
 
 lgraph::StateMachine::~StateMachine() { Stop(); }
 
@@ -70,6 +97,11 @@ bool lgraph::StateMachine::ResetAdminPassword(const std::string& user,
 }
 
 void lgraph::StateMachine::Stop() {
+    if (metrics_task_) {
+        metrics_task_->Cancel();
+        metrics_task_ = nullptr;
+    }
+    monitor_.reset();
     galaxy_.reset();
     backup_log_.reset();
 }

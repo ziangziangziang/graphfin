@@ -24,6 +24,7 @@
 
 #include "fma-common/thread_pool.h"
 #include "fma-common/rw_lock.h"
+#include "fma-common/timed_task.h"
 #include "fma-common/utils.h"
 
 #include "core/global_config.h"
@@ -59,6 +60,20 @@ class Galaxy {
     double retry_login_time = 0.0;
 
  private:
+    /** Stops the current eviction task (if any) and waits for any in-flight
+     *  run to finish. Safe to call multiple times. */
+    void StopEvictionTask();
+
+    /** (Re)creates the idle-graph eviction task bound to this Galaxy, not to a
+     *  specific GraphManager: the callback re-resolves graphs_ under
+     *  graphs_lock_, so it stays correct across the copy-on-write in
+     *  CreateGraph/DeleteGraph/ModGraph. Returns the new task. */
+    fma_common::TimedTaskScheduler::TaskPtr StartEvictionTask();
+
+    /** Callback for the eviction task. Resolves the current manager under
+     *  graphs_lock_ so it can never fire on a destroyed manager. */
+    void EvictIdleGraphsTick();
+
     mutable KillableRWLock reload_lock_;
     Config config_;
     std::shared_ptr<GlobalConfig> global_config_;
@@ -70,6 +85,7 @@ class Galaxy {
     std::unique_ptr<AclManager> acl_;
     mutable KillableRWLock acl_lock_;
     std::unique_ptr<GraphManager> graphs_;
+    fma_common::TimedTaskScheduler::TaskPtr evict_task_;
     mutable KillableRWLock graphs_lock_;
     TokenManager token_manager_;
     std::unique_ptr<KvTable> db_info_table_;
@@ -88,6 +104,10 @@ class Galaxy {
 
     inline const Config& GetConfig() const { return config_; }
     inline const std::shared_ptr<GlobalConfig> GetGlobalConfigPtr() const { return global_config_; }
+    inline GraphManager* GetGraphManager() { return graphs_.get(); }
+    inline size_t RegisteredGraphCount() const { return graphs_->RegisteredGraphCount(); }
+    inline size_t OpenGraphCount() const { return graphs_->OpenGraphCount(); }
+    inline const GraphManager::Metrics& GetGraphMetrics() const { return graphs_->GetMetrics(); }
 
     std::string GetUserToken(const std::string& user, const std::string& password);
 

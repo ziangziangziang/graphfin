@@ -58,6 +58,7 @@ add_library(${TARGET_SERVER_LIB} STATIC
         http/import_manager.cpp
         http/import_task.cpp
         http/algo_task.cpp
+        monitor/prometheus_monitor.cpp
         ${PROTO_SRCS})
 
 if (OURSYSTEM STREQUAL "centos9")
@@ -100,6 +101,8 @@ if (NOT (CMAKE_SYSTEM_NAME STREQUAL "Darwin"))
             -Wl,-Bdynamic
             dl
             c
+            libprometheus-cpp-pull.a
+            libprometheus-cpp-core.a
             )
 else ()
     target_link_libraries(${TARGET_SERVER_LIB}
@@ -129,6 +132,8 @@ else ()
             OpenSSL::ssl
             OpenSSL::crypto
             z
+            libprometheus-cpp-pull.a
+            libprometheus-cpp-core.a
             )
 endif ()
 
@@ -138,6 +143,15 @@ set(TARGET_SERVER lgraph_server)
 
 add_executable(${TARGET_SERVER}
         server/server_main.cpp)
+
+# GraphFin product name. lgraph_server remains the compatibility name:
+# both binaries are the same executable and must start identically.
+add_custom_command(TARGET lgraph_server
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E create_symlink
+        lgraph_server
+        ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/graphfin_server
+        COMMENT "Creating graphfin_server alias for lgraph_server")
 
 target_link_libraries(${TARGET_SERVER}
         ${TARGET_SERVER_LIB}

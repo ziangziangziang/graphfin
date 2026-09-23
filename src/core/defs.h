@@ -41,31 +41,12 @@
 
 #define LGRAPH_PSORT(...) __gnu_parallel::stable_sort(__VA_ARGS__)
 #endif
-#include "core/version.h"
 
-#ifndef GIT_BRANCH
-#define GIT_BRANCH "unknown"
-#endif
-
-#ifndef GIT_COMMIT_HASH
-#define GIT_COMMIT_HASH "unknown"
-#endif
-
-#ifndef WEB_GIT_COMMIT_HASH
-#define WEB_GIT_COMMIT_HASH "unknown"
-#endif
-
-#ifndef CXX_COMPILER_ID
-#define CXX_COMPILER_ID "unknown"
-#endif
-
-#ifndef CXX_COMPILER_VERSION
-#define CXX_COMPILER_VERSION "unknown"
-#endif
-
-#ifndef PYTHON_LIB_VERSION
-#define PYTHON_LIB_VERSION "unknown"
-#endif
+// NOTE: build metadata (git hash, compiler versions) used to live here via
+// core/version.h, which is regenerated on every commit and invalidated ~239
+// translation units each time. It now lives behind lgraph::version::*
+// accessors (core/version_info.h), whose single implementation file is the
+// only TU including the generated header. Do not include version.h here.
 
 #ifndef LGRAPH_PYTHON_PLUGIN_LIFETIME_S
 #define LGRAPH_PYTHON_PLUGIN_LIFETIME_S 12 * 60 * 60
@@ -86,6 +67,7 @@ static const char* const DEFAULT_GRAPH_DB_NAME = "default";
 // table names used in core
 static const char* const META_TABLE = "_meta_";                  // stores version numbers
 static const char* const BLOB_TABLE = "_blob_";                  // stores the blobs
+static const char* const SERIES_TABLE = "_tseries_";              // time-series buckets
 static const char* const IP_WHITELIST_TABLE = "_ip_whitelist_";  // ip whitelist table
 static const char* const GRAPH_TABLE = "_graph_";                // vid -> edge1, edge2, ...
 static const char* const V_SCHEMA_TABLE = "_v_schema_";          // label -> schema
@@ -133,15 +115,10 @@ static const char* const EDGE_COUNT_PREFIX = "_edge_count_";
 static const char* const VERTEX_PROPERTY_TABLE_PREFIX = "_vertex_property_";
 static const char* const EDGE_PROPERTY_TABLE_PREFIX = "_edge_property_";
 
-// version info
-static const int VER_MAJOR = LGRAPH_VERSION_MAJOR;
-static const int VER_MINOR = LGRAPH_VERSION_MINOR;
-static const int VER_PATCH = LGRAPH_VERSION_PATCH;
-
 // limits
 static const size_t MAX_NUM_USERS = 65536;
-static const size_t MAX_NUM_GRAPHS = 4096;
 static const size_t MAX_NUM_FIELDS = 1024;  // max number of fields in vertex/edge property
+static const size_t MAX_SERIES_MEASURES = 64;  // max measures in one time-series field
 static const size_t MAX_NUM_LABELS = 4096;  // max number of vertex and edge labels in one graph
 
 static const size_t MAX_COMPILE_TIME_MS = 1000 * 1000;  // max compile time when loading plugin
@@ -244,10 +221,15 @@ inline void CheckValidRoleNum(const size_t n) {
     }
 }
 
-inline void CheckValidGraphNum(const size_t n) {
-    if (n > _detail::MAX_NUM_GRAPHS) {
-        std::string err_msg = FMA_FMT("Invalid Graph: number cannot exceed {}, given [{}].",
-                                      _detail::MAX_NUM_GRAPHS, n);
+// The authoritative graph-count check. `max_graphs` comes from configuration
+// (GlobalConfig::max_graphs); a value of 0 means no application-level limit, in
+// which case resource limits (memory, file descriptors) are the natural bound.
+// There is no hard-coded graph-count constant anywhere else in production code.
+inline void CheckValidGraphNum(const size_t n, const size_t max_graphs) {
+    if (max_graphs != 0 && n > max_graphs) {
+        std::string err_msg = FMA_FMT("Invalid Graph: number cannot exceed the configured"
+                                      " max_graphs [{}], given [{}].",
+                                      max_graphs, n);
         throw std::runtime_error(err_msg);
     }
 }

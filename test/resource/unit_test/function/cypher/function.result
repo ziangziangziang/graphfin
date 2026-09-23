@@ -1,7 +1,7 @@
 MATCH (n:Person) RETURN properties(n) LIMIT 2;
 [{"properties(n)":{"_LABEL_":"Person","_VID_":12,"birthyear":1970,"name":"Christopher Nolan"}},{"properties(n)":{"_LABEL_":"Person","_VID_":3,"birthyear":1939,"name":"Corin Redgrave"}}]
 MATCH p=(n:Person)-[e*..2]->(m) RETURN properties(p) LIMIT 2;
-[{"properties(p)":"[{\"_LABEL_\":\"Person\",\"_VID_\":12,\"birthyear\":1970,\"name\":\"Christopher Nolan\"},{\"_LABEL_\":\"BORN_IN\",\"_EID_\":\"12_14_2_0_0\",\"reg_time\":2023-05-01 12:00:00,\"weight\":19.930000},{\"_LABEL_\":\"City\",\"_VID_\":14,\"name\":\"London\"}]"},{"properties(p)":[{"_LABEL_":"Person","_VID_":12,"birthyear":1970,"name":"Christopher Nolan"},{"_EID_":"12_17_3_0_0","_LABEL_":"DIRECTED"},{"_LABEL_":"Film","_VID_":17,"title":"Batman Begins"}]}]
+[{"properties(p)":[{"_LABEL_":"Person","_VID_":12,"birthyear":1970,"name":"Christopher Nolan"},"{\"_LABEL_\":\"BORN_IN\",\"_EID_\":\"12_14_2_0_0\",\"reg_time\":2023-05-01 12:00:00,\"weight\":19.930000}",{"_LABEL_":"City","_VID_":14,"name":"London"}]},{"properties(p)":[{"_LABEL_":"Person","_VID_":12,"birthyear":1970,"name":"Christopher Nolan"},{"_EID_":"12_17_3_0_0","_LABEL_":"DIRECTED"},{"_LABEL_":"Film","_VID_":17,"title":"Batman Begins"}]}]
 MATCH (vanessa:Person {name:'Vanessa Redgrave'})-[relatedTo]-(n) RETURN id(vanessa),type(relatedTo),label(n);
 [{"id(vanessa)":2,"label(n)":"Person","type(relatedTo)":"HAS_CHILD"},{"id(vanessa)":2,"label(n)":"City","type(relatedTo)":"BORN_IN"},{"id(vanessa)":2,"label(n)":"Film","type(relatedTo)":"ACTED_IN"},{"id(vanessa)":2,"label(n)":"Person","type(relatedTo)":"HAS_CHILD"},{"id(vanessa)":2,"label(n)":"Person","type(relatedTo)":"HAS_CHILD"}]
 MATCH (vanessa:Person {name:'Vanessa Redgrave'})-[r]->() RETURN startNode(r),endNode(r);
@@ -11,9 +11,9 @@ MATCH (vanessa:Person {name:'Vanessa Redgrave'})-[r]->(n) RETURN properties(n);
 MATCH (vanessa:Person {name:'Vanessa Redgrave'})-[r]->(n) RETURN properties(r);
 [{"properties(r)":{"_EID_":"2_5_0_0_0","_LABEL_":"HAS_CHILD"}},{"properties(r)":"{\"_LABEL_\":\"BORN_IN\",\"_EID_\":\"2_14_2_0_0\",\"reg_time\":2023-05-01 10:00:00,\"weight\":20.209999}"},{"properties(r)":{"_EID_":"2_20_5_0_0","_LABEL_":"ACTED_IN","charactername":"Guenevere"}}]
 MATCH (a) WHERE a.name = 'Vanessa Redgrave' RETURN label(a), labels(a);
-[{"label(a)":"Person","labels(a)":"[Person]"}]
+[{"label(a)":"Person","labels(a)":["Person"]}]
 MATCH (a) WHERE a.name = 'Vanessa Redgrave' RETURN keys(a);
-[{"keys(a)":"[birthyear,name]"}]
+[{"keys(a)":["birthyear","name"]}]
 MATCH (a:Person {name:'Vanessa Redgrave'}) RETURN a,-2,9.78,"im a string";
 [{"\"im a string\"":"im a string","-2":-2,"9.78":9.78,"a":{"identity":2,"label":"Person","properties":{"birthyear":1937,"name":"Vanessa Redgrave"}}}]
 MATCH (a:Person {name:'Vanessa Redgrave'}) RETURN a,abs(-2),ceil(0.1),floor(0.9),tointeger(rand()),round(3.141592),sign(-17),sign(0.1);
@@ -37,7 +37,7 @@ WITH ['one','two','three'] AS coll RETURN head(coll);
 WITH ['one','two','three'] AS coll RETURN last(coll);
 [{"last(coll)":"three"}]
 WITH ['one','two','three'] AS coll UNWIND coll AS x RETURN collect(x);
-[{"collect(x)":"[one,two,three]"}]
+[{"collect(x)":["one","two","three"]}]
 WITH ['one','two','three'] AS coll UNWIND coll AS x WITH collect(x) AS reColl RETURN head(reColl);
 [{"head(reColl)":"one"}]
 MATCH (n:Person) RETURN sum(n.birthyear);
