@@ -37,7 +37,7 @@ struct RouteTarget {
 enum class RouteStatus {
     OK = 0,
     GRAPH_NOT_FOUND,      // no such logical graph (or tombstoned)
-    PLACEMENT_NOT_ACTIVE, // graph exists but is CREATING/MOVING/DELETING
+    PLACEMENT_NOT_ACTIVE,  // graph exists but is CREATING/MOVING/DELETING
     NO_HEALTHY_SHARD,     // placement exists but its shard is unavailable
     STALE_PLACEMENT,      // caller's placement_version is behind the catalog
 };

@@ -437,7 +437,7 @@ std::vector<RebalanceMove> PlanRebalanceMoves(const std::vector<RebalanceInput>&
                                               size_t max_moves) {
     struct Node {
         ShardId shard = INVALID_SHARD_ID;
-        long long graphs = 0;
+        int64_t graphs = 0;
         uint32_t weight = 1;
         double disk = 0.0;
     };
@@ -446,7 +446,7 @@ std::vector<RebalanceMove> PlanRebalanceMoves(const std::vector<RebalanceInput>&
     for (const auto& s : shards) {
         Node n;
         n.shard = s.shard;
-        n.graphs = static_cast<long long>(s.graphs);
+        n.graphs = static_cast<int64_t>(s.graphs);
         n.weight = s.weight == 0 ? 1 : s.weight;
         n.disk = s.disk_used;
         v.push_back(n);

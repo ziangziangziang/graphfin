@@ -217,7 +217,8 @@ int LGraphServer::Start() {
             const char* ref_mode = "padded";
 #endif
             // ~2 RefCountedObj per open graph (LightningGraph + schema).
-            const size_t refcount_per_open = 2 * static_cast<size_t>(lgraph::LGRAPH_MAX_THREADS) * ref_slot;
+            const size_t refcount_per_open =
+                2 * static_cast<size_t>(lgraph::LGRAPH_MAX_THREADS) * ref_slot;
             // LMDB per-env calloc of me_dbxs/me_dbflags/me_dbiseqs, sized by maxdbs.
             const size_t env_per_open = static_cast<size_t>(config_->lmdb_max_dbs) * 54;
             const size_t open_graphs = static_cast<size_t>(config_->max_open_graphs);
@@ -229,7 +230,8 @@ int LGraphServer::Start() {
             if (est_mib >= 4096) {
                 LOG_WARN() << "Open-graph cache estimate is " << est_mib << " MiB. Lower "
                            << "--max_open_graphs and/or --lmdb_max_dbs, or build with "
-                           << "-DLGRAPH_COMPACT_REFCOUNT=1 (see docs/architecture/13-memory-footprint.md).";
+                           << "-DLGRAPH_COMPACT_REFCOUNT=1 "
+                           << "(see docs/architecture/13-memory-footprint.md).";
             }
         }
         struct rlimit rlim{};

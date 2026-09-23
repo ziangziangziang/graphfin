@@ -267,7 +267,7 @@ TEST_F(TestClusterMetaStore, StagingIsolationAndRollback) {
     EXPECT_TRUE(ms->HasGraph("g2"));
     EXPECT_TRUE(ms->HasGraph("g3"));
     EXPECT_EQ(ms->GraphCount(), 3u);
-    // TODO: old global HasStaged() check removed; per-Batch staging is gone after Commit.
+    // TODO(graphfin): old global HasStaged() check removed; per-Batch staging is gone after Commit.
 }
 
 // A reader on another thread must observe only committed state while a writer

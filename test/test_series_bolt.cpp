@@ -1,4 +1,20 @@
 /**
+ * Copyright 2022 AntGroup CO., Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
  * Bolt wire assertions for time-series query results.
  *
  * The live Bolt path serves `Result::BoltRecords()` (`lgraph_result.cpp`),
@@ -44,14 +60,14 @@ using namespace geax::frontend;
 using geax::frontend::GEAXErrorCode;
 
 class TestSeriesBolt : public TuGraphTest {
-  private:
+ private:
     std::shared_ptr<cypher::RTContext> ctx_;
     std::shared_ptr<lgraph::Galaxy> galaxy_;
     lgraph::Galaxy::Config gconf_;
     std::string db_dir_ = "./testdb_series_bolt";
     std::string graph_name_ = "default";
 
-  protected:
+ protected:
     void SetUp() override {
         ctx_.reset();
         galaxy_.reset();

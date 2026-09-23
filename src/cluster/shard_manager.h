@@ -46,7 +46,7 @@ class ShardManager {
     enum class PlacementStrategy : uint8_t {
         LEAST_GRAPH_COUNT = 0,   // fewest graphs, tie-break lowest shard id
         ROUND_ROBIN = 1,
-        WEIGHTED_LEAST_LOAD = 2, // min(graph_count / capacity_weight)
+        WEIGHTED_LEAST_LOAD = 2,  // min(graph_count / capacity_weight)
     };
 
     struct Config {

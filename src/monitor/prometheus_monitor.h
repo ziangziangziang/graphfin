@@ -70,7 +70,7 @@ class ResourceMonitor {
     prometheus::Gauge *raft_last_log_index;
     prometheus::Gauge *raft_replication_lag;
 
-public:
+ public:
     void report_raft_metrics(int64_t current_term, int64_t commit_index,
                              int64_t applied_index, bool is_leader,
                              int64_t last_log_index, int64_t replication_lag);

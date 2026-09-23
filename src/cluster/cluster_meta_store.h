@@ -94,7 +94,7 @@ class ClusterMetaStore {
         std::string name;                    // PUT_GRAPH / DELETE_GRAPH
         GraphPlacement placement;            // PUT_GRAPH
         ShardInfo shard;                     // REGISTER_SHARD / SHARD_STATE (R10: full descriptor)
-        ShardId shard_id = INVALID_SHARD_ID; // REMOVE_SHARD
+        ShardId shard_id = INVALID_SHARD_ID;  // REMOVE_SHARD
         ConfigVersion version = 0;           // DELETE_GRAPH / SET_VERSION / SHARD_STATE
     };
 

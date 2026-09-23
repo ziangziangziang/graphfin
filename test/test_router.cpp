@@ -209,7 +209,8 @@ TEST_F(TestRouter, CacheIsBounded) {
         ClusterMetaStore::Batch batch(f.ms.get(), *txn);
         EXPECT_TRUE(f.mgr->RegisterShard(batch, MakeShard(0)));
         for (int i = 0; i < 5; i++) {
-            EXPECT_TRUE(batch.PutGraphPlacement("g" + std::to_string(i), 0, PlacementState::ACTIVE));
+            EXPECT_TRUE(batch.PutGraphPlacement(
+                "g" + std::to_string(i), 0, PlacementState::ACTIVE));
         }
         EXPECT_TRUE(batch.Commit());
     }

@@ -1013,10 +1013,12 @@ void RestServer::HandleGetInfo(const std::string& user, const http_request& requ
         // qw add finish
         response[RestStrings::VER] = web::json::value::string(_TU(lgraph::version::ShortVersion()));
         response[RestStrings::BRANCH] = web::json::value::string(_TU(lgraph::version::GitBranch()));
-        response[RestStrings::COMMIT] = web::json::value::string(_TU(lgraph::version::GitCommitHash()));
+        response[RestStrings::COMMIT] =
+            web::json::value::string(_TU(lgraph::version::GitCommitHash()));
         response[RestStrings::WEB_COMMIT] =
             web::json::value::string(_TU(lgraph::version::WebGitCommitHash()));
-        response[RestStrings::CPP_ID] = web::json::value::string(_TU(lgraph::version::CxxCompilerId()));
+        response[RestStrings::CPP_ID] =
+            web::json::value::string(_TU(lgraph::version::CxxCompilerId()));
         response[RestStrings::CPP_VERSION] =
             web::json::value::string(_TU(lgraph::version::CxxCompilerVersion()));
         response[RestStrings::PYTHON_VERSION] =

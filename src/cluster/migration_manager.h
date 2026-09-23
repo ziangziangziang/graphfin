@@ -203,7 +203,7 @@ class MigrationManager {
     static bool IsTerminal(MigrationState s);
     static bool CanTransition(MigrationState from, MigrationState to);
 
-  private:
+ private:
     void PersistLocked(KvTransaction& txn, const Record& r);
     void DeleteRowLocked(KvTransaction& txn, uint64_t graph_uid);
     void PersistNextIdLocked(KvTransaction& txn, uint64_t next_id);
