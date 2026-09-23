@@ -4,7 +4,7 @@ Release identity: **GraphFin 0.1.0-alpha**, with Git tag `v0.1.0-alpha`, derived
 from TuGraph 4.5.2.
 **No release is approved by this document.** The identity is confirmed, but
 qualification and publication are still pending. See the qualification record
-below and [TASK.md](TASK.md) for delegated work.
+below.
 
 ## Version and compatibility policy
 
