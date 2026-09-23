@@ -110,29 +110,25 @@ the small page/navigation bundle.
 
 ## GitHub Pages
 
-The existing `.github/workflows/documentation.yml` now builds this site instead
-of deploying the inherited TuGraph Docusaurus site. It is the only Pages
-workflow; unrelated CI and C++ workflows are untouched.
+`.github/workflows/documentation.yml` builds this site and deploys it to the
+`gh-pages` branch (same rule as the inherited Docusaurus workflow). It is the
+only Pages workflow; unrelated CI and C++ workflows are untouched.
 
 1. In repository **Settings → Pages → Build and deployment**, select
-   **GitHub Actions** as the source. The old `gh-pages` branch can remain as
-   history; this workflow does not force-push or write to it.
-2. Merge these changes into the publishing branch. The repository currently
-   advertises `master` as its default branch; both `master` and the planned
-   `main` are supported. Changes to `site/`, `assets/`, or this workflow trigger
-   deployment. Pull requests build and test but never deploy.
+   **Deploy from a branch** with branch `gh-pages` (root). The workflow
+   force-updates that branch on each deploy.
+2. Merge these changes into `main`. Changes to `site/`, `assets/`, or this
+   workflow trigger deployment. Pull requests build and test but never deploy.
 3. The workflow installs locked dependencies, runs unit checks, type-checks and
-   builds, runs browser tests, uploads `site/dist/`, and deploys the Pages artifact.
-   `pages:write` and `id-token:write` permissions are limited to the deployment job.
+   builds, runs browser tests, then publishes `site/dist/` to `gh-pages` via
+   `JamesIves/github-pages-deploy-action` (`clean: true` so stale Docusaurus
+   files are removed). `contents: write` is limited to the deploy job.
 4. The expected URL is `https://ziangziangziang.github.io/graphfin/`.
-   A manual **GraphFin website** workflow run can also deploy a selected branch
-   once the workflow is available on the default branch. If the `github-pages`
-   environment restricts branches, permit the selected publishing branch there.
+   A manual **GraphFin website** workflow run on `main` can also deploy.
 
-Local implementation does not itself change repository settings or publish a
-remote site. The first successful Actions run is the deployment verification.
-The existing legacy site will be replaced at that URL when deployment runs;
-old generated Docusaurus URLs are not maintained by this first milestone.
+The first successful run after the workflow is on `main` replaces the legacy
+site at that URL; old generated Docusaurus URLs are not maintained by this
+milestone.
 
 ### Base path and documentation source
 
