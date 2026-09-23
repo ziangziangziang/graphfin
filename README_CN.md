@@ -1,8 +1,8 @@
 # GraphFin
 
 <p align="center">
-  <strong>图关系与时序观测，放在同一个数据库里。</strong><br>
-  实体之间怎么关联，观测随时间怎么变化，用同一个事务系统管理。
+  <strong>变化和关联，一手掌握。</strong><br>
+  GraphFin是一款支持时序数据的图数据库，也是一款支持图关系的时序数据库。
 </p>
 
 <p align="center">
