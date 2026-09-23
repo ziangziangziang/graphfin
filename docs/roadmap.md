@@ -28,3 +28,17 @@ until a safe series-identity migration exists.
 Intra-graph sharding, cross-shard query execution and distributed graph transactions
 are separate designs, not consequences of whole-graph placement. Financial models
 and vendor-specific ingestion are application projects, not engine milestones.
+
+## Reorganization track (REVIEW.md follow-ups)
+
+| Status | Item |
+| --- | --- |
+| done (unpushed) | PR fast checks vs main full suite; `pr-targeted` Docker gate disabled |
+| done (unpushed) | `ci/phase0/` → `dev/phase0/` |
+| done (unpushed) | `graphfin_server` alias, `lgraph_server` compat + smoke check |
+| done (unpushed) | `test/suites.json` catalog; pr/merge/phase0 runners wired |
+| TODO | Push the 4 local commits to PR #1 |
+| TODO | `dev/phase0/experiments/` → `test/stress/`; tests under GraphFin name |
+| TODO | Decide PR C++ slice: catalog has `pr-unit`, job currently disabled |
+| TODO | Scope CodeQL c-cpp off PRs (settings change, not code) |
+| TODO | GraphFin-tagged images + new lockfile; client/lib/storage migration per REVIEW stages |
