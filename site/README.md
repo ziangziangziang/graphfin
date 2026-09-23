@@ -42,7 +42,8 @@ To use an existing local Chrome, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to its
 executable path. Tests start the production preview server automatically.
 
 Unit checks cover carbon-node degree, welded seam topology, continuous signal
-connectivity over several cycles, bounded geometry, and mobile quality settings.
+connectivity over several cycles, bounded geometry, node collision clearance in
+world and screen space, and mobile quality settings.
 Browser checks cover production subpaths and assets, English/Chinese switching,
 mobile menu/keyboard behavior, breakpoint changes, reduced motion, pause/resume,
 WebGL failure, context loss, and useful content without JavaScript. They use
@@ -61,7 +62,7 @@ software WebGL for reproducibility; this is not a real-device performance claim.
 | `src/scene/lattice-mesh.ts`              | Instanced spheres/bonds, material fade, small procedural signal halos                      |
 | `src/scene/camera.ts`                    | Composition fitting and restrained pointer parallax                                        |
 | `src/scene/quality.ts`                   | Geometry, resolution, and frame-rate budgets                                               |
-| `src/scene/scene.ts`                     | Renderer, lighting, animation clock, visibility, resize, resource cleanup                  |
+| `src/scene/scene.ts`                     | Renderer, IBL/tone mapping, desktop bloom, animation clock, visibility, resize, cleanup    |
 | `vite.config.ts`                         | Pages base path and branch-aware documentation links                                       |
 
 `SceneController` exposes `setSection`, `setPaused`, and `dispose`. Sections have
@@ -76,8 +77,13 @@ intentionally short, with links to existing source documentation and examples.
 - Desktop: 272 nodes, 374 bonds, maximum DPR 1.75, 30 fps.
 - Mobile (viewport at most 760px): 144 nodes, 192 bonds, simpler spheres and
   cylinders, maximum DPR 1.35, 24 fps, no pointer parallax.
-- Two instanced meshes and one points layer. No image textures, postprocessing,
-  physics, or continuously growing geometry. Three.js is the only runtime dependency.
+- Two instanced meshes and one points layer. No image textures, physics, or
+  continuously growing geometry. Three.js is the only runtime dependency.
+- Lighting uses a procedural `RoomEnvironment` IBL, ACES filmic tone mapping,
+  and a view-space fresnel rim for a ray-traced *look* (not path tracing).
+  Desktop adds a single `UnrealBloomPass` tuned for the gold signal; mobile keeps
+  direct rendering to protect its frame budget. IBL bake and bloom composer are
+  created after the first frame so software GL cannot stall mount.
 - The strip moves through a fixed parameter window. Its welded seam recycles
   indefinitely; edges crossing the visible window boundary are suppressed, and
   the ends disappear using opacity and fog. Buffers and instance counts remain fixed.
@@ -97,12 +103,13 @@ fallback. Vite fingerprints and rebases asset URLs. No external font/CDN is used
 
 This is a stylized carbon ribbon, not a chemically exact molecular model.
 Perspective, progressively fading ends, and fog approximate depth of field;
-there is no expensive blur/bloom postprocessing. The gold halo is a procedural
-soft point attached to active graph nodes, never a separate waveform. Reduced
-motion uses the same static 3D composition when supported; unavailable WebGL,
-context loss, or a failed renderer import leaves the existing hero image visible.
+desktop bloom is a cheap threshold pass, not a full deferred pipeline. The gold
+halo is a procedural soft point attached to active graph nodes, never a separate
+waveform. Reduced motion uses the same static 3D composition when supported;
+unavailable WebGL, context loss, or a failed renderer import leaves the existing
+hero image visible.
 
-The legacy PNG is about 1.1 MB. The deferred renderer bundle is about 136 KB
+The legacy PNG is about 1.1 MB. The deferred renderer bundle is about 142 KB
 gzipped. A future optimized fallback derivative can reduce first-load transfer
 without altering the original artwork. Vite reports the renderer's uncompressed
 chunk above its default 500 KB advisory threshold; it is loaded separately from

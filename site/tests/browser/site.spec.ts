@@ -264,8 +264,15 @@ test("hidden documents and offscreen heroes stop GPU draws", async ({
   await page.waitForTimeout(200);
   expect(await count()).toBeGreaterThan(hidden);
   await page.locator("footer").scrollIntoViewIfNeeded();
-  await page.waitForTimeout(300);
-  const offscreen = await count();
-  await page.waitForTimeout(300);
+  // IntersectionObserver + the in-flight rAF can still emit one instanced
+  // frame after the scroll; wait until draws settle before asserting idle.
+  let offscreen = await count();
+  for (let i = 0; i < 30; i++) {
+    await page.waitForTimeout(100);
+    const next = await count();
+    if (next === offscreen) break;
+    offscreen = next;
+  }
+  await page.waitForTimeout(400);
   expect(await count()).toBe(offscreen);
 });
