@@ -1,6 +1,6 @@
-# Contributing to TuGraph DB
+# Contributing to GraphFin
 
-Thank you for considering contributing to TuGraph DB! We welcome contributions from the community and are grateful for your support.
+Thank you for considering contributing to GraphFin! We welcome contributions from the community and are grateful for your support.
 
 ## How to Contribute
 
@@ -10,8 +10,8 @@ Fork the repository to your own GitHub account by clicking the "Fork" button at 
 ### 2. Clone the Repository
 Clone the forked repository to your local machine:
 ```bash
-git clone https://github.com/TuGraph-family/tugraph-db.git
-cd tugraph-db
+git clone https://github.com/ziangziangziang/graphfin.git
+cd graphfin
 ```
 
 ### 3. Create a Branch
@@ -46,7 +46,7 @@ Your pull request will be reviewed by the project maintainers. Please be respons
 Please adhere to our [Code of Conduct](../CODE_OF_CONDUCT.md) in all your interactions with the project.
 
 ## Additional Resources
-- [Issue Tracker](https://github.com/TuGraph-family/tugraph-db/issues)
+- [Issue Tracker](https://github.com/ziangziangziang/graphfin/issues)
 - [Project Documentation](../docs)
 
 Thank you for your contributions!

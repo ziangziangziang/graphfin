@@ -1,8 +1,8 @@
-# TuGraph 示例
+# GraphFin 示例
 
 ## 1 简介
 
-TuGraph 是蚂蚁集团自主研发的大规模图计算系统，提供图数据库引擎和图分析引擎。其主要特点是大数据量存储和计算，高吞吐率，以及灵活的 API，同时支持高效的在线事务处理（OLTP）和在线分析处理（OLAP）。 LightGraph、GeaGraph是TuGraph的曾用名。
+GraphFin 是基于 TuGraph 4.5.2 引擎构建的图数据库，在原生图存储与查询能力之上，将关系与沿边时间序列观测纳入同一事务系统。其主要特点是大数据量存储和计算，高吞吐率，以及灵活的 API，同时支持高效的在线事务处理（OLTP）和在线分析处理（OLAP）。
 
 主要功能特征包括：
 
@@ -10,6 +10,7 @@ TuGraph 是蚂蚁集团自主研发的大规模图计算系统，提供图数据
 - 原生图存储及处理
 - 完全的ACID事务支持
 - 支持OpenCypher图查询语言
+- 支持关系与时间序列观测的统一建模
 - 支持原生的Core API和Traversal API
 - 支持REST和RPC接口
 - 支持CSV、JSON、MySQL等多数据源导入导出
@@ -17,7 +18,6 @@ TuGraph 是蚂蚁集团自主研发的大规模图计算系统，提供图数据
 - 支持命令行交互
 - 内置用户权限控制、操作审计
 - 支持任务和日志的监控管理
-- 原生适配PandaGraph图分析引擎
 - 集成DGL图神经网络系统
 
 性能及可扩展性特征包括：
@@ -82,13 +82,13 @@ python3 client_python.py -i 127.0.0.1 -p 9090 -u admin --password 73@TuGraph -g 
 
 ### 4.1 DataX 导入导出工具
 #### 4.1.1 概述
-DataX 支持 TuGraph 和 MySQL、SQL Server、Oracle、PostgreSQL、HDFS、Hive、HBase、OTS、ODPS、Kafka 等各种异构数据源的数据导入导出。
+DataX 支持 GraphFin 和 MySQL、SQL Server、Oracle、PostgreSQL、HDFS、Hive、HBase、OTS、ODPS、Kafka 等各种异构数据源的数据导入导出。
 #### 4.1.2 运行
 以MySQL和为例，先在数据源中准备数据
 ```bash
 mysql> source mysql_data.sql
 ```
-然后启动TuGraph服务，使用DataX将数据从数据源导入到TuGraph中
+然后启动GraphFin服务，使用DataX将数据从数据源导入到GraphFin中
 ```bash
 bash ./import_from_mysql.sh
 ```
@@ -110,7 +110,7 @@ pip3 install dgl -f https://data.dgl.ai/wheels/repo.html
 
 #### 4.2.3 图数据导入
 
-在demo/DGLDemo目录下执行以下命令，将data_cora数据导入到TuGraph数据库中
+在demo/DGLDemo目录下执行以下命令，将data_cora数据导入到GraphFin数据库中
 
 ```shell script
 lgraph_import -c data_cora/import.json -d db_cora --overwrite 1

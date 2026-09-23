@@ -10,7 +10,7 @@ assignees: ''
 **Environment:**
 - OS: [e.g. Ubuntu 18.04]
 - CPU: [e.g. Intel Xeon xxxx]
-- TuGraph-DB Version [e.g. 3.3.0]
+- GraphFin Version [e.g. 0.1.0-alpha]
 
 **Describe the bug**
 

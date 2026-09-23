@@ -14,9 +14,10 @@ the product identity and upstream compatibility baseline. Do not lower the exist
 in database compatibility checks. Keep the `lgraph_*` executable names, SDK
 namespaces and on-disk markers until separately reviewed migrations exist.
 
-Current runtime banners and inherited CPack recipes still identify TuGraph 4.5.2.
-Runtime display metadata and fork-specific package metadata must be finalized
-after identity confirmation; documentation branding alone is not complete binary
+CPack package metadata is rebranded as GraphFin. Current runtime banners and
+CLI prompts still identify TuGraph 4.5.2.
+Runtime display metadata must be finalized after identity confirmation;
+documentation branding alone is not complete binary
 rebranding. Release packages must report both product and engine identity.
 
 Do not advertise downgrade, mixed-version HA, transparent sharding, online
@@ -69,6 +70,6 @@ and migration remain outside the public support claim.
    checksums, compatibility limits and evidence links. Never overwrite a release
    asset or tag to silently change its contents.
 
-The inherited `ci/build_release.sh` and CPack recipes are not yet a fork-specific,
+The inherited `ci/build_release.sh` and CPack recipes are not yet a
 qualified release pipeline. No public download/image URL should be invented in
 the READMEs. The manual merge workflow is a validation tool, not publication.
