@@ -14,4 +14,4 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - run: echo "code scan disabled: no scan environment provisioned for this repository."
+      - run: 'echo "code scan disabled: no scan environment provisioned for this repository."'
