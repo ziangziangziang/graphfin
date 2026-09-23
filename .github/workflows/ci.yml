@@ -20,11 +20,11 @@ permissions:
 
 env:
   TEST_TAG: graphfin-ut:test
-  COMPILE_IMAGE: tugraph/tugraph-compile-centos7:latest
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Fast checks — PR and main (~1–2 min)
+  # Fast checks — PR and main (~1–2 min): lint + typecheck + unit only.
+  # No C++ Docker build on PR (disabled: tugraph compile image, 30-40m cold).
   # ---------------------------------------------------------------------------
   lint:
     runs-on: ubuntu-latest
@@ -56,87 +56,6 @@ jobs:
         run: npx tsc --noEmit
       - name: Unit tests
         run: npm test
-
-  # ---------------------------------------------------------------------------
-  # PR path filter: docs/site-only PRs skip the C++ build entirely
-  # (lint + site gates still run, ~1–2 min).
-  # ---------------------------------------------------------------------------
-  changes:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    outputs:
-      cpp: ${{ steps.filter.outputs.cpp }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-      - name: Detect C++-relevant changes
-        id: filter
-        run: |
-          git fetch origin "${{ github.base_ref }}" --depth=1
-          files=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
-          echo "$files"
-          if echo "$files" | grep -qvE '^(site/|docs/|.*\.md$)'; then
-            echo "cpp=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "cpp=false" >> "$GITHUB_OUTPUT"
-          fi
-
-  # ---------------------------------------------------------------------------
-  # PR-only: targeted C++ build + fast unit/it (~5–15 min warm ccache).
-  # Cold first run seeds the cache (~30–40 min); subsequent pushes hit
-  # ccache-pr- prefix and land in budget. Budget enforced via timeout.
-  # ---------------------------------------------------------------------------
-  pr-targeted:
-    if: github.event_name == 'pull_request' && needs.changes.outputs.cpp == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    needs: [changes]
-    permissions:
-      contents: read
-      actions: write # upload-artifact (test results)
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          submodules: "true"
-      - name: Restore ccache
-        uses: actions/cache@v5
-        with:
-          path: .ccache
-          key: ccache-${{ runner.os }}-pr-${{ github.sha }}
-          restore-keys: |
-            ccache-${{ runner.os }}-pr-
-            ccache-${{ runner.os }}-main-
-            ccache-
-          save-always: true
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-          sudo apt-get update -qq && sudo apt-get remove -y '^dotnet-.*' '^llvm-.*' azure-cli google-chrome-stable firefox powershell || true
-          sudo apt-get autoremove -y || true
-          sudo apt-get clean || true
-          df -h
-      - name: Build and run targeted tests
-        run: |
-          mkdir -p .ccache
-          docker run --rm \
-            -v "$PWD:/workspace" \
-            -v "$PWD/.ccache:/root/.ccache" \
-            -w /workspace \
-            -e WORKSPACE=/workspace \
-            -e CCACHE_DIR=/root/.ccache \
-            -e HOME=/root \
-            "$COMPILE_IMAGE" \
-            bash -lc 'yum install -y epel-release ccache >/dev/null 2>&1 || yum install -y ccache >/dev/null 2>&1 || true; bash ci/github_pr.sh'
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v5
-        with:
-          name: pr-test-results
-          path: testresult/
-          if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------
   # Main-only: full ~70-minute suite (coverage + asan + full it)
