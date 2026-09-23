@@ -14,12 +14,18 @@ concurrency:
 
 jobs:
   qualify:
+    # workflow_dispatch can be launched from either branch during the
+    # master -> main transition. Drop `master` after the default switch.
+    # NOTE: Node24 actions require runner >= v2.327.1 on the self-hosted host.
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     runs-on: [self-hosted, Linux, ARM64, graphfin]
     timeout-minutes: 180
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
+      - name: Configure merge result directory
+        run: echo "MERGE_RESULTS=${RUNNER_TEMP}/graphfin-merge-results" >> "$GITHUB_ENV"
       - name: Documentation checks
         run: python3 ci/release/check_docs.py
       - name: Build merged binaries once
@@ -35,11 +41,9 @@ jobs:
       - name: Three-node series HA gate
         if: ${{ !cancelled() }}
         run: bash ci/merge/run.sh ha
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: merge-qualification-${{ github.sha }}
           path: ${{ runner.temp }}/graphfin-merge-results
           if-no-files-found: error
-    env:
-      MERGE_RESULTS: ${{ runner.temp }}/graphfin-merge-results

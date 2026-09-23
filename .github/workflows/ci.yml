@@ -3,10 +3,11 @@ name: ci
 on:
   push:
     branches:
+      # Scheduled workflows aside, push-triggered CI must accept both names
+      # during the master -> main default-branch transition. Drop `master`
+      # once GitHub's default branch is switched to `main`.
       - main
-  pull_request:
-    branches:
-      - main
+      - master
 
 env:
   TEST_TAG: tugraph/tugraph-ut:test
@@ -15,7 +16,7 @@ env:
 # 1. Seems GitHub limits the output passed among jobs up to 1MB,
 #    so we can't break down the entire workflow to multi-jobs.
 # 2. For submodules in the repo inside the single job, the git binary in docker image
-#    should be upgrade to at least 2.18 in order to use actions/checkout@v3
+#    should be upgrade to at least 2.18 in order to use actions/checkout@v5
 #    inside docker instead of running ut and it via Dockerfile.
 jobs:
   ut_no_asan:
@@ -40,15 +41,15 @@ jobs:
           rm -rf /opt/hostedtoolcache
           df -h
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
         with:
           submodules: 'true'
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v4
         with:
           buildkitd-flags: --debug
       - name: Unit Test
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v7
         with:
           file: ci/images/github-ci-ubuntu-latest-Dockerfile
           context: .
@@ -84,15 +85,15 @@ jobs:
           rm -rf /opt/hostedtoolcache
           df -h
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
         with:
           submodules: 'true'
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v4
         with:
           buildkitd-flags: --debug
       - name: Unit Test
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v7
         with:
           file: ci/images/github-ci-ubuntu-latest-Dockerfile
           context: .
@@ -128,15 +129,15 @@ jobs:
           rm -rf /opt/hostedtoolcache
           df -h
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
         with:
           submodules: 'true'
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v4
         with:
           buildkitd-flags: --debug
       - name: Integration Test
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v7
         with:
           file: ci/images/github-ci-ubuntu-latest-Dockerfile
           context: .

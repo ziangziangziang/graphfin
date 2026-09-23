@@ -1,6 +1,9 @@
 name: Alipay Cloud Devops Codescan
 on:
-  pull_request_target:
+  push:
+    branches:
+      - main
+      - master
 
 jobs:
   deployment:
@@ -12,4 +15,3 @@ jobs:
         with:
           parent_uid: ${{ secrets.ALI_PID }}
           private_key: ${{ secrets.ALI_PK }}
-

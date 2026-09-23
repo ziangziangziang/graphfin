@@ -5,20 +5,21 @@ name: phase3-ha
 # failover, chaos) against a built lgraph_server.
 #
 # These tests are heavier than regular integration tests: they start 3-node
-# HA clusters. They run on pull_request to main and on workflow_dispatch.
+# HA clusters. They run after pushes to the default branch and on
+# workflow_dispatch. Both `main` and `master` are accepted until GitHub's
+# default branch is switched to `main`.
 
 on:
   push:
     branches:
       - main
-  pull_request:
-    branches:
-      - main
+      - master
   workflow_dispatch:
 
 jobs:
   ha-integration:
     name: HA integration tests
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -33,15 +34,15 @@ jobs:
           df -h
 
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
         with:
           submodules: 'true'
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v4
 
       - name: Build and run HA tests
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v7
         with:
           file: ci/images/github-ci-ubuntu-latest-Dockerfile
           context: .

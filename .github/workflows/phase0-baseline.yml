@@ -15,10 +15,12 @@ name: phase0-baseline
 on:
   push:
     branches:
+      # Accept both names during the master -> main default-branch transition.
+      # GitHub scheduled workflows run only on the repository's configured
+      # default branch, so the weekly `schedule` below fires on `master` until
+      # the default is switched to `main`. Drop `master` after the switch.
       - main
-  pull_request:
-    branches:
-      - main
+      - master
   workflow_dispatch:
   schedule:
     # Weekly full benchmark (1/100/1000/4000 graphs) on the default branch.
@@ -35,6 +37,7 @@ env:
 jobs:
   unit-tests:
     name: build + upstream unit tests
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
@@ -49,7 +52,7 @@ jobs:
           df -h
 
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
         with:
           submodules: 'true'
 
@@ -70,7 +73,7 @@ jobs:
 
       - name: Upload results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: phase0-unit-test-results
           path: |
@@ -81,6 +84,7 @@ jobs:
 
   integration-tests:
     name: integration + failure tests
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
@@ -94,7 +98,7 @@ jobs:
           df -h
 
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
         with:
           submodules: 'true'
 
@@ -112,7 +116,7 @@ jobs:
 
       - name: Upload results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: phase0-integration-test-results
           path: |
@@ -123,6 +127,7 @@ jobs:
 
   benchmark-smoke:
     name: benchmark smoke (1, 100 graphs)
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 300
     steps:
@@ -136,7 +141,7 @@ jobs:
           df -h
 
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
         with:
           submodules: 'true'
 
@@ -163,7 +168,7 @@ jobs:
 
       - name: Upload results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: phase0-benchmark-smoke
           path: |
@@ -175,7 +180,9 @@ jobs:
   benchmark-full:
     name: benchmark full (1, 100, 1000, 4000 graphs)
     # Expensive: manual dispatch or the weekly schedule only.
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    # The ref guard accepts both branch names because the weekly schedule
+    # runs on the repo default branch (currently `master`).
+    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
     runs-on: ubuntu-latest
     timeout-minutes: 720
     steps:
@@ -189,7 +196,7 @@ jobs:
           df -h
 
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
         with:
           submodules: 'true'
 
@@ -218,7 +225,7 @@ jobs:
 
       - name: Upload results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: phase0-benchmark-full
           path: |

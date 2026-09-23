@@ -4,20 +4,15 @@ name: series-gate
 #
 # Unlike phase0-baseline.yml, which records upstream results and always exits
 # 0, this workflow FAILS on any series test failure, crash, or missing output.
-# It triggers on the branches development actually happens on (the repo tracks
-# master/performance/timeseries, not main) and on manual dispatch.
+# It runs after changes are merged to the default branch and on manual dispatch.
+# Both `main` and `master` are accepted until GitHub's default branch is
+# switched to `main`; drop `master` after the switch.
 
 on:
   push:
     branches:
+      - main
       - master
-      - performance
-      - timeseries
-  pull_request:
-    branches:
-      - master
-      - performance
-      - timeseries
   workflow_dispatch:
 
 env:
@@ -30,6 +25,7 @@ env:
 jobs:
   series:
     name: build + series acceptance gate
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
@@ -44,7 +40,7 @@ jobs:
           df -h
 
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
         with:
           submodules: 'true'
 
@@ -64,7 +60,7 @@ jobs:
 
       - name: Upload gate evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: series-gate-results
           path: |

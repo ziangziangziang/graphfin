@@ -1,9 +1,9 @@
 name: GraphFin website
 on:
   push:
+    # Accept both names during the master -> main default-branch transition.
+    # Drop `master` once GitHub's default branch is switched to `main`.
     branches: [main, master]
-    paths: ["site/**", "assets/**", ".github/workflows/documentation.yml"]
-  pull_request:
     paths: ["site/**", "assets/**", ".github/workflows/documentation.yml"]
   workflow_dispatch:
 
@@ -11,20 +11,21 @@ permissions:
   contents: read
 
 concurrency:
-  group: graphfin-pages-${{ github.event_name == 'pull_request' && github.ref || 'deploy' }}
+  group: graphfin-pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: site
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: npm
@@ -38,12 +39,12 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
       - name: Upload static site
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v4
         with:
           path: site/dist
 
   deploy:
-    if: github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -54,7 +55,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Configure Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
       - name: Deploy
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
