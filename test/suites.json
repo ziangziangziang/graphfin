@@ -1,0 +1,89 @@
+{
+  "_comment": "Canonical suite catalog: single source of truth for test selection. Runners (ci/github_pr.sh, ci/github_ci.sh, dev/phase0/*, ci/merge/run.py) must query this file via test/suites.py instead of hardcoding filters. JSON (not YAML) so every runner works with stdlib python only. Tier: pr = pre-merge fast, merge = post-merge gate, main = full branch suite, dev = local pinned-container gate.",
+  "version": 1,
+  "procedure_off_exclusions": [
+    "test_algo.py",
+    "test_algo_v2.py",
+    "test_sampling.py",
+    "test_train.py"
+  ],
+  "suites": {
+    "pr-unit": {
+      "description": "PR-targeted C++ unit slice: series, sharding/router, admission bound. Full suite stays on main.",
+      "tier": "pr",
+      "type": "gtest",
+      "gtest_filter": "TestSeries*:*Series*:TestCluster*:*Router*:TestShardManager*:TestMigrationManager*:TestGalaxy.OpenGraphAdmissionBound",
+      "extra_binaries": ["fma_unit_test -t all"],
+      "min_cases": 1,
+      "required_artifacts": ["unit_test", "fma_unit_test"],
+      "build_features": {"BUILD_PROCEDURE": "OFF"},
+      "owner": "graphfin-core"
+    },
+    "merge-unit": {
+      "description": "Post-merge unit gate. Same selection as pr-unit; additionally asserts compiled-suite families.",
+      "tier": "merge",
+      "type": "gtest",
+      "gtest_filter": "TestSeries*:*Series*:TestCluster*:*Router*:TestShardManager*:TestMigrationManager*:TestGalaxy.OpenGraphAdmissionBound",
+      "required_families": ["TestSeriesStore", "TestClusterMetaStore", "TestRouter", "TestShardManager", "TestMigrationManager"],
+      "min_cases": 1,
+      "required_artifacts": ["unit_test", "liblgraph.so"],
+      "build_features": {"BUILD_PROCEDURE": "OFF"},
+      "owner": "graphfin-core"
+    },
+    "merge-smoke": {
+      "description": "Post-merge smoke: time-series merge path.",
+      "tier": "merge",
+      "type": "pytest",
+      "pytest_files": ["test_merge_series.py"],
+      "min_cases": 4,
+      "required_artifacts": ["lgraph_server", "liblgraph.so", "liblgraph_client_python.so"],
+      "owner": "graphfin-core"
+    },
+    "merge-clients": {
+      "description": "Post-merge client contracts: series over real clients.",
+      "tier": "merge",
+      "type": "pytest",
+      "pytest_files": ["test_timeseries.py"],
+      "min_cases": 14,
+      "required_artifacts": ["lgraph_server", "liblgraph.so", "liblgraph_client_python.so", "lgraph_backup"],
+      "owner": "graphfin-core"
+    },
+    "merge-ha": {
+      "description": "Post-merge HA: series merge path under replication.",
+      "tier": "merge",
+      "type": "pytest",
+      "pytest_files": ["test_merge_series_ha.py"],
+      "min_cases": 2,
+      "required_artifacts": ["lgraph_server", "liblgraph.so", "liblgraph_client_python.so"],
+      "owner": "graphfin-core"
+    },
+    "series-gate": {
+      "description": "Local pinned-container acceptance gate for the time-series stream. Allowlist: anything outside is another stream's responsibility.",
+      "tier": "dev",
+      "type": "gtest",
+      "gtest_filter": "TestSeries*:*Series*:TestSchema*:TestSchemaChange*:TestTransaction.*:TestLGraph.*:TestDetachProperty.*:TestQuery.TestCypherSuite:TestQuery.TestGqlSuite:TestCypherV2.TestFunction:TestCypherV2.TestExpression:TestCypherV2.TestQuery:TestCypherFieldData.*:TestCypherPlan.*",
+      "min_cases": 1,
+      "required_artifacts": ["unit_test", "liblgraph.so"],
+      "build_features": {"BUILD_PROCEDURE": "OFF"},
+      "owner": "graphfin-core"
+    },
+    "main-ut": {
+      "description": "Main-branch full unit suite (no filter). Runs with and without ASan.",
+      "tier": "main",
+      "type": "gtest",
+      "gtest_filter": "",
+      "min_cases": 1,
+      "required_artifacts": ["unit_test", "fma_unit_test"],
+      "owner": "graphfin-core"
+    },
+    "main-it": {
+      "description": "Main-branch full integration suite. procedure_off_exclusions apply when BUILD_PROCEDURE=OFF.",
+      "tier": "main",
+      "type": "pytest",
+      "pytest_files": [],
+      "min_cases": 1,
+      "required_artifacts": ["lgraph_server"],
+      "owner": "graphfin-core"
+    }
+  }
+}

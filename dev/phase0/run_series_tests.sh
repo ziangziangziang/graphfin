@@ -26,14 +26,16 @@ CLEAN="${CLEAN:-0}"
 JOBS="${JOBS:-2}"
 BUILD_TYPE="${BUILD_TYPE:-RelWithDebInfo}"
 
-# Acceptance selection for the time-series work stream. Allowlist, not
+# Acceptance selection from test/suites.json (suite series-gate). Allowlist, not
 # exclusion: anything outside this filter is some other stream's
 # responsibility. Known upstream reds (e.g. TestCypherV2.TestProcedure, red
 # for stale cacheStats/LMDB expectations and last-digit doubles before this
 # work started) are excluded by construction; if a listed suite ever needs a
 # temporary exception, add it to KNOWN_FAILURES below with a reason - never by
-# deleting the suite from the filter.
-GTEST_FILTER="${GTEST_FILTER:-TestSeries*:*Series*:TestSchema*:TestSchemaChange*:TestTransaction.*:TestLGraph.*:TestDetachProperty.*:TestQuery.TestCypherSuite:TestQuery.TestGqlSuite:TestCypherV2.TestFunction:TestCypherV2.TestExpression:TestCypherV2.TestQuery:TestCypherFieldData.*:TestCypherPlan.*}"
+# deleting the suite from the filter. suites.py fails on an empty filter.
+if [[ -z "${GTEST_FILTER:-}" ]]; then
+    GTEST_FILTER="$(python3 "${REPO_ROOT}/test/suites.py" --suite series-gate --field gtest_filter)"
+fi
 KNOWN_FAILURES="${KNOWN_FAILURES:-}"
 
 RESULTS_DIR="${REPO_ROOT}/phase0-results"

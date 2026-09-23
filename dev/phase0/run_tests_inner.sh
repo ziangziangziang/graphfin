@@ -76,7 +76,9 @@ run_it() {
     cmake --build "${REPO}"/build/clienttest -j2 >>"$OUT/it.log" 2>&1
     cp "${REPO}"/build/clienttest/clienttest . 2>/dev/null
     # BUILD_PROCEDURE=OFF: the algorithm/procedure suites cannot run.
-    rm -f test_algo.py test_algo_v2.py test_sampling.py test_train.py
+    # Exclusion list from test/suites.json; suites.py fails loudly on errors.
+    # shellcheck disable=SC2046
+    rm -f $(python3 "${REPO}/test/suites.py" --suite main-it --field procedure_off_exclusions)
 
     if [ -n "${PHASE0_TEST_FILES:-}" ]; then
         # PHASE0_TEST_FILES is comma-separated because the value travels through

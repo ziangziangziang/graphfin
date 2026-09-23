@@ -97,7 +97,11 @@ else
   cp -r ../../learn/examples/* ./
   cp -r ../../demo/movie .
   if [[ "$WITH_PROCEDURE" == "OFF" ]]; then
-      rm -rf test_algo.py test_sampling.py test_train.py test_algo_v2.py
+      # Algorithm/procedure suites need BUILD_PROCEDURE=ON; the exclusion list
+      # lives in test/suites.json (procedure_off_exclusions). suites.py fails
+      # loudly on catalog errors so OFF can never miscount as a pass.
+      # shellcheck disable=SC2046
+      rm -f $(python3 ./test/suites.py --suite main-it --field procedure_off_exclusions)
   fi
   pytest ./
   # codecov

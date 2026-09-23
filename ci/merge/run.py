@@ -19,8 +19,20 @@ import xml.etree.ElementTree as ET
 
 
 ROOT = Path(__file__).resolve().parents[2]
-FILTER = ("TestSeries*:*Series*:TestCluster*:*Router*:TestShardManager*:"
-          "TestMigrationManager*:TestGalaxy.OpenGraphAdmissionBound")
+sys.path.insert(0, str(ROOT / "test"))
+import suites as suite_catalog
+
+# Selection from test/suites.json (suites merge-unit/smoke/clients/ha).
+# suites.py validates the catalog on load; empty selections fail loudly.
+_catalog = suite_catalog.load()
+suite_catalog.validate(_catalog)
+FILTER = _catalog["suites"]["merge-unit"]["gtest_filter"]
+PYTEST_FILES = {k.split("-", 1)[1]: v["pytest_files"][0]
+                for k, v in _catalog["suites"].items()
+                if k.startswith("merge-") and v["type"] == "pytest"}
+MINIMUM = {k.split("-", 1)[1]: v["min_cases"]
+           for k, v in _catalog["suites"].items() if k.startswith("merge-")}
+REQUIRED_FAMILIES = _catalog["suites"]["merge-unit"]["required_families"]
 
 
 def sha(path):
@@ -116,8 +128,7 @@ def main():
             command = [str(output / "unit_test"), "--gtest_filter=" + FILTER,
                        "--gtest_output=xml:" + str(xml)]
         else:
-            filename = {"smoke": "test_merge_series.py", "clients": "test_timeseries.py",
-                        "ha": "test_merge_series_ha.py"}[args.suite]
+            filename = PYTEST_FILES[args.suite]
             command = [sys.executable, "-m", "pytest", str(tests / filename), "-v", "-rs",
                        "--basetemp=" + str(scratch / "pytest"),
                        "--junitxml=" + str(xml)]
@@ -136,12 +147,11 @@ def main():
                         assertion_failures=assertion_failures)
         assert cases and result.returncode == 0 and failures == 0 and skipped == 0, \
             "required tests failed, skipped, or produced no cases"
-        minimum = {"smoke": 4, "ha": 2, "clients": 14, "unit": 1}[args.suite]
+        minimum = MINIMUM[args.suite]
         assert len(cases) >= minimum, "required case count is incomplete"
         if args.suite == "unit":
             classes = {c.get("classname", "") for c in cases}
-            for family in ["TestSeriesStore", "TestClusterMetaStore", "TestRouter",
-                           "TestShardManager", "TestMigrationManager"]:
+            for family in REQUIRED_FAMILIES:
                 assert family in classes, "missing compiled suite: " + family
         assert source_state() == before, "source changed during validation; rerun on stable source"
         assert all(sha(ROOT / "build/output" / n) == h

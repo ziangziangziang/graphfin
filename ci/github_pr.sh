@@ -52,10 +52,20 @@ export LD_LIBRARY_PATH="/usr/local/lib64/lgraph:/usr/local/lib64:/usr/local/lib:
 export OMP_NUM_THREADS=2
 
 ./fma_unit_test -t all
-# Same filter as ci/merge/run.py --suite unit (full suite is ~15.5 min).
+# Selection from test/suites.json (suite pr-unit); suites.py validates and
+# fails on an empty filter so a catalog typo can never run zero tests.
+PR_GTEST_FILTER="$(python3 "$WORKSPACE/test/suites.py" --suite pr-unit --field gtest_filter)"
 ./unit_test \
-  --gtest_filter='TestSeries*:*Series*:TestCluster*:*Router*:TestShardManager*:TestMigrationManager*:TestGalaxy.OpenGraphAdmissionBound' \
+  --gtest_filter="$PR_GTEST_FILTER" \
   --gtest_output=xml:"$WORKSPACE/testresult/gtest/pr-unit.xml"
+python3 - "$WORKSPACE/testresult/gtest/pr-unit.xml" <<'PY'
+import sys, xml.etree.ElementTree as ET
+root = ET.parse(sys.argv[1]).getroot()
+suites = root.findall("testsuite") or ([root] if root.tag == "testsuite" else [])
+n = sum(int(s.get("tests", 0)) for s in suites)
+print("pr-unit: %d tests selected" % n)
+sys.exit(0 if n > 0 else 1)
+PY
 rm -rf testdb* .import_tmp 2>/dev/null || true
 
 echo "=== PR: targeted integration ==="
