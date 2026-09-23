@@ -42,3 +42,11 @@ and vendor-specific ingestion are application projects, not engine milestones.
 | TODO | Decide PR C++ slice: catalog has `pr-unit`, job currently disabled |
 | TODO | Scope CodeQL c-cpp off PRs (settings change, not code) |
 | TODO | GraphFin-tagged images + new lockfile; client/lib/storage migration per REVIEW stages |
+
+## Queued product work
+
+| Status | Item |
+| --- | --- |
+| TODO | Replace Prometheus monitoring with native GraphFin time-series monitoring |
+| TODO | Recreate demo with real GraphFin structures + metrics demo; remove legacy demo |
+| TODO | Release Python clients |
