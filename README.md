@@ -6,6 +6,9 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/ziangziangziang/graphfin/actions/workflows/ci.yml">
+    <img src="https://github.com/ziangziangziang/graphfin/actions/workflows/ci.yml/badge.svg" alt="CI">
+  </a>
   <a href="RELEASE.md">
     <img src="https://img.shields.io/badge/version-0.1.0--alpha-F2B705" alt="Version">
   </a>

@@ -1,11 +1,14 @@
 # GraphFin
 
 <p align="center">
-  <strong>图关系与时序观测，在同一个数据库中。</strong><br>
-  将实体之间的关系，以及沿着这些关系不断变化的观测，放进同一个事务系统。
+  <strong>图关系与时序观测，放在同一个数据库里。</strong><br>
+  实体之间怎么关联，观测随时间怎么变化，用同一个事务系统管理。
 </p>
 
 <p align="center">
+  <a href="https://github.com/ziangziangziang/graphfin/actions/workflows/ci.yml">
+    <img src="https://github.com/ziangziangziang/graphfin/actions/workflows/ci.yml/badge.svg" alt="CI">
+  </a>
   <a href="RELEASE.md">
     <img src="https://img.shields.io/badge/version-0.1.0--alpha-F2B705" alt="版本">
   </a>
