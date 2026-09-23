@@ -9,7 +9,7 @@ on:
       - main
 
 env:
-  TEST_TAG: graphfin/graphfin-ut:test
+  TEST_TAG: graphfin-ut:test
 
 # Issues TODO:
 # 1. Seems GitHub limits the output passed among jobs up to 1MB,

@@ -1,5 +1,8 @@
 {
   "name": "GraphFin Phase 0 (arm64 Linux, CentOS 7 / GCC 8.4)",
+  // Local pinned compile image (see ci/phase0/images.lock), NOT a registry
+  // image — Phase 0 needs the full GCC/CMake toolchain to build from source.
+  // Runtime-only image: idefinity/graphfin:latest on Docker Hub.
   "image": "graphfin-compile-arm64:local",
   "runArgs": [
     "--platform=linux/arm64",
