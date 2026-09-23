@@ -3,7 +3,7 @@
 Correctness defects discovered while building the Phase 0 test harness. They were
 originally recorded here rather than fixed, because Phase 0 is measurement-only.
 Both were found by running ordinary Cypher against the built server
-(`lgraph_server` from `ci/phase0/build.sh`), not by static inspection.
+(`lgraph_server` from `dev/phase0/build.sh`), not by static inspection.
 
 > **Update (Phase 2 validation):** F1 and F2 have since been fixed, together
 > with two crashes introduced during the scaling work — F3a (eviction task
@@ -246,8 +246,8 @@ relying on it to validate the graph-count work.
 
 ```bash
 # A/B harness (test-only --lmdb_notls switch, see test/main.cpp)
-ci/phase0/experiments/run_notls_matrix.sh on 4
-ci/phase0/experiments/run_notls_matrix.sh off 4
+dev/phase0/experiments/run_notls_matrix.sh on 4
+dev/phase0/experiments/run_notls_matrix.sh off 4
 ```
 
 ### Status update (Phase 4 review) — still open, diagnosis blocked in this window

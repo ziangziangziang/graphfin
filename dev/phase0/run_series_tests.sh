@@ -3,14 +3,14 @@
 #
 # Runs the series-focused gtest selection in the pinned compile container and
 # FAILS nonzero on any test failure, crash, or missing output. This is the
-# opposite policy from ci/phase0/run_tests.sh, which records upstream failures
+# opposite policy from dev/phase0/run_tests.sh, which records upstream failures
 # and always exits 0 (Phase 0 baseline policy, left intact).
 #
 # Usage:
-#   ci/phase0/run_series_tests.sh                 # incremental build + gate
-#   CLEAN=1 ci/phase0/run_series_tests.sh         # clean build + gate
-#   SKIP_BUILD=1 ci/phase0/run_series_tests.sh    # gate only, reuse build/
-#   GTEST_FILTER='TestSeries*' ci/phase0/run_series_tests.sh
+#   dev/phase0/run_series_tests.sh                 # incremental build + gate
+#   CLEAN=1 dev/phase0/run_series_tests.sh         # clean build + gate
+#   SKIP_BUILD=1 dev/phase0/run_series_tests.sh    # gate only, reuse build/
+#   GTEST_FILTER='TestSeries*' dev/phase0/run_series_tests.sh
 #
 # Output: phase0-results/series.log, series-<stamp>.xml (+ series-latest.xml
 # copy), series-summary.json. The summary records commit id, source-diff and

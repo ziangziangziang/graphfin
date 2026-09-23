@@ -106,10 +106,10 @@ already consumed for other libraries.
 Reproduce the experiment with:
 
 ```bash
-ci/phase0/experiments/run_lmdb_tls_limit.sh
+dev/phase0/experiments/run_lmdb_tls_limit.sh
 ```
 
-Source: `ci/phase0/experiments/lmdb_tls_limit.c`.
+Source: `dev/phase0/experiments/lmdb_tls_limit.c`.
 
 **Consequences for the project.**
 
@@ -483,7 +483,7 @@ BLOCKER; R1-R14 are the structural risks that remain relevant once R0 is solved.
   revision of `ci/images/tugraph-compile-arm64v8-centos7-Dockerfile` than exists
   in this checkout — the image's history references `ci/images/vendor/`, which
   is absent here. `docker build` from this checkout does **not** reproduce the
-  pinned image. See `ci/phase0/env/README.md`.
+  pinned image. See `dev/phase0/env/README.md`.
 - **Evidence (x86 assumption):** `deps/geax-front-end/CMakeLists.txt:52-61`
   applies `-msse4.2`, an x86-only flag, unless `ENABLE_BUILD_ON_AARCH64=ON`.
   That option exists upstream but defaults to OFF and is not mentioned in any
@@ -494,10 +494,10 @@ BLOCKER; R1-R14 are the structural risks that remain relevant once R0 is solved.
   so the `lgraph_db_python` target fails with
   `Cannot take address of Python object attribute 'db'`. The repo's own
   Dockerfile pins `cython==3.0.0a11`, an alpha that was never published to PyPI.
-- **Phase 0 mitigation:** `ci/phase0/build.sh` auto-detects aarch64 and passes
-  `-DENABLE_BUILD_ON_AARCH64=ON`; `ci/phase0/env/Dockerfile.phase0` builds a
+- **Phase 0 mitigation:** `dev/phase0/build.sh` auto-detects aarch64 and passes
+  `-DENABLE_BUILD_ON_AARCH64=ON`; `dev/phase0/env/Dockerfile.phase0` builds a
   derived image adding Cython 3.0.0, pinned by its own image ID in
-  `ci/phase0/images.lock`. `ci/phase0/doctor.sh` verifies the image ID and the
+  `dev/phase0/images.lock`. `dev/phase0/doctor.sh` verifies the image ID and the
   presence of every required library on every run, so a divergent environment
   fails fast instead of producing incomparable numbers.
 - **Required change:** rebuild the toolchain image from source, diff it against

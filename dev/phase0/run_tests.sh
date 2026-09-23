@@ -2,11 +2,11 @@
 # Phase 0: run the test suites inside the pinned container.
 #
 # Usage:
-#   ci/phase0/run_tests.sh ut                    # upstream unit tests
-#   ci/phase0/run_tests.sh it                    # integration tests (pytest)
-#   ci/phase0/run_tests.sh all                   # both
+#   dev/phase0/run_tests.sh ut                    # upstream unit tests
+#   dev/phase0/run_tests.sh it                    # integration tests (pytest)
+#   dev/phase0/run_tests.sh all                   # both
 #   PHASE0_TEST_FILES="test_multi_graph_lifecycle.py,test_multi_graph_crud.py" \
-#       ci/phase0/run_tests.sh it                # specific integration files
+#       dev/phase0/run_tests.sh it                # specific integration files
 #                                                # (comma-separated)
 #
 # Policy: test failures PROPAGATE (non-zero exit) so CI cannot report success
@@ -31,7 +31,7 @@ PHASE0_GIT_COMMIT="$(git -C "${REPO_ROOT}" rev-parse --short HEAD 2>/dev/null ||
 echo "phase0: run_id=${PHASE0_RUN_ID} commit=${PHASE0_GIT_COMMIT} mode=${MODE}"
 
 PHASE0_EXTRA_ENV="PHASE0_TEST_MODE=${MODE} PHASE0_TEST_FILES=${PHASE0_TEST_FILES:-} PHASE0_TEST_DIAGNOSTIC=${PHASE0_TEST_DIAGNOSTIC:-0} PHASE0_RUN_ID=${PHASE0_RUN_ID} PHASE0_GIT_COMMIT=${PHASE0_GIT_COMMIT}" \
-    phase0_run_bench bash "${PHASE0_WORKDIR}/ci/phase0/run_tests_inner.sh"
+    phase0_run_bench bash "${PHASE0_WORKDIR}/dev/phase0/run_tests_inner.sh"
 rc=$?
 
 if [ "$rc" -ne 0 ]; then

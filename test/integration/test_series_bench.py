@@ -8,7 +8,7 @@ must never gate unit tests, and these numbers are methodology baselines,
 not production capacity claims.
 
 Run:
-  PHASE0_TEST_FILES=test_series_bench.py ci/phase0/run_tests.sh it
+  PHASE0_TEST_FILES=test_series_bench.py dev/phase0/run_tests.sh it
 """
 
 import json

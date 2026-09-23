@@ -14,9 +14,9 @@ tests assert the ceiling is gone, on both the create path and the reopen path,
 and that the policy is actually in effect.
 
 Run:
-  PHASE0_TEST_FILES=test_graph_ceiling_regression.py ci/phase0/run_tests.sh it
+  PHASE0_TEST_FILES=test_graph_ceiling_regression.py dev/phase0/run_tests.sh it
   PHASE0_CEILING_N=2000 PHASE0_TEST_FILES=test_graph_ceiling_regression.py \
-      ci/phase0/run_tests.sh it
+      dev/phase0/run_tests.sh it
 """
 
 import logging

@@ -694,7 +694,7 @@ def main(argv=None):
 
     if not os.path.isfile(args.binary):
         eprint("ERROR: server binary not found: %s" % args.binary)
-        eprint("Build it first with ci/phase0/build.sh")
+        eprint("Build it first with dev/phase0/build.sh")
         return 2
     if not os.path.isfile(args.config):
         eprint("ERROR: server config not found: %s" % args.config)

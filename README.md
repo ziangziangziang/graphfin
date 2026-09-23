@@ -246,7 +246,7 @@ After provisioning the documented environment:
 
 ```bash
 # Build the fork; retain objects on subsequent runs.
-CLEAN=0 JOBS=2 BUILD_TYPE=RelWithDebInfo bash ci/phase0/build.sh
+CLEAN=0 JOBS=2 BUILD_TYPE=RelWithDebInfo bash dev/phase0/build.sh
 
 # Reuse the binaries; these commands do not rebuild.
 bash ci/merge/run.sh unit

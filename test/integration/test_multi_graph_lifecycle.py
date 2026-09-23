@@ -8,8 +8,8 @@ count used here is small (tens) -- the large-scale behaviour is measured by
 benchmark/scaling/, not asserted here.
 
 Run:
-  ci/phase0/run_tests.sh it     # everything
-  PHASE0_TEST_FILES=test_multi_graph_lifecycle.py ci/phase0/run_tests.sh it
+  dev/phase0/run_tests.sh it     # everything
+  PHASE0_TEST_FILES=test_multi_graph_lifecycle.py dev/phase0/run_tests.sh it
 """
 
 import logging

@@ -15,7 +15,7 @@ lose recently acknowledged writes. These tests assert *consistency and
 recoverability*, not durability of unflushed writes.
 
 Run:
-  PHASE0_TEST_FILES=test_restart_and_failure_recovery.py ci/phase0/run_tests.sh it
+  PHASE0_TEST_FILES=test_restart_and_failure_recovery.py dev/phase0/run_tests.sh it
 """
 
 import logging

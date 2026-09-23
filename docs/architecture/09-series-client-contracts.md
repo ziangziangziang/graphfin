@@ -2,7 +2,7 @@
 
 Wire shapes, value rules, error catalog, retry guidance, and parser support
 for time-series query results. Every claim below was verified against a live
-server (`lgraph_server` from `ci/phase0/build.sh`) through real clients
+server (`lgraph_server` from `dev/phase0/build.sh`) through real clients
 (REST over HTTP, Bolt via the `neo4j==4.4.6` driver package, and the bundled
 `TuGraphRestClient`); in-process golden values alone do not establish these.
 Cells were read with `series.at/range/latest/earliest`, summaries via

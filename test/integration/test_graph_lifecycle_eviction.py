@@ -18,7 +18,7 @@ the test can be tightened or loosened without code edits.
 
 Run:
   PHASE2_EVICT_POP=200 PHASE2_EVICT_THREADS=8 \
-      PHASE0_TEST_FILES=test_graph_lifecycle_eviction.py ci/phase0/run_tests.sh it
+      PHASE0_TEST_FILES=test_graph_lifecycle_eviction.py dev/phase0/run_tests.sh it
 """
 
 import logging

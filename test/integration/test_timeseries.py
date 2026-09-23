@@ -9,7 +9,7 @@ stale (it posts `userName`, the server requires `user`), and driving the wire
 directly is exactly what pins the client-visible contract.
 
 Run:
-  PHASE0_TEST_FILES=test_timeseries.py ci/phase0/run_tests.sh it
+  PHASE0_TEST_FILES=test_timeseries.py dev/phase0/run_tests.sh it
 """
 
 import json
@@ -641,7 +641,7 @@ def backup_binary():
         candidate = os.path.abspath(candidate)
         if os.path.isfile(candidate):
             return candidate
-    raise RuntimeError("lgraph_backup not found. Build it with ci/phase0/build.sh first.")
+    raise RuntimeError("lgraph_backup not found. Build it with dev/phase0/build.sh first.")
 
 
 def test_sigkill_durable_recovery(tmp_path):

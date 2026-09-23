@@ -2,7 +2,7 @@
 # Reuse existing binaries; keep the repo read-only and all test DBs isolated.
 set -euo pipefail
 # Load container helpers (image name, platform, ulimits, REPO_ROOT).
-source "$(dirname "${BASH_SOURCE[0]}")/../phase0/container.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/../../dev/phase0/container.sh"
 # Pick suite: unit | smoke | clients | ha.
 suite="${1:-smoke}"
 case "$suite" in unit|smoke|clients|ha) ;; *) echo "usage: $0 {unit|smoke|clients|ha}" >&2; exit 2 ;; esac

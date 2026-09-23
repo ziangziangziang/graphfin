@@ -25,15 +25,15 @@
 # -----
 #   cd <repo root>
 #   # arm64 (the Phase 0 baseline environment)
-#   docker build -f ci/phase0/env/Dockerfile.phase0 -t tugraph-compile-arm64:phase0 .
+#   docker build -f dev/phase0/env/Dockerfile.phase0 -t tugraph-compile-arm64:phase0 .
 #
 #   # amd64 (CI runners; base image from the upstream registry)
-#   docker build -f ci/phase0/env/Dockerfile.phase0 \
+#   docker build -f dev/phase0/env/Dockerfile.phase0 \
 #       --build-arg BASE_IMAGE=tugraph/tugraph-compile-centos7:latest \
 #       -t tugraph-compile-amd64:phase0 .
 #
 # Record the resulting `docker image inspect ... --format '{{.Id}}'` value in
-# ci/phase0/images.lock under [compile_phase0]. ci/phase0/container.sh verifies
+# dev/phase0/images.lock under [compile_phase0]. dev/phase0/container.sh verifies
 # it on every build and benchmark run.
 
 ARG BASE_IMAGE=tugraph-compile-arm64:local

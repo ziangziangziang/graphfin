@@ -10,8 +10,8 @@
 # to one binary, so nothing but the policy differs between the two arms.
 #
 # Usage:
-#   ci/phase0/experiments/run_notls_matrix.sh on  4
-#   ci/phase0/experiments/run_notls_matrix.sh off 4
+#   dev/phase0/experiments/run_notls_matrix.sh on  4
+#   dev/phase0/experiments/run_notls_matrix.sh off 4
 #
 # Each arm takes roughly 16 minutes per run. If a run crashes, the core is
 # preserved and a backtrace is printed, which is the evidence needed to tell an

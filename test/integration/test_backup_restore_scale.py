@@ -11,7 +11,7 @@ Restore has no dedicated tool: it is a directory copy plus a server start
 performs exactly that procedure and verifies the restored database.
 
 Run:
-  PHASE0_TEST_FILES=test_backup_restore_scale.py ci/phase0/run_tests.sh it
+  PHASE0_TEST_FILES=test_backup_restore_scale.py dev/phase0/run_tests.sh it
 """
 
 import logging

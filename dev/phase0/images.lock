@@ -26,7 +26,7 @@ image_id   = sha256:2350a9a1f998b6898b169d28015c60c49b488def8980b9553a657819763a
 platform   = linux/arm64
 os         = CentOS Linux 7.9.2009 (AltArch)
 based_on   = sha256:08852abd955a1e6d73fd9539b5475f99d933a705807179537c0461b7f1d76080
-build      = docker build -f ci/phase0/env/Dockerfile.phase0 -t tugraph-compile-arm64:phase0 .
+build      = docker build -f dev/phase0/env/Dockerfile.phase0 -t tugraph-compile-arm64:phase0 .
 
 [runtime]
 image      = tugraph-runtime-arm64:local
@@ -79,7 +79,7 @@ jemalloc         = present
 # Build configuration used for the Phase 0 baseline
 # ---------------------------------------------------------------------------
 [build]
-command = ci/phase0/build.sh
+command = dev/phase0/build.sh
 cmake_args =
     -DOURSYSTEM=centos7
     -DCMAKE_BUILD_TYPE=RelWithDebInfo
@@ -123,7 +123,7 @@ notes =
 [limits]
 nofile            = 1048576   # container: --ulimit nofile=1048576:1048576
 vm.max_map_count  = 262144 in-container (Docker Desktop default; measured by
-                    ci/phase0/doctor.sh). Not the binding limit: only ~4.4k
+                    dev/phase0/doctor.sh). Not the binding limit: only ~4.4k
                     mappings are in use at the 998-graph failure point.
 nproc             = 10
 memory            = container runs unconstrained inside the ~7.8 GiB VM

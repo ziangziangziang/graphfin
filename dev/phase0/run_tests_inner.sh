@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Phase 0: test execution, run INSIDE the compile container.
 #
-# Invoked by ci/phase0/run_tests.sh. Reads:
+# Invoked by dev/phase0/run_tests.sh. Reads:
 #   PHASE0_TEST_MODE   ut | it | all
 #   PHASE0_TEST_FILES  optional space-separated pytest file list (it mode)
 #

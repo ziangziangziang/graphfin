@@ -4,7 +4,7 @@ Verifies that per-graph stores are genuinely independent: schema, data, indexes
 and failed transactions in one graph must not affect another.
 
 Run:
-  PHASE0_TEST_FILES=test_multi_graph_crud.py ci/phase0/run_tests.sh it
+  PHASE0_TEST_FILES=test_multi_graph_crud.py dev/phase0/run_tests.sh it
 """
 
 import logging

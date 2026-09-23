@@ -2,7 +2,7 @@
 # Phase 0 preflight: verify the pinned toolchain is complete and sane.
 #
 # Run this before trusting any build or benchmark result.
-#   ci/phase0/doctor.sh
+#   dev/phase0/doctor.sh
 #
 # Exits non-zero if a required component is missing.
 

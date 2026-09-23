@@ -18,10 +18,10 @@ limit and open far more than a handful).
 
 Run:
   PHASE2_RESTART_N=2000 \
-      PHASE0_TEST_FILES=test_graph_lifecycle_restart.py ci/phase0/run_tests.sh it
+      PHASE0_TEST_FILES=test_graph_lifecycle_restart.py dev/phase0/run_tests.sh it
   # full criterion scale (slow; mirrors the benchmark):
   PHASE2_RESTART_N=100000 \
-      PHASE0_TEST_FILES=test_graph_lifecycle_restart.py ci/phase0/run_tests.sh it
+      PHASE0_TEST_FILES=test_graph_lifecycle_restart.py dev/phase0/run_tests.sh it
 """
 
 import logging

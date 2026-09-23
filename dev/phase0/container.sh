@@ -14,7 +14,7 @@ PHASE0_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${PHASE0_DIR}/../.." && pwd)"
 
 # Pinned images. Override only when deliberately testing a different environment,
-# and record the new digest in ci/phase0/images.lock if you do.
+# and record the new digest in dev/phase0/images.lock if you do.
 PHASE0_COMPILE_IMAGE="${PHASE0_COMPILE_IMAGE:-tugraph-compile-arm64:phase0}"
 PHASE0_RUNTIME_IMAGE="${PHASE0_RUNTIME_IMAGE:-tugraph-runtime-arm64:local}"
 PHASE0_PLATFORM="${PHASE0_PLATFORM:-linux/arm64}"
@@ -69,7 +69,7 @@ phase0_require_docker() {
 phase0_check_image() {
     local image="$1" verify_id="${2:-}"
     docker image inspect "$image" >/dev/null 2>&1 \
-        || phase0_die "image '$image' not found; see ci/phase0/env/README.md"
+        || phase0_die "image '$image' not found; see dev/phase0/env/README.md"
     if [[ "$verify_id" == "--verify-id" ]]; then
         if [[ "${PHASE0_SKIP_IMAGE_PIN:-0}" == "1" ]]; then
             echo "phase0: WARNING PHASE0_SKIP_IMAGE_PIN=1 - image ID not verified" >&2
@@ -85,7 +85,7 @@ phase0_check_image() {
             phase0_die "image '$image' ID mismatch
   pinned:  $want
   present: $id
-Update ci/phase0/images.lock only with sign-off -- changing it invalidates
+Update dev/phase0/images.lock only with sign-off -- changing it invalidates
 every previously recorded baseline number.
 (Set PHASE0_SKIP_IMAGE_PIN=1 only for CI on a different architecture.)"
         fi
@@ -110,7 +110,7 @@ phase0_run_compile() {
 #   - compile image (has the built libs and python), and
 #   - the named data volume mounted at /data for scratch databases.
 # Extra docker flags can be passed via PHASE0_DOCKER_EXTRA, e.g.
-#   PHASE0_DOCKER_EXTRA="--cpus=4 --memory=6g" ci/phase0/run_bench.sh ...
+#   PHASE0_DOCKER_EXTRA="--cpus=4 --memory=6g" dev/phase0/run_bench.sh ...
 phase0_run_bench() {
     phase0_require_docker
     phase0_check_image "$PHASE0_COMPILE_IMAGE" --verify-id

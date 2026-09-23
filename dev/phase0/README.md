@@ -9,12 +9,12 @@ later phase can diff against. **Phase 0 makes no engine behavior changes.**
 
 | Deliverable | Location |
 |---|---|
-| Pinned environment | `ci/phase0/images.lock`, `ci/phase0/env/` |
-| Preflight check | `ci/phase0/doctor.sh` |
-| Containerized build | `ci/phase0/build.sh` |
-| Test runner | `ci/phase0/run_tests.sh`, `ci/phase0/run_tests_inner.sh` |
-| Benchmark driver | `ci/phase0/run_bench.sh` → `benchmark/scaling/` |
-| Shared container config | `ci/phase0/container.sh` |
+| Pinned environment | `dev/phase0/images.lock`, `dev/phase0/env/` |
+| Preflight check | `dev/phase0/doctor.sh` |
+| Containerized build | `dev/phase0/build.sh` |
+| Test runner | `dev/phase0/run_tests.sh`, `dev/phase0/run_tests_inner.sh` |
+| Benchmark driver | `dev/phase0/run_bench.sh` → `benchmark/scaling/` |
+| Shared container config | `dev/phase0/container.sh` |
 | Integration + failure tests | `test/integration/test_multi_graph_*.py`, `test_restart_and_failure_recovery.py`, `test_backup_restore_scale.py`, `test/integration/phase0_util.py` |
 | Benchmark harness | `benchmark/scaling/` |
 | Baseline results | `benchmark/scaling/results/` |
@@ -26,24 +26,24 @@ later phase can diff against. **Phase 0 makes no engine behavior changes.**
 
 ```bash
 # 0. verify the pinned environment is complete and unmodified
-ci/phase0/doctor.sh
+dev/phase0/doctor.sh
 
 # 1. build TuGraph (clean build; ~1h on a 10-core / 8 GiB Docker VM)
-ci/phase0/build.sh
+dev/phase0/build.sh
 
 # 2. upstream unit tests (failures are documented, not fixed, in Phase 0)
-ci/phase0/run_tests.sh ut
+dev/phase0/run_tests.sh ut
 
 # 3. integration + failure tests, including the new Phase 0 suites
-ci/phase0/run_tests.sh it
-PHASE0_TEST_FILES=test_multi_graph_lifecycle.py ci/phase0/run_tests.sh it
+dev/phase0/run_tests.sh it
+PHASE0_TEST_FILES=test_multi_graph_lifecycle.py dev/phase0/run_tests.sh it
 
 # 4. benchmark, then render the report
 #    NOTE: graph creation fails at ~998 graphs (pthread TLS key exhaustion,
 #    docs/architecture/07-scalability-risks.md R0), so the 1000/4000 runs stop
 #    there by construction. That is the headline Phase 0 result, not a harness bug.
 PHASE0_DOCKER_EXTRA='--cpus=4 --memory=6g' \
-  ci/phase0/run_bench.sh --graphs 1 100 1000 4000 \
+  dev/phase0/run_bench.sh --graphs 1 100 1000 4000 \
     --out benchmark/scaling/results/baseline.json
 python3 benchmark/scaling/report.py benchmark/scaling/results/baseline.json
 ```
@@ -54,7 +54,7 @@ except the benchmark results, which are committed so later phases can diff.
 
 ## Design notes
 
-**One source of truth for the environment.** `ci/phase0/images.lock` pins the
+**One source of truth for the environment.** `dev/phase0/images.lock` pins the
 compile and runtime images by ID, lists every required tool and library, and
 records the build flags. `container.sh` verifies the image ID on every build and
 benchmark run and aborts on mismatch, because silently swapping the image would
@@ -115,7 +115,7 @@ a TuGraph graph-count limit. The engine now sets `MDB_NOTLS` by default
 The underlying mechanism is still demonstrable with:
 
 ```bash
-ci/phase0/experiments/run_lmdb_tls_limit.sh
+dev/phase0/experiments/run_lmdb_tls_limit.sh
 # TLS    FAILED opening environment #1025: rc=11 (Resource temporarily unavailable)
 # NOTLS  opened 5000 environments without failure
 ```
@@ -126,8 +126,8 @@ and the post-fix behaviour is measured in
 To A/B the storage policy against the unit suite:
 
 ```bash
-ci/phase0/experiments/run_notls_matrix.sh on 4
-ci/phase0/experiments/run_notls_matrix.sh off 4
+dev/phase0/experiments/run_notls_matrix.sh on 4
+dev/phase0/experiments/run_notls_matrix.sh off 4
 ``````
 
 Upstream test baseline (build, unit tests, integration tests, and the one

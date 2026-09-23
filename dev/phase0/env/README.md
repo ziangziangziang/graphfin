@@ -41,10 +41,10 @@ gunzip -c tugraph-phase0-arm64-images.tar.gz | docker load
 
 # Verify you have the exact pinned content:
 docker image inspect tugraph-compile-arm64:local --format '{{.Id}}'
-# must print the image_id recorded in ci/phase0/images.lock
+# must print the image_id recorded in dev/phase0/images.lock
 ```
 
-`ci/phase0/container.sh` verifies the compile image ID against `images.lock` on
+`dev/phase0/container.sh` verifies the compile image ID against `images.lock` on
 every build and benchmark run and aborts on mismatch. This is deliberate:
 silently swapping the image would invalidate every previously recorded number.
 
@@ -82,8 +82,8 @@ docker build -f ci/images/tugraph-compile-arm64v8-centos7-Dockerfile \
 ## Usage
 
 ```bash
-ci/phase0/build.sh              # clean build into build/output
-ci/phase0/run_bench.sh --help   # benchmark harness entry point
+dev/phase0/build.sh              # clean build into build/output
+dev/phase0/run_bench.sh --help   # benchmark harness entry point
 ```
 
 Or open the repo in the devcontainer (`.devcontainer/devcontainer.json`), which
@@ -95,9 +95,9 @@ The arm64 image cannot be rebuilt from HEAD (the provenance gap above). The
 x86_64 path used by CI and the test host **can**:
 
 ```bash
-ci/phase0/build_image.sh          # builds ci/images/tugraph-compile-centos7-Dockerfile
+dev/phase0/build_image.sh          # builds ci/images/tugraph-compile-centos7-Dockerfile
                                   # (self-contained: no external COPY/ADD)
-PHASE0_COMPILE_IMAGE=tugraph-compile-amd64:from-source ci/phase0/build.sh
+PHASE0_COMPILE_IMAGE=tugraph-compile-amd64:from-source dev/phase0/build.sh
 ```
 
 `build_image.sh` prints the resulting `image_id` and the source commit. Record
@@ -106,5 +106,5 @@ revision that is reproducible from this checkout. Prefer this path over the
 arm64 pinned image whenever certification from source is required.
 
 Every test run also records `run_id`, `git_commit` and a `timestamp_utc` in
-`phase0-results/summary.json` (see `ci/phase0/run_tests_inner.sh`), and JSON
+`phase0-results/summary.json` (see `dev/phase0/run_tests_inner.sh`), and JSON
 benchmark results carry the image id, so provenance is no longer only in prose.

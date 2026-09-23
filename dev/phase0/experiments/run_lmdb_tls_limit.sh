@@ -5,7 +5,7 @@
 # the pinned compile image so the result matches the recorded baseline.
 #
 # Usage:
-#   ci/phase0/experiments/run_lmdb_tls_limit.sh
+#   dev/phase0/experiments/run_lmdb_tls_limit.sh
 #
 # Expected:
 #   TLS    FAILED opening environment #1025: rc=11 (Resource temporarily unavailable)
@@ -25,7 +25,7 @@ docker run --rm --platform "$PHASE0_PLATFORM" --entrypoint bash "$PHASE0_COMPILE
 
 phase0_run_compile bash -lc "
 set -euo pipefail
-SRC='${PHASE0_WORKDIR}/ci/phase0/experiments/lmdb_tls_limit.c'
+SRC='${PHASE0_WORKDIR}/dev/phase0/experiments/lmdb_tls_limit.c'
 LMDB='${PHASE0_WORKDIR}/src/core/lmdb'
 
 gcc -O0 -I\"\$LMDB\" -o /tmp/lmdb_tls_limit \"\$SRC\" \"\$LMDB/mdb.c\" \"\$LMDB/midl.c\" -lpthread

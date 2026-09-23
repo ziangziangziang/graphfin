@@ -6,7 +6,7 @@ scaling without fighting the function-scoped fixtures in conftest.py.
 
 There is intentional overlap with benchmark/scaling/{serverctl,restclient}.py.
 The test tree is copied into build/output by the CI flow (see
-ci/github_ci.sh and ci/phase0/run_tests_inner.sh), so keeping these helpers
+ci/github_ci.sh and dev/phase0/run_tests_inner.sh), so keeping these helpers
 dependency-free and local keeps the tests hermetic.
 
 Client API facts these helpers rely on (verified against TuGraph 4.5.2):
@@ -56,7 +56,7 @@ def server_binary():
         if os.path.isfile(candidate):
             return os.path.abspath(candidate)
     raise RuntimeError(
-        "lgraph_server not found. Build it with ci/phase0/build.sh first.")
+        "lgraph_server not found. Build it with dev/phase0/build.sh first.")
 
 
 def server_config():

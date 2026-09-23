@@ -34,7 +34,7 @@ returned `jwt` as `Authorization: Bearer` header, then `POST /cypher` with
 change them before any non-local exposure. RPC and Bolt speak Cypher too
 (Bolt listens only when the server is started with an explicit bolt port).
 From source instead: follow `docs/getting-started.md` (pinned compile image,
-`ci/phase0/build.sh`, then `ci/merge/run.sh smoke` to verify).
+`dev/phase0/build.sh`, then `ci/merge/run.sh smoke` to verify).
 
 ## Minimal working sequence
 

@@ -7,15 +7,15 @@ GraphFin's merged changes. No public GraphFin runtime image is assumed here.
 
 Clone this repository with its submodules. On the documented arm64 development
 host, provision the pinned compile image using
-[the environment instructions](../ci/phase0/env/README.md). Other architectures
+[the environment instructions](../dev/phase0/env/README.md). Other architectures
 need their own compatible toolchain and evidence; an image-ID override is not
 equivalent to reproducing the pinned arm64 environment.
 
 ```bash
 git clone --recursive https://github.com/ziangziangziang/graphfin.git
 cd graphfin
-bash ci/phase0/doctor.sh
-CLEAN=0 JOBS=2 BUILD_TYPE=RelWithDebInfo bash ci/phase0/build.sh
+bash dev/phase0/doctor.sh
+CLEAN=0 JOBS=2 BUILD_TYPE=RelWithDebInfo bash dev/phase0/build.sh
 ```
 
 `CLEAN=0` retains objects. A new checkout still needs its first complete build.
@@ -25,7 +25,7 @@ the ~8 GiB baseline Docker VM; do not increase it without a memory budget.
 For a server-only development change, use the configured build's existing target:
 
 ```bash
-bash -c 'source ci/phase0/container.sh
+bash -c 'source dev/phase0/container.sh
 phase0_run_compile cmake --build /workspace/build --target lgraph_server --parallel 2'
 ```
 

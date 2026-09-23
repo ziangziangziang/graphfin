@@ -47,15 +47,15 @@ restore numbers.
 
 ```bash
 # prerequisites
-ci/phase0/doctor.sh
-ci/phase0/build.sh
+dev/phase0/doctor.sh
+dev/phase0/build.sh
 
 # smoke run (fast, good for validating the harness)
-ci/phase0/run_bench.sh --quick --graphs 1 100
+dev/phase0/run_bench.sh --quick --graphs 1 100
 
 # full baseline with explicit, reproducible resource limits
 PHASE0_DOCKER_EXTRA='--cpus=4 --memory=6g' \
-  ci/phase0/run_bench.sh --graphs 1 100 1000 4000 \
+  dev/phase0/run_bench.sh --graphs 1 100 1000 4000 \
     --out benchmark/scaling/results/baseline.json
 
 # render the markdown report
@@ -106,10 +106,10 @@ allows enough of each:
 
 ```bash
 PHASE0_DOCKER_EXTRA='--cpus=4 --memory=6g --pids-limit=8192' \
-  ci/phase0/run_bench.sh --graphs 1 100 1000 4000
+  dev/phase0/run_bench.sh --graphs 1 100 1000 4000
 ```
 
-`ci/phase0/container.sh` already sets `--ulimit nofile=1048576:1048576`. The
+`dev/phase0/container.sh` already sets `--ulimit nofile=1048576:1048576`. The
 harness records `vm.max_map_count`, cgroup pids/memory/cpu limits and the image
 ID with every result, and reports the exact graph index at which a create or
 delete failed — which is how the 998-graph ceiling was found.

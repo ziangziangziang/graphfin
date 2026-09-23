@@ -8,7 +8,7 @@ ACL is server-wide storage but per-graph in effect
 (src/db/acl.h:139-163, src/db/acl.cpp:76-107).
 
 Run:
-  PHASE0_TEST_FILES=test_multi_graph_acl.py ci/phase0/run_tests.sh it
+  PHASE0_TEST_FILES=test_multi_graph_acl.py dev/phase0/run_tests.sh it
 """
 
 import logging

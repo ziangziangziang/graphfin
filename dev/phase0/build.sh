@@ -2,10 +2,10 @@
 # Phase 0: reproducible containerized build of TuGraph.
 #
 # Usage:
-#   ci/phase0/build.sh                 # clean build, -j2 (safe for an 8 GiB VM)
-#   JOBS=4 ci/phase0/build.sh          # faster, needs >=12 GiB container RAM
-#   CLEAN=0 ci/phase0/build.sh         # incremental rebuild
-#   BUILD_TYPE=Release ci/phase0/build.sh
+#   dev/phase0/build.sh                 # clean build, -j2 (safe for an 8 GiB VM)
+#   JOBS=4 dev/phase0/build.sh          # faster, needs >=12 GiB container RAM
+#   CLEAN=0 dev/phase0/build.sh         # incremental rebuild
+#   BUILD_TYPE=Release dev/phase0/build.sh
 #
 # Output: build/output/  (lgraph_server, toolkits, liblgraph.so, unit_test,
 #                         fma_unit_test, ...)
