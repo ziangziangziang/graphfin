@@ -13,9 +13,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  build-and-deploy:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: site
@@ -36,24 +38,8 @@ jobs:
           SITE_SOURCE_REF: ${{ github.head_ref || github.ref_name }}
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
-      - name: Upload static site
-        uses: actions/upload-pages-artifact@v4
+      - name: Deploy to gh-pages
+        uses: JamesIves/github-pages-deploy-action@v4
         with:
-          path: site/dist
-
-  deploy:
-    if: github.ref == 'refs/heads/main'
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Configure Pages
-        uses: actions/configure-pages@v6
-      - name: Deploy
-        id: deployment
-        uses: actions/deploy-pages@v5
+          folder: site/dist
+          clean: true
