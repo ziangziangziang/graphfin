@@ -27,9 +27,10 @@ import type { Quality } from "./quality";
 function carbonMaterial() {
   const material = new MeshStandardMaterial({
     color: 0xffffff,
-    roughness: 0.32,
-    metalness: 0.62,
+    roughness: 0.28,
+    metalness: 0.7,
     transparent: true,
+    envMapIntensity: 1.15,
   });
   // Per-instance fade hides the wrap boundary. No per-node materials/draw calls.
   material.onBeforeCompile = (shader) => {
@@ -47,7 +48,11 @@ function carbonMaterial() {
     );
     shader.fragmentShader = shader.fragmentShader.replace(
       "#include <emissivemap_fragment>",
-      "#include <emissivemap_fragment>\ntotalEmissiveRadiance += vColor.rgb * 0.24 + max(vColor.r - vColor.b, 0.0) * vec3(1.6, 1.0, 0.3);",
+      "#include <emissivemap_fragment>\n" +
+        "totalEmissiveRadiance += vColor.rgb * 0.24 + max(vColor.r - vColor.b, 0.0) * vec3(1.6, 1.0, 0.3);\n" +
+        "vec3 rimView = normalize(vViewPosition);\n" +
+        "float rim = pow(1.0 - clamp(dot(normalize(normal), rimView), 0.0, 1.0), 2.5);\n" +
+        "totalEmissiveRadiance += rim * vec3(0.16, 0.22, 0.2) * (0.4 + 0.6 * vFade);",
     );
   };
   return material;
