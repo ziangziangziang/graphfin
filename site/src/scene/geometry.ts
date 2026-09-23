@@ -101,5 +101,5 @@ export function positionOnSpiral(
 }
 
 export function visibility(u: number): number {
-  return smoothstep(0.015, 0.16, u) * (1 - smoothstep(0.82, 0.985, u));
+  return smoothstep(0.015, 0.16, u) * (1 - smoothstep(0.78, 0.95, u));
 }
