@@ -141,7 +141,10 @@ export function createScene(
       const { width, height } = host.getBoundingClientRect();
       if (!quality.mobile) ensureComposer(width, height);
       bakeEnvironment();
+      // One static frame picks up IBL/bloom; the animate loop stays gated by running().
       if (visible && !document.hidden) draw();
+      // Tests wait for this before comparing frozen canvas digests.
+      host.dataset.enhanced = "true";
     });
   }
 

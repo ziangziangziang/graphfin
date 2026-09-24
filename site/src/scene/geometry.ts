@@ -87,13 +87,12 @@ export function createLattice(columns: number, rows: number): Lattice {
 const HEAD_END = 0.16;
 const TAIL_START = 0.82;
 const RIBBON_HALF = 0.2;
-const DEPTH_HALF = 5;
 const SLAB_Z = 0.26;
 const V_SCALE = 3.03;
 const TAN_EPS = 0.03;
 const CHAIKIN_ITERS = 3;
-
-const logoScale = 2.15 / 388;
+/** Slightly oversized so the G crosses the decorative breakout frame. */
+const logoScale = 2.42 / 388;
 const logoCenterX = 546;
 const logoCenterY = 470;
 
@@ -254,7 +253,7 @@ function centerline(u: number): [number, number] {
   return alongPath(logo, distance);
 }
 
-/** GraphFin logo G: DOF head in the right aperture, CCW arc, inward tail. */
+/** GraphFin logo G punching through the hero frame: DOF head, CCW arc, near tail. */
 export function positionOnSpiral(
   u: number,
   v: number,
@@ -266,10 +265,14 @@ export function positionOnSpiral(
   const ty = after[1] - before[1];
   const tangent = Math.hypot(tx, ty) || 1;
   const offset = (v * RIBBON_HALF) / V_SCALE;
+    // Ease the depth ramp so the visible mid-band stays sharp and the ends
+    // accelerate toward/away from the camera for naked-eye parallax.
+    const along = (u - 0.5) * 2;
+    const depth = Math.sign(along) * Math.pow(Math.abs(along), 1.15) * 3.15;
   return [
     point[0] - (ty / tangent) * offset,
     point[1] + (tx / tangent) * offset,
-    (u - 0.5) * DEPTH_HALF + v * SLAB_Z,
+    depth + v * SLAB_Z,
   ];
 }
 
