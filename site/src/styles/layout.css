@@ -10,7 +10,8 @@
   }
   .hero-visual {
     right: 0;
-    left: 45%;
+    left: 36%;
+    top: -6%;
   }
 }
 @media (max-width: 1050px) {
@@ -29,6 +30,7 @@
   .hero-visual {
     left: 39%;
     right: -13%;
+    top: -4%;
   }
   .hero-note {
     display: none;
@@ -124,6 +126,12 @@
     width: calc(100% + 48px);
     height: 390px;
     margin-top: 5px;
+  }
+  .breakout-frame {
+    inset: 12% 10% 16% 14%;
+  }
+  .breakout-shadow {
+    display: none;
   }
   .hero-fallback {
     width: 86%;

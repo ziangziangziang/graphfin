@@ -214,9 +214,9 @@ export class LatticeMesh {
     this.nodeFade.needsUpdate = this.bondFade.needsUpdate = true;
     glowPositions.needsUpdate = strengths.needsUpdate = true;
     this.group.rotation.set(
-      -0.1 + Math.sin(seconds * 0.035) * 0.025,
-      -0.12 + Math.sin(seconds * 0.028) * 0.045,
-      -0.12,
+      -0.18 + Math.sin(seconds * 0.035) * 0.03,
+      -0.26 + Math.sin(seconds * 0.028) * 0.05,
+      -0.1,
     );
   }
 
