@@ -30,6 +30,22 @@ export default defineConfig({
           `https://github.com/ziangziangziang/graphfin/blob/${encodeURIComponent(sourceRef())}`,
         ),
     },
+    {
+      // Dev rewrites ../assets/* to /assets/* without the base prefix, which
+      // 404s under /graphfin/. Production already emits /graphfin/assets/*.
+      name: "graphfin-dev-asset-base",
+      transformIndexHtml: {
+        order: "post",
+        handler: (html) => {
+          const base = process.env.SITE_BASE_PATH || "/graphfin/";
+          if (!base || base === "/") return html;
+          return html.replace(
+            /((?:src|href)=")\/assets\//g,
+            `$1${base}assets/`,
+          );
+        },
+      },
+    },
   ],
   build: { target: "es2022" },
 });

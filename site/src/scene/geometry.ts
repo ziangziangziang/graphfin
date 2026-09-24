@@ -84,22 +84,198 @@ export function createLattice(columns: number, rows: number): Lattice {
   return { nodes, edges, route };
 }
 
-/** A shallow helix seen almost along its axis; the inward curl suggests the G. */
+const HEAD_END = 0.16;
+const TAIL_START = 0.82;
+const RIBBON_HALF = 0.2;
+const SLAB_Z = 0.26;
+const V_SCALE = 3.03;
+const TAN_EPS = 0.03;
+const CHAIKIN_ITERS = 3;
+/** Slightly oversized so the G crosses the decorative breakout frame. */
+const logoScale = 2.42 / 388;
+const logoCenterX = 546;
+const logoCenterY = 470;
+
+/** Chaikin-cut the skeleton so head/arc/tail junctions stay tangent-continuous. */
+function chaikin(
+  points: readonly (readonly [number, number])[],
+  iterations: number,
+): [number, number][] {
+  let current = points.map(([x, y]): [number, number] => [x, y]);
+  for (let iter = 0; iter < iterations; iter++) {
+    const next: [number, number][] = [current[0]];
+    for (let i = 0; i < current.length - 1; i++) {
+      const a = current[i];
+      const b = current[i + 1];
+      next.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25]);
+      next.push([a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]);
+    }
+    next.push(current[current.length - 1]);
+    current = next;
+  }
+  return current;
+}
+
+// Logo skeleton in SVG space (y-down): defocused head, outer spiral, G tail.
+const headPoints: readonly (readonly [number, number])[] = [
+  [842, 362],
+  [845, 311],
+  [829, 252],
+  [797, 191],
+  [748, 143],
+  [690, 112],
+];
+const arcPoints: readonly (readonly [number, number])[] = [
+  [690, 112],
+  [594, 100],
+  [505, 126],
+  [423, 171],
+  [347, 234],
+  [292, 314],
+  [260, 408],
+  [261, 510],
+  [296, 612],
+  [355, 700],
+  [437, 770],
+  [532, 817],
+  [636, 834],
+  [730, 811],
+  [801, 756],
+  [837, 676],
+  [824, 594],
+];
+const tailPoints: readonly (readonly [number, number])[] = [
+  [824, 594],
+  [748, 551],
+  [676, 545],
+  [618, 575],
+  [600, 605],
+  [590, 623],
+  [570, 615],
+  [548, 595],
+  [509, 588],
+  [475, 566],
+];
+const skeletonSvg: readonly (readonly [number, number])[] = [
+  ...headPoints,
+  ...arcPoints.slice(1),
+  ...tailPoints.slice(1),
+];
+
+interface LogoPath {
+  world: [number, number][];
+  cumulative: number[];
+  length: number;
+  /** Arclength of the original head→arc junction after smoothing. */
+  headJoin: number;
+  /** Arclength of the original arc→tail junction after smoothing. */
+  tailJoin: number;
+}
+
+function logoPath(
+  points: readonly (readonly [number, number])[],
+  joinA: readonly [number, number],
+  joinB: readonly [number, number],
+): LogoPath {
+  const smoothed = chaikin(points, CHAIKIN_ITERS).map(([x, y]): [number, number] => [
+    (x - logoCenterX) * logoScale,
+    (logoCenterY - y) * logoScale,
+  ]);
+  const cumulative = [0];
+  for (let i = 1; i < smoothed.length; i++) {
+    cumulative.push(
+      cumulative[i - 1] +
+        Math.hypot(
+          smoothed[i][0] - smoothed[i - 1][0],
+          smoothed[i][1] - smoothed[i - 1][1],
+        ),
+    );
+  }
+  const targetJoin = (svg: readonly [number, number]): number => {
+    const wx = (svg[0] - logoCenterX) * logoScale;
+    const wy = (logoCenterY - svg[1]) * logoScale;
+    let best = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < smoothed.length; i++) {
+      const dist = Math.hypot(smoothed[i][0] - wx, smoothed[i][1] - wy);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = cumulative[i];
+      }
+    }
+    return best;
+  };
+  return {
+    world: smoothed,
+    cumulative,
+    length: cumulative[cumulative.length - 1],
+    headJoin: targetJoin(joinA),
+    tailJoin: targetJoin(joinB),
+  };
+}
+
+const logo = logoPath(
+  skeletonSvg,
+  [690, 112],
+  [824, 594],
+);
+
+function alongPath(path: LogoPath, distance: number): [number, number] {
+  const target = Math.min(Math.max(distance, 0), path.length);
+  let lo = 0;
+  let hi = path.cumulative.length - 1;
+  while (lo + 1 < hi) {
+    const mid = (lo + hi) >> 1;
+    if (path.cumulative[mid] <= target) lo = mid;
+    else hi = mid;
+  }
+  const span = path.cumulative[hi] - path.cumulative[lo];
+  const f = span > 0 ? (target - path.cumulative[lo]) / span : 0;
+  const a = path.world[lo];
+  const b = path.world[hi];
+  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
+}
+
+function centerline(u: number): [number, number] {
+  let distance: number;
+  if (u < HEAD_END) {
+    distance = (u / HEAD_END) * logo.headJoin;
+  } else if (u < TAIL_START) {
+    distance =
+      logo.headJoin +
+      ((u - HEAD_END) / (TAIL_START - HEAD_END)) *
+        (logo.tailJoin - logo.headJoin);
+  } else {
+    distance =
+      logo.tailJoin +
+      ((u - TAIL_START) / (1 - TAIL_START)) * (logo.length - logo.tailJoin);
+  }
+  return alongPath(logo, distance);
+}
+
+/** GraphFin logo G punching through the hero frame: DOF head, CCW arc, near tail. */
 export function positionOnSpiral(
   u: number,
   v: number,
 ): [number, number, number] {
-  // Slow the angular sweep as the ribbon turns inward, leaving the G's aperture
-  // open on the right. The two ends retreat along the depth axis into the fade.
-  const angle = 0.15 + u * 7.45 - 3.8 * smoothstep(0.68, 1, u) * (u - 0.68);
-  const radius = 2.15 - 1.7 * smoothstep(0.72, 1, u) + v * 0.19;
+  const before = centerline(Math.max(0, u - TAN_EPS));
+  const after = centerline(Math.min(1, u + TAN_EPS));
+  const point = centerline(u);
+  const tx = after[0] - before[0];
+  const ty = after[1] - before[1];
+  const tangent = Math.hypot(tx, ty) || 1;
+  const offset = (v * RIBBON_HALF) / V_SCALE;
+    // Ease the depth ramp so the visible mid-band stays sharp and the ends
+    // accelerate toward/away from the camera for naked-eye parallax.
+    const along = (u - 0.5) * 2;
+    const depth = Math.sign(along) * Math.pow(Math.abs(along), 1.15) * 3.15;
   return [
-    Math.cos(angle) * radius,
-    Math.sin(angle) * radius + (u - 0.5) * 0.85,
-    (u - 0.5) * 3.0 + v * 0.14 + Math.sin(angle) * 0.22,
+    point[0] - (ty / tangent) * offset,
+    point[1] + (tx / tangent) * offset,
+    depth + v * SLAB_Z,
   ];
 }
 
 export function visibility(u: number): number {
-  return smoothstep(0.015, 0.16, u) * (1 - smoothstep(0.82, 0.985, u));
+  return smoothstep(0.015, 0.16, u) * (1 - smoothstep(0.78, 0.95, u));
 }

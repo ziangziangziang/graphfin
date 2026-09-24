@@ -1,8 +1,35 @@
-import { expect, test } from "@playwright/test";
-import { createHash } from "node:crypto";
+import { expect, test, type Page } from "@playwright/test";
 
-const digest = (image: Buffer) =>
-  createHash("sha256").update(image).digest("hex");
+/** Install a drawElementsInstanced counter used by freeze/offscreen tests. */
+async function installDrawCounter(page: Page) {
+  await page.addInitScript(() => {
+    const draws = { count: 0 };
+    Object.assign(window, { graphfinTestDraws: draws });
+    const original = WebGL2RenderingContext.prototype.drawElementsInstanced;
+    WebGL2RenderingContext.prototype.drawElementsInstanced = function (
+      ...args
+    ) {
+      draws.count++;
+      return original.apply(this, args);
+    };
+  });
+}
+
+const drawCount = (page: Page) =>
+  page.evaluate(
+    () =>
+      (window as unknown as { graphfinTestDraws: { count: number } })
+        .graphfinTestDraws.count,
+  );
+
+/** Wait until IBL/bloom have settled (one static enhancement frame). */
+async function waitForEnhanced(page: Page) {
+  await expect(page.locator("#scene-host")).toHaveAttribute(
+    "data-enhanced",
+    "true",
+    { timeout: 15000 },
+  );
+}
 
 test("production subpath, renderer, anchors, language and assets", async ({
   page,
@@ -84,6 +111,7 @@ test("mobile navigation, Chinese layout, and responsive quality", async ({
 test("reduced motion freezes the composition, including pointer movement", async ({
   page,
 }) => {
+  await installDrawCounter(page);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("./");
   await expect(page.locator("#hero-visual")).toHaveAttribute(
@@ -91,17 +119,19 @@ test("reduced motion freezes the composition, including pointer movement", async
     "webgl",
   );
   await expect(page.locator("#motion")).toBeHidden();
-  const canvas = page.locator("canvas");
-  await page.waitForTimeout(500);
-  const before = digest(await canvas.screenshot());
+  await waitForEnhanced(page);
+  await page.waitForTimeout(400);
+  const before = await drawCount(page);
   await page.mouse.move(100, 200);
+  await page.mouse.move(300, 400);
   await page.waitForTimeout(600);
-  expect(digest(await canvas.screenshot())).toBe(before);
+  expect(await drawCount(page)).toBe(before);
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await expect(page.locator("#motion")).toBeVisible();
 });
 
 test("animation can be paused and resumed", async ({ page }) => {
+  await installDrawCounter(page);
   await page.goto("./");
   await expect(page.locator("#hero-visual")).toHaveAttribute(
     "data-renderer",
@@ -109,14 +139,18 @@ test("animation can be paused and resumed", async ({ page }) => {
   );
   await page.locator("#motion").click();
   await expect(page.locator("#motion")).toHaveAttribute("aria-pressed", "true");
-  const canvas = page.locator("canvas");
-  await page.waitForTimeout(800);
-  const before = digest(await canvas.screenshot());
-  await page.waitForTimeout(500);
-  expect(digest(await canvas.screenshot())).toBe(before);
-  await page.locator("#motion").click();
+  await waitForEnhanced(page);
+  await page.waitForTimeout(400);
+  const paused = await drawCount(page);
   await page.waitForTimeout(600);
-  expect(digest(await canvas.screenshot())).not.toBe(before);
+  expect(await drawCount(page)).toBe(paused);
+  await page.locator("#motion").click();
+  await expect(page.locator("#motion")).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  await page.waitForTimeout(600);
+  expect(await drawCount(page)).toBeGreaterThan(paused);
 });
 
 test("WebGL failure keeps the static brand image and all content", async ({
@@ -220,23 +254,8 @@ test("layouts fit small phones, tablets, and wide desktops in both languages", a
 test("hidden documents and offscreen heroes stop GPU draws", async ({
   page,
 }) => {
-  await page.addInitScript(() => {
-    const draws = { count: 0 };
-    Object.assign(window, { graphfinTestDraws: draws });
-    const original = WebGL2RenderingContext.prototype.drawElementsInstanced;
-    WebGL2RenderingContext.prototype.drawElementsInstanced = function (
-      ...args
-    ) {
-      draws.count++;
-      return original.apply(this, args);
-    };
-  });
-  const count = () =>
-    page.evaluate(
-      () =>
-        (window as unknown as { graphfinTestDraws: { count: number } })
-          .graphfinTestDraws.count,
-    );
+  await installDrawCounter(page);
+  const count = () => drawCount(page);
   await page.goto("./");
   await expect(page.locator("#hero-visual")).toHaveAttribute(
     "data-renderer",
@@ -264,8 +283,21 @@ test("hidden documents and offscreen heroes stop GPU draws", async ({
   await page.waitForTimeout(200);
   expect(await count()).toBeGreaterThan(hidden);
   await page.locator("footer").scrollIntoViewIfNeeded();
-  await page.waitForTimeout(300);
-  const offscreen = await count();
-  await page.waitForTimeout(300);
+  // IntersectionObserver + the in-flight rAF can emit a burst of frames after
+  // the scroll; require sustained idle (not a single quiet sample) before asserting.
+  let offscreen = await count();
+  let stable = 0;
+  for (let i = 0; i < 50; i++) {
+    await page.waitForTimeout(100);
+    const next = await count();
+    if (next === offscreen) {
+      stable += 1;
+      if (stable >= 5) break;
+    } else {
+      stable = 0;
+      offscreen = next;
+    }
+  }
+  await page.waitForTimeout(500);
   expect(await count()).toBe(offscreen);
 });

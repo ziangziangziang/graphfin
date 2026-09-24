@@ -25,8 +25,9 @@ export class CameraRig {
       ((active ? this.pointer.x : 0) - this.current.x) * (still ? 1 : weight);
     this.current.y +=
       ((active ? this.pointer.y : 0) - this.current.y) * (still ? 1 : weight);
-    this.camera.position.x = this.current.x * 0.13;
-    this.camera.position.y = this.current.y * 0.1;
+    // Wide parallax swing: near nodes shear hard against the far arc.
+    this.camera.position.x = this.current.x * 0.24;
+    this.camera.position.y = this.current.y * 0.18;
     this.camera.lookAt(0, 0.08, 0);
   }
 }
