@@ -57,7 +57,7 @@ software WebGL for reproducibility; this is not a real-device performance claim.
 | `src/main.ts`                            | Menu, motion control, lazy scene loading, section observer, page lifecycle                 |
 | `src/i18n.ts`                            | Chinese translations, document language/title/metadata, shareable language state           |
 | `src/style.css`, `src/styles/layout.css` | Brand styling, responsive layouts, focus and reduced-motion styles                         |
-| `src/scene/geometry.ts`                  | Welded hexagonal strip, periodic seam, curved G/spiral mapping, end fade                   |
+| `src/scene/geometry.ts`                  | Welded hexagonal strip, periodic seam, logo-accurate G mapping with depth of field, end fade |
 | `src/scene/signal.ts`                    | Continuous travelling pulse along a closed route of real lattice edges                     |
 | `src/scene/lattice-mesh.ts`              | Instanced spheres/bonds, material fade, small procedural signal halos                      |
 | `src/scene/camera.ts`                    | Composition fitting and restrained pointer parallax                                        |
@@ -101,13 +101,15 @@ The source assets are `../assets/logo.svg`, `../assets/logo.png`, and
 uses the SVG in the header/favicon and the existing hero PNG as the static
 fallback. Vite fingerprints and rebases asset URLs. No external font/CDN is used.
 
-This is a stylized carbon ribbon, not a chemically exact molecular model.
-Perspective, progressively fading ends, and fog approximate depth of field;
-desktop bloom is a cheap threshold pass, not a full deferred pipeline. The gold
-halo is a procedural soft point attached to active graph nodes, never a separate
-waveform. Reduced motion uses the same static 3D composition when supported;
-unavailable WebGL, context loss, or a failed renderer import leaves the existing
-hero image visible.
+This is a stylized carbon ribbon, not a chemically exact molecular model. The
+strip follows the GraphFin logo G (defocused head in the right aperture, CCW
+arc, inward tail). Perspective, a depth ramp along the path, progressively
+fading ends, and fog approximate depth of field; desktop bloom is a cheap
+threshold pass, not a full deferred pipeline. The gold halo is a procedural
+soft point attached to active graph nodes, never a separate waveform. Reduced
+motion uses the same static 3D composition when supported; unavailable WebGL,
+context loss, or a failed renderer import leaves the existing hero image
+visible.
 
 The legacy PNG is about 1.1 MB. The deferred renderer bundle is about 142 KB
 gzipped. A future optimized fallback derivative can reduce first-load transfer
