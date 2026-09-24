@@ -106,12 +106,16 @@ strip follows the GraphFin logo G (defocused head in the right aperture, CCW
 arc, inward tail). Perspective, an anamorphic depth ramp that lunges the ends
 toward and away from the lens, progressively fading ends, and fog approximate
 depth of field; a decorative breakout frame under the canvas lets the G paint
-beyond the window, and a soft edge mask dissolves the hard clip. Desktop bloom
-is a cheap threshold pass, not a full deferred pipeline. The gold halo is a
-procedural soft point attached to active graph nodes, never a separate
-waveform. Reduced motion uses the same static 3D composition when supported;
-unavailable WebGL, context loss, or a failed renderer import leaves the existing
-hero image visible.
+beyond the window, and a soft edge mask dissolves the hard clip. Materials use
+a low-roughness metalness/IBL sheen; desktop bloom is a cheap threshold pass,
+not a full deferred pipeline. The gold signal is a single route pulse whose
+speed, tail length, and edge brightness wobble on layered sines plus a seeded
+hash flicker (deterministic, still one connected trail). Static per-atom
+offsets and tint drift keep the lattice from looking CAD-perfect. The gold
+halo is a procedural soft point attached to active graph nodes, never a
+separate waveform. Reduced motion uses the same static 3D composition when
+supported; unavailable WebGL, context loss, or a failed renderer import leaves
+the existing hero image visible.
 
 The legacy PNG is about 1.1 MB. The deferred renderer bundle is about 142 KB
 gzipped. A future optimized fallback derivative can reduce first-load transfer
