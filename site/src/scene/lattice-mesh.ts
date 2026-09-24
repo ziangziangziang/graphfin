@@ -24,13 +24,27 @@ import {
 import { Signal } from "./signal";
 import type { Quality } from "./quality";
 
+/** Cheap deterministic noise for organic, non-repeating wobble. */
+function wob(seconds: number, rate: number, phase: number): number {
+  return (
+    Math.sin(seconds * rate + phase) * 0.62 +
+    Math.sin(seconds * rate * 1.73 + phase * 2.1) * 0.38
+  );
+}
+
+function hash(n: number): number {
+  const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
+
 function carbonMaterial() {
   const material = new MeshStandardMaterial({
     color: 0xffffff,
-    roughness: 0.28,
-    metalness: 0.7,
+    // Lower roughness + higher env → wet graphite sheen under the IBL.
+    roughness: 0.2,
+    metalness: 0.78,
     transparent: true,
-    envMapIntensity: 1.15,
+    envMapIntensity: 1.55,
   });
   // Per-instance fade hides the wrap boundary. No per-node materials/draw calls.
   material.onBeforeCompile = (shader) => {
@@ -49,10 +63,11 @@ function carbonMaterial() {
     shader.fragmentShader = shader.fragmentShader.replace(
       "#include <emissivemap_fragment>",
       "#include <emissivemap_fragment>\n" +
-        "totalEmissiveRadiance += vColor.rgb * 0.24 + max(vColor.r - vColor.b, 0.0) * vec3(1.6, 1.0, 0.3);\n" +
+        // Gold signal blooms harder; cool base keeps a faint inner glow.
+        "totalEmissiveRadiance += vColor.rgb * 0.3 + max(vColor.r - vColor.b, 0.0) * vec3(2.1, 1.25, 0.32);\n" +
         "vec3 rimView = normalize(vViewPosition);\n" +
-        "float rim = pow(1.0 - clamp(dot(normalize(normal), rimView), 0.0, 1.0), 2.5);\n" +
-        "totalEmissiveRadiance += rim * vec3(0.16, 0.22, 0.2) * (0.4 + 0.6 * vFade);",
+        "float rim = pow(1.0 - clamp(dot(normalize(normal), rimView), 0.0, 1.0), 2.8);\n" +
+        "totalEmissiveRadiance += rim * vec3(0.2, 0.27, 0.25) * (0.35 + 0.65 * vFade);",
     );
   };
   return material;
@@ -139,8 +154,10 @@ export class LatticeMesh {
       fragmentShader: `varying float vStrength;
         void main() {
           float d = length(gl_PointCoord - .5) * 2.0;
-          float alpha = exp(-d * d * 5.0) * (1.0 - smoothstep(.7, 1.0, d));
-          gl_FragColor = vec4(1.0, .66, .19, alpha * vStrength * .48);
+          float core = exp(-d * d * 9.0);
+          float halo = exp(-d * d * 3.5) * (1.0 - smoothstep(.7, 1.0, d));
+          float alpha = (core * 0.55 + halo * 0.7) * vStrength;
+          gl_FragColor = vec4(1.0, 0.72, 0.28, alpha * 0.62);
         }`,
       transparent: true,
       blending: AdditiveBlending,
@@ -161,11 +178,22 @@ export class LatticeMesh {
     const strengths = this.halo.geometry.getAttribute(
       "strength",
     ) as BufferAttribute;
+    // Global conveyor with a slow surge — same phase for every node, so the
+    // welded sheet slides as one body (per-node speeds would tear bonds).
+    const drift = seconds * 0.0042 + Math.sin(seconds * 0.11) * 0.0035;
     this.graph.nodes.forEach((node, i) => {
       // Bounded conveyor: IDs and buffers persist while positions wrap in the fog.
-      const u = wrap(node.u + seconds * 0.0035);
+      const u = wrap(node.u + drift);
       this.parameters[i] = u;
       const p = this.positions[i].set(...positionOnSpiral(u, node.v));
+      // Static micro-offset: each atom sits a hair off the ideal lattice —
+      // manufacturing imperfection, not animation noise.
+      const ox = (hash(i * 1.7) - 0.5) * 0.012;
+      const oy = (hash(i * 2.3 + 5) - 0.5) * 0.012;
+      const oz = (hash(i * 3.1 + 9) - 0.5) * 0.01;
+      p.x += ox;
+      p.y += oy;
+      p.z += oz;
       const fade = visibility(u);
       const signal = this.signal.nodeStrength[i];
       this.transform.position.copy(p);
@@ -173,10 +201,13 @@ export class LatticeMesh {
       this.transform.scale.setScalar(0.046 + signal * 0.007);
       this.transform.updateMatrix();
       this.nodes.setMatrixAt(i, this.transform.matrix);
-      this.nodes.setColorAt(
-        i,
-        this.color.copy(this.carbon).lerp(this.gold, signal),
-      );
+      // Slight per-atom albedo drift so the ring is not a flat plastic toy.
+      const tint = 0.9 + 0.1 * hash(i * 5.9 + 3);
+      this.color
+        .copy(this.carbon)
+        .multiplyScalar(tint)
+        .lerp(this.gold, Math.min(1, signal * 1.05));
+      this.nodes.setColorAt(i, this.color);
       this.nodeFade.setX(i, fade);
       glowPositions.setXYZ(i, p.x, p.y, p.z);
       strengths.setX(i, signal * fade);
@@ -199,12 +230,13 @@ export class LatticeMesh {
       this.transform.scale.set(0.014, wraps ? 0 : length, 0.014);
       this.transform.updateMatrix();
       this.bonds.setMatrixAt(i, this.transform.matrix);
-      this.bonds.setColorAt(
-        i,
-        this.color
-          .copy(this.carbon)
-          .lerp(this.gold, this.signal.edgeStrength[i]),
-      );
+      const edgeSignal = this.signal.edgeStrength[i];
+      const tint = 0.92 + 0.08 * hash(i * 4.3 + 1);
+      this.color
+        .copy(this.carbon)
+        .multiplyScalar(tint)
+        .lerp(this.gold, Math.min(1, edgeSignal * 1.1));
+      this.bonds.setColorAt(i, this.color);
       this.bondFade.setX(i, fade);
     });
     this.nodes.instanceMatrix.needsUpdate =
@@ -213,10 +245,11 @@ export class LatticeMesh {
       this.bonds.instanceColor!.needsUpdate = true;
     this.nodeFade.needsUpdate = this.bondFade.needsUpdate = true;
     glowPositions.needsUpdate = strengths.needsUpdate = true;
+    // Layered incommensurate rates → quasi-random tumble that never exactly repeats.
     this.group.rotation.set(
-      -0.18 + Math.sin(seconds * 0.035) * 0.03,
-      -0.26 + Math.sin(seconds * 0.028) * 0.05,
-      -0.1,
+      -0.18 + wob(seconds, 0.035, 0.4) * 0.035,
+      -0.26 + wob(seconds, 0.028, 1.7) * 0.055,
+      -0.1 + Math.sin(seconds * 0.021 + 2.2) * 0.014,
     );
   }
 

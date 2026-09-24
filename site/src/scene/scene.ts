@@ -46,9 +46,9 @@ export function createScene(
   // IBL carries ambient fill; directionals only shape form and rim.
   // Bake the room asynchronously so createScene returns before SwiftShader stalls.
   const ambient = new AmbientLight(0xcbd5d1, 1.4);
-  const key = new DirectionalLight(0xf0f3e6, 2.6);
+  const key = new DirectionalLight(0xf0f3e6, 2.85);
   key.position.set(-3, 5, 6);
-  const rim = new DirectionalLight(0x728d8a, 1.5);
+  const rim = new DirectionalLight(0x728d8a, 1.7);
   rim.position.set(4, -2, 3);
   scene.add(ambient, key, rim);
   const camera = new CameraRig();
@@ -126,9 +126,9 @@ export function createScene(
     composer.addPass(new RenderPass(scene, camera.camera));
     bloomPass = new UnrealBloomPass(
       new Vector2(width, height),
-      0.32,
-      0.5,
-      0.78,
+      0.4,
+      0.55,
+      0.72,
     );
     composer.addPass(bloomPass);
     composer.addPass(new OutputPass());
