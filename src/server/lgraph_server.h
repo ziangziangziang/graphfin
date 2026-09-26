@@ -68,6 +68,24 @@ class RPCService : public lgraph::LGraphRPCService {
     lgraph::StateMachine *sm_;
 };
 
+// Startup replication-configuration guard, split out of LGraphServer::Start so
+// the contract is unit-testable without binding ports or opening databases.
+// Returns true when the configuration must be rejected at startup.
+// See docs/architecture/09-write-path-audit.md sections 5 and 6.
+inline bool RejectUnsupportedReplicationConfig(const GlobalConfig& config) {
+    // Gap 1: Bolt with legacy HA but no Bolt HA leaves Bolt writes unreplicated.
+    if (config.bolt_port > 0 && config.enable_ha && config.bolt_raft_port == 0) {
+        return true;
+    }
+    // Two independent consensus logs with no defined relative order across
+    // conflicting writes. A warning cannot enforce a single-order contract, so
+    // the combination is rejected rather than merely reported.
+    if (config.enable_ha && config.bolt_raft_port > 0) {
+        return true;
+    }
+    return false;
+}
+
 class LGraphServer {
 #ifndef _WIN32
     class FMALogSink : public logging::LogSink {

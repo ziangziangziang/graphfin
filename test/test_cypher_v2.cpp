@@ -14,8 +14,10 @@
 
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <tuple>
+#include <vector>
 
 #include "./graph_factory.h"
 /* Make sure include graph_factory.h BEFORE antlr4-runtime.h. Otherwise causing the following error:
@@ -39,6 +41,8 @@
 #include "cypher/rewriter/PushDownFilterAstRewriter.h"
 #include "cypher/execution_plan/runtime_context.h"
 #include "cypher/execution_plan/execution_plan_v2.h"
+#include "cypher/arithmetic/arithmetic_expression.h"
+#include "cypher/resultset/record.h"
 #include "lgraph/lgraph_utils.h"
 #include "./ut_utils.h"
 #include "./ut_config.h"
@@ -602,4 +606,38 @@ TEST_F(TestCypherV2, TestVectorIndex) {
     set_query_type(lgraph::ut::QUERY_TYPE::NEWCYPHER);
     std::string dir = test_suite_dir_ + "/vector_index/cypher";
     test_files(dir);
+}
+
+// DB-02: statement replication requires deterministic evaluation.
+// BuiltinFunction::Rand seeds a fresh std::mt19937 from std::random_device on
+// every call and ignores its evaluation context, so the same replicated
+// statement produces a different value on each replica. Any replicated write
+// that embeds rand() therefore diverges across replicas.
+//
+// This test pins the divergence property. It is a source-level finding, not a
+// reproduced replica split: a fix must either replicate the resolved value or
+// reject unqualified operations, and either change makes this assertion fail
+// deliberately.
+TEST(TestCypherNondeterminism, RandIsNotStableAcrossEvaluations) {
+    // Rand rejects any argument count other than 1, so give it exactly one
+    // default-constructed node; it never inspects the node's contents.
+    std::vector<cypher::ArithExprNode> one_arg;
+    one_arg.emplace_back();
+    const size_t draws = 64;
+    std::vector<double> values;
+    values.reserve(draws);
+    for (size_t i = 0; i < draws; ++i) {
+        // ctx and record are unused by Rand, so no evaluation context is needed.
+        auto result = cypher::BuiltinFunction::Rand(nullptr, Record(), one_arg);
+        UT_EXPECT_TRUE(result.IsReal());
+        UT_EXPECT_GE(result.scalar.AsDouble(), 0.0);
+        UT_EXPECT_LE(result.scalar.AsDouble(), 1.0);
+        values.push_back(result.scalar.AsDouble());
+    }
+
+    // Two replicas evaluating the identical statement must not be assumed to
+    // agree. Counting distinct draws is a deterministic proxy: a replicated
+    // rand() is only safe if this is 1, and it never is.
+    std::set<double> distinct(values.begin(), values.end());
+    UT_EXPECT_GT(distinct.size(), 1);
 }

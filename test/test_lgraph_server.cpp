@@ -25,6 +25,7 @@
 #include "core/global_config.h"
 #include "lgraph/lgraph_rpc_client.h"
 #include "restful/server/json_convert.h"
+#include "server/lgraph_server.h"
 
 #include "./test_tools.h"
 #include "./ut_utils.h"
@@ -121,5 +122,65 @@ TEST_F(TestLGraphServer, LGraphServer) {
         UT_EXPECT_EQ(obj[1]["graph_name"].as_string(), "g1");
         UT_EXPECT_EQ(obj[1]["configuration"]["description"].as_string(), "this is description");
         UT_EXPECT_EQ(obj[1]["configuration"]["max_size_GB"].as_integer(), 2048);
+    }
+}
+
+// DB-01: startup must reject a deployment that enables two independent
+// replication logs. A warning cannot enforce the single-mutation-order contract
+// in docs/architecture/09-write-path-audit.md section 6, so the mixed
+// combination is rejected here rather than merely reported.
+//
+// Pure config test: no ports are bound and no database is opened, so it stays
+// fast and hermetic.
+TEST(TestLGraphServerReplicationConfig, RejectsUnsupportedReplicationCombinations) {
+    using lgraph::GlobalConfig;
+    using lgraph::RejectUnsupportedReplicationConfig;
+
+    // Standalone: no replication at all is a supported single-writer deployment.
+    {
+        GlobalConfig conf;
+        EXPECT_FALSE(RejectUnsupportedReplicationConfig(conf));
+    }
+
+    // Exactly one path: legacy HA only.
+    {
+        GlobalConfig conf;
+        conf.enable_ha = true;
+        EXPECT_FALSE(RejectUnsupportedReplicationConfig(conf));
+    }
+
+    // Exactly one path: Bolt HA only.
+    {
+        GlobalConfig conf;
+        conf.bolt_raft_port = 9000;
+        EXPECT_FALSE(RejectUnsupportedReplicationConfig(conf));
+    }
+
+    // Gap 1: Bolt port with legacy HA but no Bolt Raft leaves Bolt writes
+    // unreplicated, so replicas silently diverge.
+    {
+        GlobalConfig conf;
+        conf.enable_ha = true;
+        conf.bolt_port = 7687;
+        EXPECT_TRUE(RejectUnsupportedReplicationConfig(conf));
+    }
+
+    // DB-01: legacy HA and Bolt HA together are two consensus logs with no
+    // defined relative order across conflicting writes. Must be rejected.
+    {
+        GlobalConfig conf;
+        conf.enable_ha = true;
+        conf.bolt_raft_port = 9000;
+        EXPECT_TRUE(RejectUnsupportedReplicationConfig(conf));
+    }
+
+    // The mixed combination stays rejected when a Bolt port is also set, so
+    // adding a client port cannot re-open the two-log configuration.
+    {
+        GlobalConfig conf;
+        conf.enable_ha = true;
+        conf.bolt_raft_port = 9000;
+        conf.bolt_port = 7687;
+        EXPECT_TRUE(RejectUnsupportedReplicationConfig(conf));
     }
 }

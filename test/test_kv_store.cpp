@@ -961,3 +961,80 @@ TEST_F(TestKvStore, KvStore) {
     }
 #endif
 }
+
+// DB-02: the replay marker is a process-global last-op-id that is persisted by
+// the NEXT commit, not the one that carried the data.
+//
+// HaStateMachine::on_apply calls ApplyRequestDirectly (which commits user data)
+// and only afterwards calls Galaxy::SetRaftLogIndexBeforeWrite, which merely
+// updates the in-memory atomic. That atomic is written into LMDB by
+// mdb_txn_set_last_op_id during a later commit. So there is a window in which
+// the user effect is durable but the marker is not: a crash in that window
+// replays the entry, and a non-idempotent effect (increment, unique ledger,
+// generated identity) applies twice.
+//
+// This test pins the mechanism that makes the window possible, so a future fix
+// that persists the marker with the data has to change this expectation
+// deliberately rather than silently.
+TEST(TestKvStoreReplayMarker, DataCanBeDurableBeforeItsReplayMarker) {
+#if LGRAPH_USE_MOCK_KV
+    GTEST_SKIP() << "replay-marker persistence requires a real LMDB store";
+#else
+    AutoCleanDir dir("./testkv-marker");
+    const int64_t marker = 4242;
+    const std::string path = "./testkv-marker";
+
+    // A fresh store starts with no marker.
+    {
+        auto store = std::make_unique<LMDBKvStore>(path);
+        auto txn = store->CreateReadTxn();
+        UT_EXPECT_EQ(txn->LastOpId(), -1);
+        txn->Abort();
+    }
+
+    // Commit user data WITHOUT advancing the marker. This is the state a crash
+    // in the on_apply window would leave behind: data committed, marker stale.
+    {
+        auto store = std::make_unique<LMDBKvStore>(path);
+        auto txn = store->CreateWriteTxn();
+        auto tbl = store->OpenTable(*txn, "ledger", true, ComparatorDesc::DefaultComparator());
+        const std::string key = fma_common::StringFormatter::Format("counter{}", marker);
+        tbl->SetValue(*txn, Value::ConstRef(key), Value::ConstRef("1"));
+        txn->Commit();
+    }
+
+    // Reopen: the data survived, and the marker did NOT advance with it.
+    // A replay driver comparing indices would therefore re-apply this entry.
+    {
+        auto store = std::make_unique<LMDBKvStore>(path);
+        auto txn = store->CreateReadTxn();
+        UT_EXPECT_EQ(txn->LastOpId(), -1);
+
+        auto tbl = store->OpenTable(*txn, "ledger", true, ComparatorDesc::DefaultComparator());
+        auto it = tbl->GetIterator(*txn);
+        it.GotoFirstKey();
+        UT_EXPECT_TRUE(it.IsValid());
+        UT_EXPECT_EQ(it.GetValue().AsString(), "1");
+        txn->Abort();
+    }
+
+    // Publishing the marker and then committing persists it, which is exactly
+    // why the marker must be written before, not after, the data it describes.
+    {
+        LMDBKvStore::SetLastOpIdOfAllStores(marker);
+        auto store = std::make_unique<LMDBKvStore>(path);
+        auto txn = store->CreateWriteTxn();
+        store->OpenTable(*txn, "ledger", true, ComparatorDesc::DefaultComparator());
+        txn->Commit();
+    }
+    {
+        auto store = std::make_unique<LMDBKvStore>(path);
+        auto txn = store->CreateReadTxn();
+        UT_EXPECT_EQ(txn->LastOpId(), marker);
+        txn->Abort();
+    }
+
+    // Leave the process-global marker as we found it for later tests.
+    LMDBKvStore::SetLastOpIdOfAllStores(-1);
+#endif
+}

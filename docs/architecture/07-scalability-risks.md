@@ -106,10 +106,10 @@ already consumed for other libraries.
 Reproduce the experiment with:
 
 ```bash
-dev/phase0/experiments/run_lmdb_tls_limit.sh
+test/stress/run_lmdb_tls_limit.sh
 ```
 
-Source: `dev/phase0/experiments/lmdb_tls_limit.c`.
+Source: `test/stress/lmdb_tls_limit.c`.
 
 **Consequences for the project.**
 

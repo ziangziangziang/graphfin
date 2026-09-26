@@ -20,11 +20,42 @@ permissions:
 
 env:
   TEST_TAG: graphfin-ut:test
+  PR_TEST_TAG: graphfin-pr:test
 
 jobs:
   # ---------------------------------------------------------------------------
+  # Decides whether a PR needs the (expensive) C++ gate. Docs/site-only PRs
+  # skip it so the ~40 min build is not paid for by a README change.
+  # ---------------------------------------------------------------------------
+  changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      engine: ${{ steps.filter.outputs.engine }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Detect build-relevant changes
+        id: filter
+        run: |
+          # Anything that can change compilation, the test binary, or how
+          # tests are selected must run the gate. Site/docs-only changes do not.
+          if git diff --name-only \
+               "${{ github.event.pull_request.base.sha }}" \
+               "${{ github.event.pull_request.head.sha }}" \
+             | grep -qE '^(src/|test/|deps/|cmake/|include/|CMakeLists.txt|ci/|\.github/workflows/ci\.yml$)'; then
+            echo "engine=true" >> "$GITHUB_OUTPUT"
+            echo "build-relevant changes detected"
+          else
+            echo "engine=false" >> "$GITHUB_OUTPUT"
+            echo "no build-relevant changes; skipping pr_engine_gate"
+          fi
+
+  # ---------------------------------------------------------------------------
   # Fast checks — PR and main (~1–2 min): lint + typecheck + unit only.
-  # No C++ Docker build on PR (disabled: tugraph compile image, 30-40m cold).
+  # No C++ build here; the targeted C++ gate lives in pr_engine_gate below.
   # ---------------------------------------------------------------------------
   lint:
     runs-on: ubuntu-latest
@@ -56,6 +87,58 @@ jobs:
         run: npx tsc --noEmit
       - name: Unit tests
         run: npm test
+
+  # ---------------------------------------------------------------------------
+  # PR-only: targeted C++ build + pr-unit slice (series/sharding/admission +
+  # the DB-01 and DB-02 regression guards). Slower than lint but far cheaper
+  # than the main-only full suite, so correctness gates land before merge.
+  # Mark this job required in branch protection to make it binding.
+  # ---------------------------------------------------------------------------
+  pr_engine_gate:
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
+    runs-on: ubuntu-latest
+    # Provisional: the cold seed is unmeasured. Raise it once a real cold run
+    # reports a duration; do not lower it below the observed cold time.
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: write # buildx GHA cache (cache-from / cache-to)
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo apt-get update -qq && sudo apt-get remove -y '^dotnet-.*' '^llvm-.*' azure-cli google-chrome-stable firefox powershell || true
+          sudo apt-get autoremove -y || true
+          sudo apt-get clean || true
+          df -h
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          submodules: "true"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: PR engine gate
+        uses: docker/build-push-action@v7
+        with:
+          file: ci/images/github-pr-ubuntu-latest-Dockerfile
+          context: .
+          tags: ${{ env.PR_TEST_TAG }}
+          build-args: |
+            BUILD_TYPE=no_asan
+            TEST_TYPE=pr
+          cache-from: type=gha,scope=pr-engine
+          cache-to: type=gha,scope=pr-engine,mode=max
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-gtest-results
+          path: testresult/
+          if-no-files-found: ignore
+      - name: Check disk space
+        if: always()
+        run: df -h
 
   # ---------------------------------------------------------------------------
   # Main-only: full ~70-minute suite (coverage + asan + full it)

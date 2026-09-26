@@ -246,8 +246,8 @@ relying on it to validate the graph-count work.
 
 ```bash
 # A/B harness (test-only --lmdb_notls switch, see test/main.cpp)
-dev/phase0/experiments/run_notls_matrix.sh on 4
-dev/phase0/experiments/run_notls_matrix.sh off 4
+test/stress/run_notls_matrix.sh on 4
+test/stress/run_notls_matrix.sh off 4
 ```
 
 ### Status update (Phase 4 review) — still open, diagnosis blocked in this window

@@ -9,10 +9,10 @@
   ],
   "suites": {
     "pr-unit": {
-      "description": "PR-targeted C++ unit slice: series, sharding/router, admission bound. Full suite stays on main.",
+      "description": "PR-targeted C++ unit slice: series, sharding/router, admission bound, plus the DB-01 replication-config guard, the DB-02 replay-marker mechanism and the DB-02 nondeterminism check. Full suite stays on main.",
       "tier": "pr",
       "type": "gtest",
-      "gtest_filter": "TestSeries*:*Series*:TestCluster*:*Router*:TestShardManager*:TestMigrationManager*:TestGalaxy.OpenGraphAdmissionBound",
+      "gtest_filter": "TestSeries*:*Series*:TestCluster*:*Router*:TestShardManager*:TestMigrationManager*:TestGalaxy.OpenGraphAdmissionBound:TestLGraphServerReplicationConfig.RejectsUnsupportedReplicationCombinations:TestKvStoreReplayMarker.DataCanBeDurableBeforeItsReplayMarker:TestCypherNondeterminism.RandIsNotStableAcrossEvaluations",
       "extra_binaries": ["fma_unit_test -t all"],
       "min_cases": 1,
       "required_artifacts": ["unit_test", "fma_unit_test"],
