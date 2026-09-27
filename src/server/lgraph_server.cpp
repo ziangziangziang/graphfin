@@ -119,25 +119,22 @@ int LGraphServer::Start() {
     // assign AccessControllerDB enable_plugin
     AccessControlledDB::SetEnablePlugin(config_->enable_plugin);
     // adjust config
-    // Gap 1 prevention: Bolt with legacy HA requires Bolt HA to avoid
-    // silent replica divergence (docs/architecture/09-write-path-audit.md).
-    if (config_->bolt_port > 0 && config_->enable_ha && config_->bolt_raft_port == 0) {
-        LOG_ERROR() << "Bolt port requires --bolt_raft_port when running in HA mode. "
-                    << "Without Bolt Raft, Bolt writes are not replicated and "
-                    << "replica state silently diverges.";
-        return -1;
-    }
-    // Mutation-ordering contract: a deployment must select exactly ONE write
-    // replication path (docs/architecture/09-write-path-audit.md section 6).
-    // RejectUnsupportedReplicationConfig is the single source of truth for the
-    // rule; the Gap 1 branch above is its first clause, spelled out with its own
-    // diagnostic.
-    if (config_->enable_ha && config_->bolt_raft_port > 0) {
-        LOG_ERROR() << "Both legacy HA (--enable_ha) and Bolt HA (--bolt_raft_port) are "
-                    << "enabled. Each write surface must feed exactly one authoritative "
-                    << "mutation order per shard; mixed write paths can apply conflicting "
-                    << "operations inconsistently. Enable exactly one replication path. "
-                    << "See docs/architecture/09-write-path-audit.md section 6.";
+    // Mutation-ordering contract (docs/architecture/09-write-path-audit.md
+    // section 6): RejectUnsupportedReplicationConfig is the single decision
+    // point. The branches below only select which diagnostic to log; if the
+    // predicate ever gains a clause, the rejection follows automatically.
+    if (RejectUnsupportedReplicationConfig(*config_)) {
+        if (config_->bolt_port > 0 && config_->enable_ha && config_->bolt_raft_port == 0) {
+            LOG_ERROR() << "Bolt port requires --bolt_raft_port when running in HA mode. "
+                        << "Without Bolt Raft, Bolt writes are not replicated and "
+                        << "replica state silently diverges.";
+        } else {
+            LOG_ERROR() << "Both legacy HA (--enable_ha) and Bolt HA (--bolt_raft_port) are "
+                        << "enabled. Each write surface must feed exactly one authoritative "
+                        << "mutation order per shard; mixed write paths can apply conflicting "
+                        << "operations inconsistently. Enable exactly one replication path. "
+                        << "See docs/architecture/09-write-path-audit.md section 6.";
+        }
         return -1;
     }
     if (config_->enable_ha && config_->ha_log_dir.empty()) {

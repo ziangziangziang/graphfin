@@ -1012,9 +1012,9 @@ TEST(TestKvStoreReplayMarker, DataCanBeDurableBeforeItsReplayMarker) {
 
         auto tbl = store->OpenTable(*txn, "ledger", true, ComparatorDesc::DefaultComparator());
         auto it = tbl->GetIterator(*txn);
-        it.GotoFirstKey();
-        UT_EXPECT_TRUE(it.IsValid());
-        UT_EXPECT_EQ(it.GetValue().AsString(), "1");
+        it->GotoFirstKey();
+        UT_EXPECT_TRUE(it->IsValid());
+        UT_EXPECT_EQ(it->GetValue().AsString(), "1");
         txn->Abort();
     }
 

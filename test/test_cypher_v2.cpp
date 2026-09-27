@@ -628,7 +628,7 @@ TEST(TestCypherNondeterminism, RandIsNotStableAcrossEvaluations) {
     values.reserve(draws);
     for (size_t i = 0; i < draws; ++i) {
         // ctx and record are unused by Rand, so no evaluation context is needed.
-        auto result = cypher::BuiltinFunction::Rand(nullptr, Record(), one_arg);
+        auto result = cypher::BuiltinFunction::Rand(nullptr, cypher::Record(), one_arg);
         UT_EXPECT_TRUE(result.IsReal());
         UT_EXPECT_GE(result.scalar.AsDouble(), 0.0);
         UT_EXPECT_LE(result.scalar.AsDouble(), 1.0);
