@@ -125,9 +125,11 @@ int LGraphServer::Start() {
     // predicate ever gains a clause, the rejection follows automatically.
     if (RejectUnsupportedReplicationConfig(*config_)) {
         if (config_->bolt_port > 0 && config_->enable_ha && config_->bolt_raft_port == 0) {
-            LOG_ERROR() << "Bolt port requires --bolt_raft_port when running in HA mode. "
-                        << "Without Bolt Raft, Bolt writes are not replicated and "
-                        << "replica state silently diverges.";
+            LOG_ERROR() << "Bolt port is set with legacy HA (--enable_ha) but without Bolt Raft "
+                        << "(--bolt_raft_port). Bolt writes would not be replicated and "
+                        << "replicas would silently diverge. Select exactly one replication "
+                        << "path: drop the Bolt port, or drop --enable_ha (Bolt HA needs "
+                        << "--bolt_raft_port and cannot be combined with legacy HA).";
         } else {
             LOG_ERROR() << "Both legacy HA (--enable_ha) and Bolt HA (--bolt_raft_port) are "
                         << "enabled. Each write surface must feed exactly one authoritative "

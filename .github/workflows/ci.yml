@@ -42,10 +42,24 @@ jobs:
         run: |
           # Anything that can change compilation, the test binary, or how
           # tests are selected must run the gate. Site/docs-only changes do not.
-          if git diff --name-only \
+          # Fail closed: any failure computing the file list runs the gate
+          # rather than silently skipping it.
+          set -o pipefail
+          if ! changed="$(git diff --name-only \
                "${{ github.event.pull_request.base.sha }}" \
-               "${{ github.event.pull_request.head.sha }}" \
-             | grep -qE '^(src/|test/|deps/|cmake/|include/|CMakeLists.txt|ci/|\.github/workflows/ci\.yml$)'; then
+               "${{ github.event.pull_request.head.sha }}")"; then
+            echo "engine=true" >> "$GITHUB_OUTPUT"
+            echo "could not compute changed files; running pr_engine_gate"
+            exit 0
+          fi
+          # Directories whose contents feed the build or test selection, plus
+          # any CMakeLists.txt / *.cmake file anywhere: the root CMakeLists
+          # includes ./Options.cmake, so a bare *.cmake pattern would let a
+          # build-flag change bypass the gate. The $ anchors apply to the file
+          # alternatives only: directory prefixes must stay open so files
+          # beneath them match (^(...|src/)$ would match just "src/").
+          if printf '%s\n' "$changed" \
+             | grep -qE '^(\.github/workflows/ci\.yml$|src/|test/|deps/|cmake/|include/|ci/|.*CMakeLists\.txt$|.*\.cmake$)'; then
             echo "engine=true" >> "$GITHUB_OUTPUT"
             echo "build-relevant changes detected"
           else
@@ -66,6 +80,11 @@ jobs:
         run: bash ./cpplint/check_all.sh
       - name: Product/docs checks
         run: python3 ci/release/check_docs.py
+      - name: PR gate filter regression check
+        # Guards the changes→pr_engine_gate routing itself: pattern and step
+        # logic are extracted from this file at test time, so a filter edit
+        # that lets engine PRs skip the gate fails here instead of silently.
+        run: python3 test/check_pr_filter.py
 
   site:
     runs-on: ubuntu-latest
@@ -118,24 +137,35 @@ jobs:
           submodules: "true"
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
-      - name: PR engine gate
+      - name: Build PR image
         uses: docker/build-push-action@v7
         with:
           file: ci/images/github-pr-ubuntu-latest-Dockerfile
           context: .
           tags: ${{ env.PR_TEST_TAG }}
+          load: true
           build-args: |
             BUILD_TYPE=no_asan
             TEST_TYPE=pr
           cache-from: type=gha,scope=pr-engine
           cache-to: type=gha,scope=pr-engine,mode=max
+      - name: Run PR tests with exported results
+        # Tests run here, not during the image build: the results directory is
+        # mounted out of the container, so the XML evidence below exists pass
+        # or fail. (Docker's documented test-before-push split.)
+        run: |
+          mkdir -p testresult
+          docker run --rm \
+            -v "$PWD/testresult:/root/tugraph-db/testresult" \
+            "${{ env.PR_TEST_TAG }}" \
+            bash /root/tugraph-db/ci/github_pr_test.sh
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: pr-gtest-results
           path: testresult/
-          if-no-files-found: ignore
+          if-no-files-found: error
       - name: Check disk space
         if: always()
         run: df -h

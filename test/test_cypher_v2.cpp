@@ -608,17 +608,30 @@ TEST_F(TestCypherV2, TestVectorIndex) {
     test_files(dir);
 }
 
-// DB-02: statement replication requires deterministic evaluation.
-// BuiltinFunction::Rand seeds a fresh std::mt19937 from std::random_device on
-// every call and ignores its evaluation context, so the same replicated
-// statement produces a different value on each replica. Any replicated write
-// that embeds rand() therefore diverges across replicas.
+// DB-02: statement replication requires deterministic evaluation, and nothing
+// enforces it today. HaStateMachine::DoRequest replicates the serialized
+// request bytes (src/server/ha_state_machine.cpp:177) and every replica then
+// evaluates expressions such as rand() independently. BuiltinFunction::Rand
+// seeds a fresh std::mt19937 from std::random_device on every call, so the
+// same replicated statement resolves to a different value on each replica and
+// replicated writes embedding rand() diverge.
 //
-// This test pins the divergence property. It is a source-level finding, not a
-// reproduced replica split: a fix must either replicate the resolved value or
-// reject unqualified operations, and either change makes this assertion fail
-// deliberately.
+// This test is characterization, not protection: it resolves rand() through
+// the same function registry the query planner dispatches on every replica
+// and shows the applied values disagree. A real fix must either reject
+// nondeterministic writes on the replication path or replicate resolved
+// values, and that fix must add its own boundary test -- this test keeps
+// passing under either fix, by design, because it documents the mechanism
+// that makes the fix necessary rather than the fix itself.
 TEST(TestCypherNondeterminism, RandIsNotStableAcrossEvaluations) {
+    // Resolve through the planner's registry, not a direct static call, so
+    // this exercises the exact function object each replica invokes when
+    // applying the replicated statement.
+    const auto funcs = cypher::BuiltinFunction::RegisterFuncs();
+    const auto it = funcs.find("rand");
+    UT_EXPECT_TRUE(it != funcs.end());
+    const cypher::BuiltinFunction::FUNC rand = it->second;
+
     // Rand rejects any argument count other than 1, so give it exactly one
     // default-constructed node; it never inspects the node's contents.
     std::vector<cypher::ArithExprNode> one_arg;
@@ -628,16 +641,16 @@ TEST(TestCypherNondeterminism, RandIsNotStableAcrossEvaluations) {
     values.reserve(draws);
     for (size_t i = 0; i < draws; ++i) {
         // ctx and record are unused by Rand, so no evaluation context is needed.
-        auto result = cypher::BuiltinFunction::Rand(nullptr, cypher::Record(), one_arg);
+        auto result = rand(nullptr, cypher::Record(), one_arg);
         UT_EXPECT_TRUE(result.IsReal());
         UT_EXPECT_GE(result.scalar.AsDouble(), 0.0);
         UT_EXPECT_LE(result.scalar.AsDouble(), 1.0);
         values.push_back(result.scalar.AsDouble());
     }
 
-    // Two replicas evaluating the identical statement must not be assumed to
-    // agree. Counting distinct draws is a deterministic proxy: a replicated
-    // rand() is only safe if this is 1, and it never is.
+    // Successive applications of the identical statement disagree, which is
+    // exactly what two replicas do today. A replicated rand() is only safe
+    // if this count is 1, and it never is.
     std::set<double> distinct(values.begin(), values.end());
     UT_EXPECT_GT(distinct.size(), 1);
 }

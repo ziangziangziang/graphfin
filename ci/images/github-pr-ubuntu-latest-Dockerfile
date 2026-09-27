@@ -1,7 +1,9 @@
 # PR gate for lgraph: targeted build + pr-unit slice.
 # Mirrors github-ci-ubuntu-latest-Dockerfile (same base image, same workspace
-# layout, so ci/github_pr.sh sees the paths it expects) but dispatches to the
-# fast PR path instead of the full main-branch suite.
+# layout, so the PR scripts see the paths they expect) but runs only the build
+# phase. The test phase runs separately via `docker run` with a mounted
+# results directory, so test evidence is exportable even when tests fail --
+# results produced inside a `docker build` step are unreachable afterwards.
 FROM tugraph/tugraph-compile-centos7:latest
 
 ARG BUILD_TYPE
@@ -14,4 +16,4 @@ ENV WORKSPACE=/root/tugraph-db/
 COPY . /root/tugraph-db/
 WORKDIR /root/tugraph-db/
 
-RUN bash /root/tugraph-db/ci/github_pr.sh
+RUN bash /root/tugraph-db/ci/github_pr_build.sh

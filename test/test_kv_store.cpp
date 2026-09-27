@@ -980,6 +980,16 @@ TEST(TestKvStoreReplayMarker, DataCanBeDurableBeforeItsReplayMarker) {
 #if LGRAPH_USE_MOCK_KV
     GTEST_SKIP() << "replay-marker persistence requires a real LMDB store";
 #else
+    // The marker is process-global and earlier suites leave it advanced, so
+    // scope it for this check: drive it to -1 on entry, restore on exit.
+    struct ScopedLastOpId {
+        int64_t saved_;
+        explicit ScopedLastOpId(int64_t set_to)
+            : saved_(LMDBKvStore::GetLastOpIdOfAllStores()) {
+            LMDBKvStore::SetLastOpIdOfAllStores(set_to);
+        }
+        ~ScopedLastOpId() { LMDBKvStore::SetLastOpIdOfAllStores(saved_); }
+    } guard(-1);
     AutoCleanDir dir("./testkv-marker");
     const int64_t marker = 4242;
     const std::string path = "./testkv-marker";
@@ -1018,23 +1028,30 @@ TEST(TestKvStoreReplayMarker, DataCanBeDurableBeforeItsReplayMarker) {
         txn->Abort();
     }
 
-    // Publishing the marker and then committing persists it, which is exactly
-    // why the marker must be written before, not after, the data it describes.
+    // Publishing the marker and then committing a real mutation persists it:
+    // the vendored LMDB skips persistence for clean transactions, so merely
+    // opening the table would leave the marker unstored. This is exactly why
+    // the marker must be written before, not after, the data it describes.
     {
         LMDBKvStore::SetLastOpIdOfAllStores(marker);
         auto store = std::make_unique<LMDBKvStore>(path);
         auto txn = store->CreateWriteTxn();
-        store->OpenTable(*txn, "ledger", true, ComparatorDesc::DefaultComparator());
+        auto tbl = store->OpenTable(*txn, "ledger", true, ComparatorDesc::DefaultComparator());
+        const std::string key = fma_common::StringFormatter::Format("counter{}", marker);
+        tbl->SetValue(*txn, Value::ConstRef(key), Value::ConstRef("2"));
         txn->Commit();
     }
     {
         auto store = std::make_unique<LMDBKvStore>(path);
         auto txn = store->CreateReadTxn();
         UT_EXPECT_EQ(txn->LastOpId(), marker);
+
+        auto tbl = store->OpenTable(*txn, "ledger", true, ComparatorDesc::DefaultComparator());
+        auto it = tbl->GetIterator(*txn);
+        it->GotoFirstKey();
+        UT_EXPECT_TRUE(it->IsValid());
+        UT_EXPECT_EQ(it->GetValue().AsString(), "2");
         txn->Abort();
     }
-
-    // Leave the process-global marker as we found it for later tests.
-    LMDBKvStore::SetLastOpIdOfAllStores(-1);
 #endif
 }

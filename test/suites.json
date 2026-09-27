@@ -13,6 +13,7 @@
       "tier": "pr",
       "type": "gtest",
       "gtest_filter": "TestSeries*:*Series*:TestCluster*:*Router*:TestShardManager*:TestMigrationManager*:TestGalaxy.OpenGraphAdmissionBound:TestLGraphServerReplicationConfig.RejectsUnsupportedReplicationCombinations:TestKvStoreReplayMarker.DataCanBeDurableBeforeItsReplayMarker:TestCypherNondeterminism.RandIsNotStableAcrossEvaluations",
+      "required_families": ["TestSeriesStore", "TestClusterMetaStore", "TestRouter", "TestShardManager", "TestMigrationManager"],
       "extra_binaries": ["fma_unit_test -t all"],
       "min_cases": 1,
       "required_artifacts": ["unit_test", "fma_unit_test"],

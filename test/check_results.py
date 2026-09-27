@@ -10,6 +10,7 @@ selection, a partial run, and a silently skipped required case are all failures:
 a green badge must never be reachable by running less than the contract asks for.
 """
 import argparse
+import fnmatch
 from pathlib import Path
 import sys
 import xml.etree.ElementTree as ET
@@ -53,6 +54,39 @@ def missing_literals(gtest_filter, cases):
     return missing
 
 
+def unmatched_patterns(gtest_filter, cases):
+    """Filter patterns (wildcard or literal) that selected zero cases.
+
+    Literals are delegated to missing_literals; this covers the wildcard
+    half: a pattern such as TestSeries* must actually match something, or a
+    silently empty core family passes on the back of unrelated tests.
+    gtest `*`/`?` behave like fnmatch over the full "Suite.Test" name.
+    """
+    names = [case_name(c) for c in cases]
+    unmatched = []
+    for pattern in gtest_filter.split(":"):
+        pattern = pattern.strip()
+        if not pattern or pattern.startswith("-"):
+            continue
+        if "*" not in pattern and "?" not in pattern:
+            continue
+        if not any(fnmatch.fnmatchcase(n, pattern) for n in names):
+            unmatched.append(pattern)
+    return unmatched
+
+
+def missing_families(required_families, cases):
+    """Mandatory suite families with zero executed cases.
+
+    required_families names gtest fixtures (the classname in the XML). Each
+    must contribute at least one case: without this, an XML containing only
+    the small named regression tests passes while the entire series, cluster,
+    router, shard, and migration coverage is absent.
+    """
+    present = {c.get("classname", "") for c in cases}
+    return [f for f in required_families if f not in present]
+
+
 def main(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument("--suite", required=True)
@@ -91,6 +125,16 @@ def main(argv):
     if absent:
         sys.exit("check_results: %s did not run catalog-listed test(s): %s"
                  % (args.suite, ", ".join(absent)))
+
+    unmatched = unmatched_patterns(suite.get("gtest_filter", ""), cases)
+    if unmatched:
+        sys.exit("check_results: %s filter pattern(s) selected zero cases: %s"
+                 % (args.suite, ", ".join(unmatched)))
+
+    missing = missing_families(suite.get("required_families", []), cases)
+    if missing:
+        sys.exit("check_results: %s ran zero cases from mandatory family/ies: %s"
+                 % (args.suite, ", ".join(missing)))
 
     if args.artifacts:
         out = Path(args.artifacts)
