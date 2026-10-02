@@ -53,7 +53,6 @@ export default defineConfig({
     rollupOptions: {
       input: {
         site: resolve(import.meta.dirname, "index.html"),
-        comparison: resolve(import.meta.dirname, "research/g-comparison.html"),
       },
     },
   },

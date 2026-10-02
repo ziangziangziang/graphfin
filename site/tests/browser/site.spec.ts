@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 
 /** Install a drawElementsInstanced counter used by freeze/offscreen tests. */
@@ -63,7 +63,7 @@ test("production subpath, renderer, anchors, language and assets", async ({
   ).toBe("none");
   await expect(page.locator("#menu")).toBeHidden();
   await expect(page.locator("h1")).toHaveText(
-    "Relationshipsand observations,together.",
+    "Query connections.Track changes.In one database.",
   );
   await expect(
     page.getByRole("link", { name: "Read the docs" }),
@@ -71,11 +71,11 @@ test("production subpath, renderer, anchors, language and assets", async ({
   await page.locator("#language").click();
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
   await expect(page).toHaveURL(/lang=zh/);
-  await expect(page.locator("h1")).toContainText("关系与观测");
+  await expect(page.locator("h1")).toHaveText("关系和变化，一库掌握");
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
   await page.locator("#language").click();
-  await page.getByRole("link", { name: "Explore GraphFin" }).click();
+  await page.getByRole("link", { name: "See how it works" }).click();
   await expect(page).toHaveURL(/#why$/);
   await expect(page.locator("#why-title")).toBeInViewport();
   expect(errors).toEqual([]);
@@ -102,7 +102,7 @@ test("mobile navigation, Chinese layout, and responsive quality", async ({
   await expect(page.locator("#menu")).toBeFocused();
   await page.locator("#language").click();
   await page.locator("#menu").click();
-  await page.getByRole("link", { name: "应用场景", exact: true }).click();
+  await page.getByRole("link", { name: "示例", exact: true }).click();
   await expect(page.locator("nav")).toBeHidden();
   await expect(page).toHaveURL(/#use-cases$/);
   expect(
@@ -141,16 +141,16 @@ test("reduced motion freezes the composition, including pointer movement", async
 });
 
 for (const shape of ["fuller", "ribbon"]) {
-  test(`${shape} site view preserves variant through language and quality changes`, async ({ page }) => {
+  test(`legacy ${shape} URL uses Fuller through language and quality changes`, async ({ page }) => {
     await page.goto(`./?shape=${shape}`);
     await waitForEnhanced(page);
-    await expect(page.locator("#scene-host")).toHaveAttribute("data-shape", shape);
+    await expect(page.locator("#scene-host")).toHaveAttribute("data-shape", "fuller");
     await expect(page.locator("#motion")).toHaveCount(0);
     await page.locator("#language").click();
     await expect(page).toHaveURL(new RegExp(`shape=${shape}.*lang=zh`));
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(page.locator("#scene-host")).toHaveAttribute("data-quality", "mobile");
-    await expect(page.locator("#scene-host")).toHaveAttribute("data-shape", shape);
+    await expect(page.locator("#scene-host")).toHaveAttribute("data-shape", "fuller");
     await page.setViewportSize({ width: 1440, height: 1000 });
     await waitForEnhanced(page);
     await expect(page.locator("#scene-host")).toHaveAttribute("data-quality", "desktop");
@@ -158,24 +158,11 @@ for (const shape of ["fuller", "ribbon"]) {
   });
 }
 
-test("comparison uses both live renderers and links to the correct site views", async ({ page }) => {
-  const errors: string[] = [];
-  page.on("pageerror", error => errors.push(error.message));
-  await page.goto("./research/g-comparison.html");
-  for (const shape of ["fuller", "ribbon"]) {
-    await expect(page.locator(`#${shape}-host`)).toHaveAttribute("data-enhanced", "true", { timeout: 15000 });
-    await expect(page.locator(`#${shape}-host`)).toHaveAttribute("data-shape", shape);
-    await expect(page.locator(`[data-candidate="${shape}"] .study-visual`)).toHaveAttribute("data-canvas-ready", "true");
-    await expect(page.locator(`[data-candidate="${shape}"] a`)).toHaveAttribute("href", `../?shape=${shape}`);
-  }
-  await expect(page.locator("canvas")).toHaveCount(2);
-  await page.setViewportSize({ width: 390, height: 844 });
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
-  for (const shape of ["fuller", "ribbon"]) {
-    await expect(page.locator(`#${shape}-host`)).toHaveAttribute("data-quality", "mobile");
-    await expect(page.locator(`#${shape}-host`)).toHaveAttribute("data-focus", "mobile");
-  }
-  expect(errors).toEqual([]);
+test("Pages output contains only the selected site and Fuller fallback", () => {
+  const files = readdirSync(resolve(import.meta.dirname, "../../dist"), { recursive: true }) as string[];
+  expect(files.filter(file => file.endsWith(".html"))).toEqual(["index.html"]);
+  expect(files.some(file => /fuller-fallback.*\.png$/.test(file))).toBeTruthy();
+  expect(files.filter(file => /ribbon|comparison|research/.test(file))).toEqual([]);
 });
 
 test("WebGL failure keeps the static brand image and all content", async ({
@@ -198,7 +185,7 @@ test("WebGL failure keeps the static brand image and all content", async ({
     await page.goto(`./?shape=${shape}`);
     await expect(page.locator("#hero-visual")).toHaveAttribute("data-renderer", "static");
     await expect(page.locator(".hero-fallback")).toBeVisible();
-    await expect(page.locator(".hero-fallback")).toHaveAttribute("src", new RegExp(`${shape}-fallback`));
+    await expect(page.locator(".hero-fallback")).toHaveAttribute("src", /fuller-fallback/);
     expect(await page.locator(".hero-fallback").evaluate((el) => (el as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
   }
   await expect(page.locator("h1")).toBeVisible();
@@ -242,44 +229,42 @@ test("without JavaScript the message, image, docs and mobile navigation remain a
   await context.close();
 });
 
-test("visual review captures", async ({ page }) => {
-  // Seven full-page/canvas captures across six software-GL scene rebuilds.
+test("visual review captures", async ({ page }, testInfo) => {
   test.setTimeout(60000);
-  const captures = resolve(import.meta.dirname, "../../research/current");
+  const captures = process.env.UPDATE_VISUALS === "1"
+    ? resolve(import.meta.dirname, "../../research/current")
+    : testInfo.outputPath("captures");
   mkdirSync(captures, { recursive: true });
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.goto("./");
-  await expect(page.locator("#hero-visual")).toHaveAttribute(
-    "data-renderer",
-    "webgl",
-  );
-  await waitForEnhanced(page);
-  await page.screenshot({ path: "/tmp/graphfin-desktop.png", fullPage: true });
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: "/tmp/graphfin-mobile.png", fullPage: true });
-  for (const shape of ["fuller", "ribbon"]) {
+  for (const language of ["en", "zh"]) {
+    const prefix = language === "en" ? "fuller" : "fuller-zh";
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.goto(`./?shape=${shape}`);
+    await page.goto(language === "en" ? "./" : "./?lang=zh");
+    await expect(page.locator("#hero-visual")).toHaveAttribute("data-renderer", "webgl");
     await waitForEnhanced(page);
-    await page.screenshot({ path: resolve(captures, `${shape}-desktop.png`), fullPage: true });
+    await page.screenshot({ path: resolve(captures, `${prefix}-desktop.png`), fullPage: true });
+    await page.screenshot({ path: resolve(captures, `${prefix}-hero.png`) });
+    await page.locator("#use-cases").screenshot({ path: resolve(captures, `${prefix}-examples.png`) });
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(page.locator("#scene-host")).toHaveAttribute("data-quality", "mobile");
     await waitForEnhanced(page);
-    await page.screenshot({ path: resolve(captures, `${shape}-mobile.png`), fullPage: true });
+    await page.screenshot({ path: resolve(captures, `${prefix}-mobile.png`), fullPage: true });
   }
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto("./research/g-comparison.html?still=1");
-  for (const shape of ["fuller", "ribbon"]) {
-    await expect(page.locator(`#${shape}-host`)).toHaveAttribute("data-enhanced", "true", { timeout: 15000 });
-  }
-  await page.screenshot({ path: resolve(captures, "comparison.png"), fullPage: true });
-  // Keep the decorative HTML frame separate from the reusable G fallback.
+  await page.goto("./");
+  await waitForEnhanced(page);
+  // Isolate the actual production renderer for a transparent, reusable snapshot.
   await page.addStyleTag({
-    content: "html, body { background: transparent !important; } .breakout-frame { visibility: hidden; }",
+    content: `html, body { background: transparent !important; }
+      body { visibility: hidden !important; }
+      #scene-host { visibility: visible !important; position: fixed !important;
+        inset: 0 auto auto 0 !important; width: 649px !important; height: 601px !important;
+        opacity: 1 !important; transition: none !important; }`,
   });
-  for (const shape of ["fuller", "ribbon"]) {
-    await page.locator(`#${shape}-host canvas`).screenshot({ path: resolve(captures, `${shape}-fallback.png`), omitBackground: true });
-  }
+  await expect(page.locator("#scene-host canvas")).toHaveAttribute("width", "649");
+  await expect(page.locator("#scene-host canvas")).toHaveAttribute("height", "601");
+  await page.locator("#scene-host canvas").screenshot({ path: resolve(captures, "fuller-fallback.png"), omitBackground: true });
 });
 
 test("layouts fit small phones, tablets, and wide desktops in both languages", async ({

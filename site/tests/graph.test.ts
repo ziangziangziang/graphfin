@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   createLattice,
+  centerOnSpiral,
   crossingScale,
   parameterForFlow,
   positionOnSpiral,
@@ -14,9 +15,9 @@ import { qualityFor } from "../src/scene/quality.ts";
 import { CameraRig } from "../src/scene/camera.ts";
 import { Vector3 } from "three";
 
-/** Maximum rendered sphere radius: base scale 0.046 + full signal bump 0.007. */
+/** Sphere radius cap, before the density scale and recessed-arm narrowing. */
 const NODE_R_MAX = 0.053;
-const renderedRadius = (u: number) => NODE_R_MAX * crossingScale(u);
+const renderedRadius = (u: number, nodeScale: number) => NODE_R_MAX * nodeScale * crossingScale(u);
 
 function distance(
   a: readonly [number, number, number],
@@ -67,7 +68,7 @@ for (const variant of ["ribbon", "fuller"] as ShapeVariant[]) {
     test(`${variant} ${width}px: bounded geometry through endless recycling`, () => {
       for (const drift of [0, 0.02, 0.23, 0.5, 0.999]) {
         for (const node of graph.nodes) {
-          const u = parameterForFlow(wrap(node.u + drift));
+          const u = parameterForFlow(wrap(node.u + drift), variant);
           assert.ok(
             positionOnSpiral(u, node.v, variant, quality.rows).every(
               (value, axis) =>
@@ -112,11 +113,13 @@ test("the focused outer loop projects to a round silhouette", () => {
   camera.resize(700, 700, false);
   camera.update(0, 0, true);
   camera.camera.updateMatrixWorld();
-  const points = Array.from({ length: 160 }, (_, i) =>
-    new Vector3(...positionOnSpiral(0.11 + i / 159 * 0.71, 0)).project(camera.camera));
-  const width = Math.max(...points.map(p => p.x)) - Math.min(...points.map(p => p.x));
-  const height = Math.max(...points.map(p => p.y)) - Math.min(...points.map(p => p.y));
-  assert.ok(width / height > 0.9 && width / height < 1.1);
+  for (const variant of ["fuller", "ribbon"] as ShapeVariant[]) {
+    const points = Array.from({ length: 160 }, (_, i) =>
+      new Vector3(...centerOnSpiral(0.11 + i / 159 * 0.71, variant)).project(camera.camera));
+    const width = Math.max(...points.map(p => p.x)) - Math.min(...points.map(p => p.x));
+    const height = Math.max(...points.map(p => p.y)) - Math.min(...points.map(p => p.y));
+    assert.ok(width / height > 0.9 && width / height < 1.1, variant);
+  }
 });
 
 test("the centerline advances in depth from the central arm to the upper-right arm", () => {
@@ -128,21 +131,41 @@ test("the centerline advances in depth from the central arm to the upper-right a
 });
 
 test("material spacing stays even as the upper arm approaches the lens", () => {
-  assert.equal(parameterForFlow(0), 0);
-  assert.equal(parameterForFlow(1), 1);
-  const distances: number[] = [];
-  let previous = parameterForFlow(0);
-  for (let phase = 0.002; phase < 1; phase += 0.002) {
-    const u = parameterForFlow(phase);
-    assert.ok(u > previous, "material must never reverse or stall at a resampling boundary");
-    const a = positionOnSpiral(previous, 0);
-    const b = positionOnSpiral(u, 0);
-    if (u < 0.8 && b[2] > 0 && a[2] < 8) distances.push(distance(a, b));
-    previous = u;
+  for (const variant of ["fuller", "ribbon"] as ShapeVariant[]) {
+    assert.equal(parameterForFlow(0, variant), 0);
+    assert.equal(parameterForFlow(1, variant), 1);
+    const distances: number[] = [];
+    let previous = parameterForFlow(0, variant);
+    for (let phase = 0.002; phase < 1; phase += 0.002) {
+      const u = parameterForFlow(phase, variant);
+      assert.ok(u > previous, "material must never reverse or stall at a resampling boundary");
+      const a = centerOnSpiral(previous, variant);
+      const b = centerOnSpiral(u, variant);
+      if (u < 0.8 && b[2] > 0 && a[2] < 8) distances.push(distance(a, b));
+      previous = u;
+    }
+    assert.ok(distances.length > 100);
+    assert.ok(Math.max(...distances) / Math.min(...distances) < 1.15,
+      "forward hexagons must not stretch into rods");
   }
-  assert.ok(distances.length > 100);
-  assert.ok(Math.max(...distances) / Math.min(...distances) < 1.15,
-    "forward hexagons must not stretch into rods");
+});
+
+test("fuller foreground curl joins the body smoothly without changing its depth", () => {
+  for (let u = 0; u <= 1; u += 0.002) {
+    const fuller = centerOnSpiral(u, "fuller");
+    const reference = centerOnSpiral(u, "ribbon");
+    assert.equal(fuller[2], reference[2], "approved near/far depth must stay intact");
+    if (u >= 0.15) assert.deepEqual(fuller, reference, "the round body stays intact");
+  }
+  const tip = centerOnSpiral(0.045, "fuller");
+  const reference = centerOnSpiral(0.045, "ribbon");
+  assert.ok(tip[0] < reference[0] - 0.2 && tip[1] > reference[1]);
+  const join = centerOnSpiral(0.15, "fuller");
+  const left = centerOnSpiral(0.1499, "fuller");
+  const right = centerOnSpiral(0.1501, "fuller");
+  const leftTangent = new Vector3(...join).sub(new Vector3(...left)).normalize();
+  const rightTangent = new Vector3(...right).sub(new Vector3(...join)).normalize();
+  assert.ok(leftTangent.dot(rightTangent) > 0.99999, "no kink where the curl joins the G");
 });
 
 test("signal state transfers between quality tiers and includes a true stall", () => {
@@ -186,9 +209,9 @@ for (const variant of ["ribbon", "fuller"] as ShapeVariant[]) {
       // Require a gap beyond touching so full signal scale-up stays clear.
       for (const drift of [0, 0.02, 0.125, 0.25, 0.5, 0.75, 0.999]) {
         const placed = graph.nodes.map(({ u, v }) => ({
-          p: positionOnSpiral(parameterForFlow(wrap(u + drift)), v, variant, quality.rows),
-          radius: renderedRadius(parameterForFlow(wrap(u + drift))),
-          fade: visibility(parameterForFlow(wrap(u + drift))),
+          p: positionOnSpiral(parameterForFlow(wrap(u + drift), variant), v, variant, quality.rows),
+          radius: renderedRadius(parameterForFlow(wrap(u + drift), variant), quality.nodeScale),
+          fade: visibility(parameterForFlow(wrap(u + drift), variant)),
         }));
         for (let i = 0; i < placed.length; i++) {
           for (let j = i + 1; j < placed.length; j++) {
@@ -213,12 +236,12 @@ for (const variant of ["ribbon", "fuller"] as ShapeVariant[]) {
       const camZ = 10.3;
       for (const drift of [0, 0.02, 0.125, 0.25, 0.5, 0.75, 0.999]) {
         const placed = graph.nodes.map(({ u, v }) => {
-          const parameter = parameterForFlow(wrap(u + drift));
+          const parameter = parameterForFlow(wrap(u + drift), variant);
           const p = positionOnSpiral(parameter, v, variant, quality.rows);
           return {
             p,
             z: camZ - p[2],
-            radius: renderedRadius(parameter),
+            radius: renderedRadius(parameter, quality.nodeScale),
             fade: visibility(parameter),
           };
         });

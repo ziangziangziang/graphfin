@@ -174,17 +174,21 @@ export class LatticeMesh {
   private readonly angularVelocity = new Vector3();
   private readonly mobile: boolean;
   private readonly rows: number;
+  private readonly nodeScale: number;
+  private readonly bondScale: number;
   private readonly variant: ShapeVariant;
   private drift = 0;
   private lastSeconds = 0;
 
   constructor(
     quality: Quality,
-    variant: ShapeVariant = "ribbon",
+    variant: ShapeVariant = "fuller",
   ) {
     this.variant = variant;
     this.graph = createLattice(quality.columns, quality.rows, variant === "fuller");
     this.rows = quality.rows;
+    this.nodeScale = quality.nodeScale;
+    this.bondScale = quality.bondScale;
     this.signal = new Signal(this.graph);
     this.mobile = quality.mobile;
     const sphere = new SphereGeometry(
@@ -338,7 +342,7 @@ export class LatticeMesh {
     const heats = this.halo.geometry.getAttribute("heat") as BufferAttribute;
     const rotationEnergy = this.angularVelocity.length();
     this.graph.nodes.forEach((node, i) => {
-      const u = parameterForFlow(wrap(node.u + this.drift));
+      const u = parameterForFlow(wrap(node.u + this.drift), this.variant);
       this.parameters[i] = u;
       const p = this.positions[i].set(
         ...positionOnSpiral(u, node.v, this.variant, this.rows),
@@ -365,7 +369,7 @@ export class LatticeMesh {
       const scale = Math.min(
         0.053,
         0.043 + surface * 0.004 + signal * 0.004 + heat * 0.0015,
-      );
+      ) * this.nodeScale;
       this.transform.rotation.set(
         (hash(i * 2.11 + 1) - 0.5) * 0.7,
         (hash(i * 3.17 + 7) - 0.5) * 0.7,
@@ -411,7 +415,7 @@ export class LatticeMesh {
         this.direction.normalize(),
       );
       const surface = this.bondSurface.getX(i);
-      const radius = 0.015 + surface * 0.0045 + this.signal.edgeHeat[i] * 0.0018;
+      const radius = (0.015 + surface * 0.0045 + this.signal.edgeHeat[i] * 0.0018) * this.bondScale;
       this.transform.scale.set(radius, wraps ? 0 : length, radius);
       this.transform.updateMatrix();
       this.bonds.setMatrixAt(i, this.transform.matrix);

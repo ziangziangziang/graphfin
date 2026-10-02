@@ -2,7 +2,6 @@ import "./style.css";
 import "./styles/layout.css";
 import { setupLanguage } from "./i18n";
 import { qualityFor } from "./scene/quality";
-import { shapeVariant } from "./scene/geometry";
 import type { SceneController, SceneSection } from "./scene/scene";
 
 document.documentElement.classList.add("js");
@@ -11,21 +10,13 @@ const menu = document.querySelector<HTMLButtonElement>("#menu")!;
 const navigation = document.querySelector<HTMLElement>("#navigation")!;
 const visual = document.querySelector<HTMLElement>("#hero-visual")!;
 const sceneHost = document.querySelector<HTMLElement>("#scene-host")!;
-const variant = shapeVariant(new URL(location.href).searchParams.get("shape"));
-const fallbackImages = {
-  fuller: new URL("../research/current/fuller-fallback.png", import.meta.url).href,
-  ribbon: new URL("../research/current/ribbon-fallback.png", import.meta.url).href,
-};
-document.querySelector<HTMLImageElement>(".hero-fallback")!.src =
-  fallbackImages[variant];
 let controller: SceneController | undefined;
-sceneHost.dataset.shape = variant;
+sceneHost.dataset.shape = "fuller";
 visual.dataset.renderer = "webgl";
 visual.dataset.canvasReady = "false";
 sceneHost.dataset.quality = qualityFor(
   window.innerWidth,
   window.devicePixelRatio,
-  variant,
 ).mobile
   ? "mobile"
   : "desktop";
@@ -64,7 +55,7 @@ async function mountScene() {
   try {
     const { createScene } = await import("./scene/scene");
     if (!pageActive || generation !== initialization) return;
-    controller = createScene(sceneHost, fallback, { variant });
+    controller = createScene(sceneHost, fallback);
   } catch {
     fallback();
   }

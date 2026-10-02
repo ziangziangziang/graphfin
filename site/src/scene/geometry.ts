@@ -95,8 +95,6 @@ export function createLattice(
 
 export type ShapeVariant = "fuller" | "ribbon";
 
-export const shapeVariant = (value: string | null): ShapeVariant =>
-  value === "ribbon" ? "ribbon" : "fuller";
 
 const RADIUS = 2.24;
 const ARC_END = 0.82;
@@ -119,7 +117,10 @@ function centerline(u: number): [number, number] {
 }
 
 /** Positive z is toward the lens; decreasing u carries the lattice forward. */
-function center(u: number): [number, number, number] {
+export function centerOnSpiral(
+  u: number,
+  variant: ShapeVariant = "ribbon",
+): [number, number, number] {
   const point = centerline(u);
   const depth =
     2.62 * Math.max(0, 1 - u / 0.32) ** 2 -
@@ -133,7 +134,15 @@ function center(u: number): [number, number, number] {
   // arm grows naturally and leaves the sensor; the rear arm gets smaller.
   const nearExtension = 18 * Math.max(0, 1 - u / 0.11) ** 3;
   const farExtension = 60 * smoothstep(0.92, 1, u) ** 3;
-  return [point[0] * scale, point[1] * scale, depth + nearExtension - farExtension];
+  // Ease the fuller foreground arm into a gentle inward curl. The squared
+  // blend joins the round body without a kink; depth and optical focus stay
+  // unchanged, and the original ribbon remains a research reference.
+  const curl = variant === "fuller" ? (1 - smoothstep(0, 0.15, u)) ** 2 : 0;
+  return [
+    point[0] * scale - 0.36 * curl,
+    point[1] * scale + 0.12 * curl,
+    depth + nearExtension - farExtension,
+  ];
 }
 
 // Parameter speed is not distance along the metal. Distribute cells by arc
@@ -141,24 +150,32 @@ function center(u: number): [number, number, number] {
 // a handful of hexagons into long rods. Outside that volume only a small phase
 // budget is needed to recycle the hidden geometry.
 const FLOW_SAMPLES = 2048;
-const flowDistance = new Float64Array(FLOW_SAMPLES + 1);
-const flowPoint = (u: number) => {
-  const p = center(u);
-  p[2] = Math.max(-6, Math.min(8.5, p[2]));
-  return p;
-};
-let previousFlowPoint = flowPoint(0);
-for (let i = 1; i <= FLOW_SAMPLES; i++) {
-  const p = flowPoint(i / FLOW_SAMPLES);
-  flowDistance[i] = flowDistance[i - 1] + Math.max(
-    8 / FLOW_SAMPLES,
-    Math.hypot(...p.map((value, axis) => value - previousFlowPoint[axis])),
-  );
-  previousFlowPoint = p;
+function createFlowDistance(variant: ShapeVariant): Float64Array {
+  const distance = new Float64Array(FLOW_SAMPLES + 1);
+  const flowPoint = (u: number) => {
+    const p = centerOnSpiral(u, variant);
+    p[2] = Math.max(-6, Math.min(8.5, p[2]));
+    return p;
+  };
+  let previous = flowPoint(0);
+  for (let i = 1; i <= FLOW_SAMPLES; i++) {
+    const p = flowPoint(i / FLOW_SAMPLES);
+    distance[i] = distance[i - 1] + Math.max(
+      8 / FLOW_SAMPLES,
+      Math.hypot(...p.map((value, axis) => value - previous[axis])),
+    );
+    previous = p;
+  }
+  return distance;
 }
+const flowDistances = {
+  fuller: createFlowDistance("fuller"),
+  ribbon: createFlowDistance("ribbon"),
+};
 
 /** Map periodic material travel to distance along the visible G. */
-export function parameterForFlow(phase: number): number {
+export function parameterForFlow(phase: number, variant: ShapeVariant = "ribbon"): number {
+  const flowDistance = flowDistances[variant];
   const distance = Math.max(0, Math.min(1, phase)) * flowDistance[FLOW_SAMPLES];
   let low = 0;
   let high = FLOW_SAMPLES;
@@ -178,9 +195,9 @@ export function positionOnSpiral(
   variant: ShapeVariant = "ribbon",
   rows = 3,
 ): [number, number, number] {
-  const before = center(Math.max(0, u - 0.001));
-  const after = center(Math.min(1, u + 0.001));
-  const point = center(u);
+  const before = centerOnSpiral(Math.max(0, u - 0.001), variant);
+  const after = centerOnSpiral(Math.min(1, u + 0.001), variant);
+  const point = centerOnSpiral(u, variant);
   const tangent = after.map((value, axis) => value - before[axis]);
   const length = Math.hypot(...tangent) || 1;
   const [tx, ty, tz] = tangent.map((value) => value / length);
