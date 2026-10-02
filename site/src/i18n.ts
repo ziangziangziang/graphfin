@@ -14,8 +14,6 @@ const chinese: Record<string, string> = {
   readDocs: "阅读文档",
   githubSource: "在 GitHub 查看开源代码",
   structure: "结构之中，信号涌现",
-  pause: "暂停动画",
-  resume: "播放动画",
   introduction: "初识 GRAPHFIN",
   scroll: "沿着关系，发现更多",
   native: "属性图 · 原生时间序列",
@@ -42,7 +40,6 @@ export function setupLanguage(onChange: () => void) {
   const english = Object.fromEntries(
     elements.map((el) => [el.dataset.i18n!, el.textContent!]),
   ) as Record<string, string>;
-  english.resume = "Resume animation";
   const button = document.querySelector<HTMLButtonElement>("#language")!;
   let language: "en" | "zh" =
     new URL(location.href).searchParams.get("lang") === "zh" ? "zh" : "en";
@@ -78,16 +75,16 @@ export function setupLanguage(onChange: () => void) {
       .setAttribute(
         "aria-label",
         language === "zh"
-          ? "石墨烯晶格中的连续金色信号"
-          : "A graphene lattice carrying a connected gold signal",
+          ? "金属晶格中的连续金色信号"
+          : "A metallic lattice carrying a connected gold signal",
       );
     document
       .querySelector("img.hero-fallback")!
       .setAttribute(
         "alt",
         language === "zh"
-          ? "GraphFin：G 形碳晶格，相连的金色键承载着信号。"
-          : "GraphFin: a carbon lattice shaped like a G, with connected gold bonds carrying a signal.",
+          ? "GraphFin：G 形金属晶格，相连的金色键承载着信号。"
+          : "GraphFin: a metallic lattice shaped like a G, with connected gold bonds carrying a signal.",
       );
     document.title =
       language === "zh"

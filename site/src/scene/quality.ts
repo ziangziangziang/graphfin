@@ -1,3 +1,5 @@
+import type { ShapeVariant } from "./geometry.ts";
+
 export interface Quality {
   mobile: boolean;
   columns: number;
@@ -8,12 +10,16 @@ export interface Quality {
   fps: number;
 }
 
-export function qualityFor(width: number, pixelRatio: number): Quality {
+export function qualityFor(
+  width: number,
+  pixelRatio: number,
+  variant: ShapeVariant = "ribbon",
+): Quality {
   const mobile = width <= 760;
   return {
     mobile,
-    columns: mobile ? 24 : 34,
-    rows: mobile ? 2 : 3,
+    columns: mobile ? 32 : 48,
+    rows: variant === "fuller" ? (mobile ? 4 : 5) : (mobile ? 2 : 3),
     sphereSegments: mobile ? 8 : 12,
     bondSegments: mobile ? 5 : 8,
     pixelRatio: Math.min(pixelRatio, mobile ? 1.35 : 1.75),

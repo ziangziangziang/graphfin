@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { resolve } from "node:path";
 import { defineConfig } from "vite";
 
 // Docs follow the source being built, including before this branch is merged.
@@ -47,5 +48,13 @@ export default defineConfig({
       },
     },
   ],
-  build: { target: "es2022" },
+  build: {
+    target: "es2022",
+    rollupOptions: {
+      input: {
+        site: resolve(import.meta.dirname, "index.html"),
+        comparison: resolve(import.meta.dirname, "research/g-comparison.html"),
+      },
+    },
+  },
 });
