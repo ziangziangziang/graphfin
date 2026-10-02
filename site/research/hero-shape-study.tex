@@ -1,0 +1,798 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=24mm]{geometry}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usepackage[hidelinks,breaklinks=true]{hyperref}
+
+\definecolor{graphfinink}{HTML}{14181A}
+\definecolor{graphfinslate}{HTML}{5C726D}
+\definecolor{graphfincarbon}{HTML}{3C4A47}
+\definecolor{graphfinfaint}{HTML}{232C2B}
+\definecolor{graphfinhot}{HTML}{FFC978}
+\definecolor{graphfingold}{HTML}{E6BB58}
+\definecolor{graphfinline}{HTML}{9AA5A0}
+\definecolor{paperbg}{HTML}{FBFBF8}
+
+\input{figures/shapes.tex}
+
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}
+\newtheorem{proposition}{Proposition}
+
+\title{\textbf{From Letterform to Loop}\\[2pt]
+\large A Parametric Study of the GraphFin Hero Object:\\
+\large Derivation of the Current Shape, Survey of Alternatives,\\
+and a Phase-Locked Closed G Torus}
+\author{GraphFin Engineering}
+\date{Version 1.0 --- compiled with pdfLaTeX}
+
+\begin{document}
+\color{graphfinink}
+\pagecolor{paperbg}
+
+\begin{abstract}
+\noindent
+The GraphFin landing page presents a single three-dimensional object: a
+hexagonal carbon ribbon swept along the silhouette of the letter G, carrying a
+travelling gold pulse. The object is not an imported mesh or a hand-modelled
+asset; it is the image of an explicit parametric map evaluated on a
+$(u,v)$ lattice, which makes the silhouette continuously editable. This
+document (i) derives that map in closed form, (ii) reports a systematic survey
+of alternative shapes against five weighted criteria --- silhouette,
+photographic plausibility, semantic fit, implementation feasibility, and brand
+continuity --- and (iii) recommends and specifies a successor shape: a
+\emph{phase-locked closed G torus}, in which the G outline is closed into a
+single loop and its cross-section is helically twisted over a
+rotation-minimising frame, with two antipodal signal pulses.
+
+The recommendation follows from three findings. First, edge crossings dominate
+comprehension in node--link drawings~\cite{purchase1997}, so candidates whose
+projected silhouettes self-intersect are penalised. Second, position on a
+common scale is the most accurately decoded elementary perceptual
+task~\cite{cleveland1984}, which argues for encoding time as position along a
+\emph{closed} path rather than as a moving highlight. Third, graphene is
+already a canonical object in the carbon literature precisely because it can be
+wrapped, rolled, and stacked~\cite{geim2007}, so a toroidal or helically
+twisted carbon sweep is materially defensible rather than decorative. All
+figures in this document are generated directly from the production geometry
+module, so the mathematics and the shipped object cannot silently diverge.
+\end{abstract}
+
+\section{Introduction}
+
+GraphFin is a property-graph database with native time-series support. Its
+positioning sentence is a conjunction: \emph{relationships and observations,
+together}. A hero visual has an unusual burden: it is neither an icon nor a
+chart, but a single object that must carry a product thesis at a glance, hold
+up at hero scale on a desktop, survive reduction to roughly 300\,px on a
+phone, and look like a photograph rather than a render.
+
+The object currently in production satisfies the brand requirement
+unambiguously --- it \emph{is} the letter G --- and it is a genuine
+three-dimensional object with a physically-motivated depth ramp. This paper
+asks two questions. First, what exactly is the mathematical object being
+drawn? Second, is a different object better on the combined criteria of
+visual quality and meaning?
+
+The answer to the first question is given in Section~\ref{sec:current}; the
+answer to the second, together with a fully specified replacement, is given in
+Sections~\ref{sec:criteria}--\ref{sec:recommendation}.
+
+\section{The current object as a parametric map}
+\label{sec:current}
+
+\subsection{Control polygon}
+
+The silhouette is defined in the logo's own two-dimensional coordinate system
+by three ordered point sets: a defocused \emph{head} inside the aperture, a
+counter-clockwise outer \emph{arc}, and an inward \emph{tail}. In the
+production module these are the arrays \texttt{headPoints},
+\texttt{arcPoints}, and \texttt{tailPoints}, concatenated (with duplicated
+junctions removed) into a single polyline
+\[
+P=\bigl(p_0,p_1,\dots,p_{m-1}\bigr),\qquad p_i\in\mathbb{R}^2 .
+\]
+The polyline is expressed in SVG coordinates (positive $y$ downward) and then
+mapped into the renderer's right-handed world frame by
+\begin{equation}
+\label{eq:svg2world}
+c_i=\bigl((x_i-c_x)\,k,\;(c_y-y_i)\,k,\;0\bigr)^{\!\top},
+\qquad k=\frac{2.42}{388},\quad (c_x,c_y)=(546,470).
+\end{equation}
+The single scale $k$ is the only free parameter of the silhouette; it is
+increased slightly above the value that exactly fits the logo box so that the
+ribbon crosses the decorative breakout frame.
+
+\subsection{Corner cutting}
+
+Polylines have $C^0$ continuity, which produces visible facets after bending.
+The production code therefore applies $n_c=3$ iterations of Chaikin corner
+cutting~\cite{chaikin1975}, replacing every segment $c_i c_{i+1}$ by the pair
+\begin{equation}
+\label{eq:chaikin}
+q_i=\tfrac34 c_i+\tfrac14 c_{i+1},
+\qquad
+r_i=\tfrac14 c_i+\tfrac34 c_{i+1},
+\end{equation}
+and iterating on the resulting sequence. The operation is linear, length
+preserving in the limit, and --- crucially for this application --- raises the
+sequence to $C^1$ continuity at every interior junction, so the surface normal
+used in the sweep is continuous. It is a subdivision scheme, not a fit, so the
+design intent expressed by the control points survives.
+
+\subsection{Arclength parameterisation}
+
+The smoothed polyline is stored together with its cumulative arclength
+$s_0=0$, $s_{i+1}=s_i+\lVert c_{i+1}-c_i\rVert$. The curve is then
+parameterised by $u\in[0,1]$ with three segments, split at the two junctions
+$u_1=0.16$ (head to arc) and $u_2=0.82$ (arc to tail), where $s_1$ and $s_2$
+are the arclengths of those junctions:
+\begin{equation}
+\label{eq:arclength}
+s(u)=
+\begin{cases}
+\dfrac{u}{u_1}s_1, & u<u_1,\\[6pt]
+s_1+\dfrac{u-u_1}{u_2-u_1}(s_2-s_1), & u_1\le u<u_2,\\[6pt]
+s_2+\dfrac{u-u_2}{1-u_2}(s_m-s_2), & u\ge u_2 .
+\end{cases}
+\end{equation}
+The centreline is the constant-speed reparameterisation $C(u)=c(s(u))$. The
+three-segment form exists because the head, arc, and tail are edited
+independently; a single B-spline would couple them.
+
+\subsection{Sweeping the ribbon}
+
+Let $T(u)=C'(u)/\lVert C'(u)\rVert$ be the unit tangent and
+$N(u)=(-T_y,T_x,0)$ the in-plane unit normal. Rows of the sheet are indexed by
+$v\in[-3,3]$. The in-plane position of a lattice site is
+\begin{equation}
+\label{eq:inplane}
+X(u,v)=C(u)+v\,\frac{R}{V_S}\,N(u)+\eta(u,v),
+\qquad R=0.20,\quad V_S=3.03,
+\end{equation}
+where $\eta$ collects deliberately small imperfection terms (sag, a localised
+dull bend, and an edge lift) with magnitude below $0.03$ world units --- two
+orders below the inter-node spacing.
+
+\subsection{Depth, occlusion, and the crossing correction}
+\label{sec:depth}
+
+The anamorphic depth ramp is
+\begin{equation}
+\label{eq:depthramp}
+d(u)=\operatorname{sign}(a)\,\lvert a\rvert^{1.15}\,D,
+\qquad a=2u-1,\quad D=3.15 .
+\end{equation}
+The super-linear exponent holds the visible mid-band near $z=0$ while both
+ends accelerate towards and away from the lens. On top of this sits a
+\emph{local occlusion correction}, motivated in Section~\ref{sec:crossing}:
+\begin{align}
+\Delta(u)&=
+\exp\!\left(-\left(\frac{u-0.45}{0.12}\right)^{\!2}\right)\!(0.38)
+-\,\sigma(0.84,0.98,u)\,(4.6), \label{eq:delta}\\
+L(u)&=\sigma(0.78,0.96,u), \label{eq:layer}\\
+\sigma(a,b,u)&=3\tau^2-2\tau^3,\qquad
+\tau=\operatorname{clamp}\!\left(\frac{u-a}{b-a},0,1\right), \label{eq:smooth}
+\end{align}
+together with a local widening of the sheet's layer spacing and a
+corresponding scale falloff for the spheres:
+\begin{equation}
+\label{eq:scale}
+\text{row spacing}=S_0+S_1 L(u),\quad
+(S_0,S_1)=(0.26,0.30),
+\qquad
+\kappa(u)=1-0.28\,L(u) .
+\end{equation}
+The complete surface is therefore
+\begin{equation}
+\label{eq:surface}
+\boxed{
+P(u,v)=\Bigl(X_1(u,v),\;X_2(u,v),\;d(u)+\Delta(u)+v\bigl(S_0+S_1L(u)\bigr)+\zeta(u,v)\Bigr)^{\!\top}
+}
+\end{equation}
+where $\zeta$ is the small depth-domain imperfection term.
+
+The two terms in \eqref{eq:delta} have opposite jobs. The Gaussian lifts the
+outer arc slightly towards the lens in the region where the inner tail
+visually approaches it; the smoothstep retires the far tail of the sheet
+behind that arc. Section~\ref{sec:crossing} shows why both are required rather
+than merely aesthetic.
+
+\subsection{Visibility, camera, and the focus pass}
+
+The recycled seam is hidden by an opacity window, not by a hard cut:
+\begin{equation}
+\label{eq:visibility}
+A(u)=\sigma(0.004,0.055,u)\bigl(1-\sigma(0.945,0.996,u)\bigr).
+\end{equation}
+The projection is a $40^{\circ}$ vertical field of view at
+$z_{\mathrm{cam}}=\max(9.8,\,6.9/\mathrm{aspect})$, looking at
+$(0,0.08,0)$:
+\begin{equation}
+\label{eq:projection}
+x_{\mathrm{ndc}}=\frac{x}{(z_{\mathrm{cam}}-z)\tan(20^{\circ})},
+\qquad
+y_{\mathrm{ndc}}=\frac{y}{(z_{\mathrm{cam}}-z)\tan(20^{\circ})}.
+\end{equation}
+A depth-texture focus pass converts distance into defocus with a circle of
+confusion $c(d)=\sigma(0.32R_f,\,2.5R_f,\,|d-d_f|)$, $R_f=2$, and --- this is
+the part that matters for the crossing problem --- a sample contributes only
+if it is not substantially behind the centre sample:
+\begin{equation}
+\label{eq:gate}
+w=\bigl[\,c(d_s)\,\bigl(1-\sigma(0.055,0.42,\max(d_s-d_c,0))\bigr)\,\sigma(0.015,0.2,c(d_s))\,\bigr].
+\end{equation}
+Without the depth gate in \eqref{eq:gate}, a blurred background pixel is
+averaged into a sharp foreground pixel, which reads as a hard, physically
+impossible cut. The same class of artefact is known in the literature as focus
+bleed, and the standard remedy is exactly an occlusion test between the gathered
+sample and the centre sample~\cite{hammon2007,scheuermann2004}.
+
+\subsection{The construction, visually}
+
+Figure~\ref{fig:stages} shows the pipeline as it is actually evaluated: the
+control polygon, the smoothed centreline, the swept surface, and the final
+camera projection. Every panel is generated by evaluating the production
+module \texttt{src/scene/geometry.ts}; no panel is a hand drawing.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\SkeletonStages
+\end{tikzpicture}
+\caption{The four stages of the production construction, all evaluated from
+\texttt{src/scene/geometry.ts}. (a) the 32 control points in logo space;
+(b) three Chaikin iterations; (c) the swept surface with row lines and rungs;
+(d) the same surface under the production camera, with the pulse drawn in gold
+at an illustrative phase.}
+\label{fig:stages}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\CurrentG
+\end{tikzpicture}
+\caption{The production object, rasterised from the same parametric map with
+the production camera, tone map, and signal phase. The gold sites are the
+travelling pulse; everything else is carbon.}
+\label{fig:current}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{figures/hero-current.png}
+\caption{The shipped page, for scale. The object occupies roughly 44\,\% of the
+viewport width and reads as a solid body rather than as a diagram: the
+breakout frame, the blurred near tail, and the fading far head are all optical,
+not graphic, devices. The capture is taken by the browser test suite with
+reduced motion emulated, so the phase shown is arbitrary but reproducible.}
+\label{fig:page}
+\end{figure}
+
+\section{Why the crossing needed a local correction}
+\label{sec:crossing}
+
+The tail of the G doubles back on itself near the aperture, so its projected
+silhouette approaches the outer arc. Two independent mechanisms produced a
+wrong reading there.
+
+\paragraph{Occlusion.} The depth of the sheet is assigned by \eqref{eq:depthramp}
+almost purely as a function of $u$. In the crossing region that places a
+considerable part of the inner tail at a larger $z$ than the outer arc it
+visually touches, so the tail is drawn in front of a ring that should occlude
+it. The structural statement is simple and testable: at equal row coordinate
+the outer arc must be nearer the lens than the inner tail,
+\begin{equation}
+\label{eq:crossingreq}
+z\bigl(0.45,v\bigr)-z\bigl(0.95,v\bigr) > 0.5
+\qquad\text{for all }v\in[-3,3] .
+\end{equation}
+Enforcing \eqref{eq:crossingreq} costs a steep local depth gradient, which in
+turn compresses the spacing of neighbouring rows. That compression is repaired
+by \eqref{eq:scale}, which widens the row spacing and shrinks the sphere
+radius locally --- the same thing a camera does to a receding object, so the
+repair is visually motivated rather than a fudge. Inequality
+\eqref{eq:crossingreq} is now a unit test.
+
+\paragraph{Black notch.} A second, entirely artefactual defect was present: a
+blurred contact-shadow element was painted \emph{behind} the transparent
+canvas. Through the canvas' transparent background it was not a shadow at all
+but a dark shape with a soft but visible boundary, which read as a hole cut in
+the object. Deleting it removed the artefact without touching lighting, and the
+CSS vignette that could produce a related hard edge is disabled.
+
+\section{Criteria for a better shape}
+\label{sec:criteria}
+
+A replacement is judged on five weighted criteria, chosen because they are the
+ones the current object is already strong or weak on, and because each can be
+argued from the literature rather than from taste alone.
+
+\begin{description}
+\item[(C1) Silhouette and cross-scale legibility, weight 25.] Does the
+projected outline survive at hero scale and at roughly 300\,px? Reducing
+ambiguous crossings dominates this criterion~\cite{purchase1997}; so does
+closure, a primary Gestalt grouping
+principle~\cite{wagemans2012}. A shape that depends on post-processing for its
+read is fragile, because the production renderer disables the entire post chain
+on mobile.
+\item[(C2) Photographic plausibility, weight 20.] Can a single focal plane and
+a depth buffer explain the appearance? A real camera produces polygonal
+bokeh~\cite{mcintosh2012}; foreground and background must not swap.
+\item[(C3) Semantic fit, weight 25.] Does the geometry encode \emph{graph} and
+\emph{time}? Position on a common scale is the most accurately decoded
+channel~\cite{cleveland1984}, so time should be position on a path, and a
+closed path is the domain convention for cyclical
+structure~\cite{franke2023,rakuschek2026}. The unification of property graphs
+and time series is itself an active research direction, with the two data
+models historically treated as secondary attachments rather than first-class
+citizens~\cite{hygraph2025,bonfietti2026}.
+\item[(C4) Implementation feasibility, weight 20.] Can it be drawn by the
+existing architecture --- two instanced primitive types plus a point
+cloud~\cite{threejs}, a periodic node set, and a single recycled seam --- at
+the existing mobile frame budget?
+\item[(C5) Brand continuity, weight 10.] The product ships a G mark; replacing
+it costs recognition.
+\end{description}
+
+\section{Candidate survey}
+
+Eight candidates were considered. Each is given by a closed parametric surface
+$\Phi(u,v)$ with $u\in[0,1)$ the long way around and $v\in[-1,1]$ across.
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{@{}p{0.19\linewidth}p{0.27\linewidth}p{0.24\linewidth}p{0.22\linewidth}@{}}
+\toprule
+\textbf{Candidate} & \textbf{Parametrisation} & \textbf{Strengths} & \textbf{Weaknesses} \\
+\midrule
+G ribbon (current) &
+$\gamma(u)+v\frac{R}{V_S}N(u)$, $\gamma$ the smoothed logo skeleton &
+Unmistakable brand; genuine anamorphic depth; already shipped &
+Open C-form is a closure defect; both ends fade rather than terminate; one
+pulse on an open path has no period; two ends depend on post-processing that is
+disabled on mobile \\
+\addlinespace
+Graphene torus &
+$\bigl((R+r\cos v)\cos u,\;(R+r\cos v)\sin u,\;r\sin v\bigr)$ &
+Closure; near limb occludes far limb; a legitimate rolled carbon
+object~\cite{geim2007} &
+No second dimension for time; a pulse becomes traffic on a ring; thin annulus \\
+\addlinespace
+M\"obius band &
+$\bigl((R+v r\cos\tfrac{u}{2})\cos u,\;(R+v r\cos\tfrac{u}{2})\sin u,\;v r\sin\tfrac{u}{2}\bigr)$ &
+One seam; genuinely exotic &
+Non-orientable, so it declares that direction is privileged-free --- the
+opposite of a temporal database; reads as paper, not carbon; collapses to a
+sliver at small scale \\
+\addlinespace
+Double helix &
+$A(u)=\bigl(R\cos(2u)\cos(\sigma N u),\dots\bigr)$, $B=A(u+\tfrac12)$ &
+Best-in-class time semantics: two strands, twist, periodicity &
+Reads as genomics in a financial context; barber-pole silhouette; heavy
+occlusion; needs a third primitive for rungs \\
+\addlinespace
+Klein bottle &
+standard figure-of-eight immersion &
+Most ``graph-like'' topology &
+The immersion self-intersects, so either the intersection is shown --- which is
+unbelievable --- or the form is destroyed; breaks the single-seam rule \\
+\addlinespace
+Gyroid / Schwarz P patch &
+implicit $\sin x\cos y+\sin y\cos z+\sin z\cos x=t$ &
+Triply periodic by definition; beautiful &
+Requires marching cubes, i.e.\ a non-instanced triangle soup, destroying the
+per-instance fade and heat attributes the signal depends on; trimmed patches
+have hard cut boundaries; periodicity is spatial, not temporal \\
+\addlinespace
+Network globe &
+$R(\cos v\cos u,\,\cos v\sin u,\,\sin v)$ &
+Familiar; trivial to instance &
+A circle is the least distinctive silhouette available; a sphere has no period;
+isotropic, so one focal plane cuts it in half; pole pinch is a second seam \\
+\addlinespace
+Trefoil $(2,3)$ &
+$\bigl((2+\cos 3t)\cos 2t,\,(2+\cos 3t)\sin 2t,\,\sin 3t\bigr)$ &
+Memorable silhouette &
+A path, not a graph: no branching and no period; mid-band crossings; chiral, so
+a slow rotation reads as a flip \\
+\bottomrule
+\end{tabular}
+\caption{Candidate survey. Parametrisations are given for $u\in[0,1)$;
+$R$, $r$, $N$, $\sigma$ are shape constants.}
+\label{tab:candidates}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\Candidates
+\end{tikzpicture}
+\caption{The six alternatives and the two leading candidates under one
+projection. Top row: current G ribbon, closed graphene torus, M\"obius band,
+double helix. Bottom row: Klein bottle, Schwarz P patch, network globe, and
+the recommended phase-locked closed G torus with two antipodal pulses.}
+\label{fig:candidates}
+\end{figure}
+
+\section{Decision matrix}
+
+Scores are 1 (poor) to 5 (excellent) against the criteria of
+Section~\ref{sec:criteria}; the weighted total is
+$\sum_i w_i s_i$ with $\sum_i w_i=100$.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{@{}lrrrrr r@{}}
+\toprule
+\textbf{Candidate} & \textbf{C1} & \textbf{C2} & \textbf{C3} & \textbf{C4} & \textbf{C5} & \textbf{Weighted} \\
+ & 25 & 20 & 25 & 20 & 10 & \\
+\midrule
+Phase-locked G torus & 5 & 5 & 5 & 4 & 5 & \textbf{4.80} \\
+Graphene torus & 4 & 4 & 3 & 4 & 4 & 3.75 \\
+G ribbon (current) & 3 & 4 & 2 & 5 & 5 & 3.55 \\
+Double helix & 3 & 3 & 5 & 3 & 1 & 3.30 \\
+Network globe & 2 & 3 & 3 & 4 & 1 & 2.75 \\
+M\"obius band & 2 & 2 & 3 & 4 & 1 & 2.55 \\
+Trefoil & 3 & 2 & 2 & 3 & 1 & 2.35 \\
+Gyroid patch & 2 & 3 & 3 & 1 & 1 & 2.15 \\
+Klein bottle & 1 & 1 & 2 & 2 & 1 & 1.45 \\
+\bottomrule
+\end{tabular}
+\caption{Weighted decision matrix. The phase-locked G torus is the only
+candidate scoring at least 4 on silhouette, photographic plausibility, and
+semantic fit simultaneously. The ranking is stable unless implementation cost
+is weighted above roughly 35, in which case the plain graphene torus wins and
+is the correct fallback.}
+\label{tab:matrix}
+\end{table}
+
+\section{Recommendation: the phase-locked closed G torus}
+\label{sec:recommendation}
+
+\subsection{Construction}
+
+Let $\gamma:[0,1)\to\mathbb{R}^3$ be the logo centreline of
+Section~\ref{sec:current}, closed by a chord across the aperture and smoothed
+in the same way. Let $\{T,N,B\}$ be a rotation-minimising frame along
+$\gamma$, computed by the double-reflection method so that the frame is closed
+by construction: with $v_i=\gamma_{i+1}-\gamma_i$,
+\begin{align}
+n_i^-&=n_{i-1}-\frac{2\langle v_i,n_{i-1}\rangle}{\lVert v_i\rVert^2}v_i,
+&
+t_i^-&=t_{i-1}-\frac{2\langle v_i,t_{i-1}\rangle}{\lVert v_i\rVert^2}v_i, \label{eq:dr}\\
+b_i&=b_{i-1}-\langle n_i^-,b_{i-1}\rangle n_i^-,
+&
+n_i&=n_i^--\langle t_i^-,n_i^-\rangle t_i^- . \notag
+\end{align}
+The surface is a $k$-fold helical sweep of a ribbon of half-width $r$:
+\begin{equation}
+\label{eq:helix}
+\boxed{
+\Phi_k(u,v)=\gamma(u)+r\,v\Bigl(\cos\varphi(u)\,N(u)+\sin\varphi(u)\,B(u)\Bigr),
+\qquad
+\varphi(u)=\varphi_0+2\pi k u .
+}
+\end{equation}
+
+\begin{proposition}[Single seam]
+If the frame is rotation-minimising and $\varphi(1)-\varphi(0)=2\pi k$ for
+integer $k$, then $\Phi_k(1,v)=\Phi_k(0,v)$ and $\Phi_k(u,1)=\Phi_k(u,-1)$:
+the surface closes with exactly one seam, and no hand-tuned offset is needed.
+\end{proposition}
+
+\paragraph{The frame does not close for free.} A rotation-minimising frame
+along a \emph{closed} centreline generally does not return to itself: after one
+lap the frame has acquired a residual holonomy, and a naive implementation
+produces a visible kink exactly at the seam, which is the one place a seam must
+not be visible~\cite{wang2008}. Either the residual rotation is measured and
+compensated, or --- as in the recommended build, where $k$ is small and the
+twist is a local lean rather than a full turn --- the in-plane normal is used
+directly, for which the residual holonomy is identically zero.
+
+\begin{proposition}[No self-intersection]
+Let $\rho_{\min}$ be the minimum radius of curvature of $\gamma$. If
+$r<\rho_{\min}$ and $\bigl\lvert d\varphi/ds\bigr\rvert r<1$, the sweep is an
+embedding: the ribbon cannot overtake itself along the centreline, and the
+cross-section cannot close on itself across the twist.
+\end{proposition}
+
+\subsection{Why this shape is better}
+
+\paragraph{It removes a closure defect.} The current object is an open
+$C$ with a hook; both ends fade out~\eqref{eq:visibility}. Every open end is a
+violation of closure~\cite{wagemans2012} and, on a rendered object rather than a
+drawing, a dissolved end reads as damage rather than as depth. Closing the loop
+turns a torn object into a solid one at zero cost to the brand.
+
+\paragraph{It buys legibility without post-processing.} Because
+$\varphi$ advances monotonically, the ribbon passes from edge-on to face-on
+around the loop, producing an internal light-to-dark gradient that survives at
+small sizes. This matters disproportionately because the production renderer
+disables bloom and depth of field below 760\,px: a hero whose read depends on
+post-processing is read on desktop and merely hinted at on mobile.
+
+\paragraph{It makes the period a geometric quantity.} On a closed path,
+position is the most accurately decoded channel available~\cite{cleveland1984},
+and a closed quasi-circular path is the established encoding for cyclical
+structure~\cite{franke2023,rakuschek2026}. One lap of $\gamma$ is one period;
+$k$ is the number of phase revolutions per period. Time is no longer
+illustrated by a dot in motion --- it is the geometry.
+
+\paragraph{Two pulses set the interval, not the zero.} A single travelling pulse on
+a closed loop has no internal phase reference: the viewer cannot tell where
+``now'' is, which is precisely why the current hero reads as traffic. Two
+pulses at $u$ and $u+\tfrac12$ fix the \emph{spacing} between updates, and the
+spacing can be measured the way phase
+concentration is measured in the periodicity
+literature~\cite{franke2023}, and cost no extra draw calls because the signal
+already walks an edge route; the route is simply traversed twice. They do
+\emph{not}, however, fix a zero phase: the configuration is invariant under a
+half-turn, so the two pulses are interchangeable. A zero phase requires a
+\emph{fixed} mark on the structure --- a small pitch or section change at an
+interior node group, reading as a terminal the object grew from --- so that a
+still frame has a reference and motion only supplies direction. If the pulse
+period and the twist rate are close but not equal, their beat
+\begin{equation}
+\label{eq:beat}
+f_{\mathrm{beat}}=\left|\frac{1}{T_{\mathrm{pulse}}}-\frac{k}{T_{\mathrm{twist}}}\right|
+\end{equation}
+is a legible picture of two phase-locked cycles.
+
+\paragraph{What closure does and does not claim.} Closing the path says the
+object is continuous and the update has no privileged start. It does not make
+the data periodic: a closed loop is a display of a cycle, and only a measured
+periodicity in the data would license that reading. Likewise ``near'' and
+``far'' carry no recency by themselves; recency has to be stated by the signal,
+as in the fixed mark and the trailing edge above.
+
+\subsection{Semantic mapping}
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{@{}p{0.3\linewidth}p{0.62\linewidth}@{}}
+\toprule
+\textbf{Geometric channel} & \textbf{Product meaning} \\
+\midrule
+Hexagonal cells and bonds & vertices and edges: relationships \\
+Position along the closed loop & time; one lap is one period \\
+Twist rate $k$ & sampling period expressed as a geometric quantity \\
+Two antipodal pulses & phase, and the pair (entity, observation) \\
+Near-limb occlusion & recency: the newest window is nearest the lens \\
+Focal falloff & the current query is the only thing in focus \\
+\bottomrule
+\end{tabular}
+\caption{Proposed semantic encoding. Each channel is geometric, so the reading
+survives at small sizes and without post-processing.}
+\label{tab:semantics}
+\end{table}
+
+\subsection{Feasibility in the current renderer}
+
+The recommendation is deliberately conservative with respect to the existing
+architecture. The node set remains periodic in $u$, so the existing seam test
+(``suppress an edge when $\lvert u_a-u_b\rvert>0.5$'') is unchanged. The
+hexagonal lattice remains a single \texttt{InstancedMesh} for spheres and one
+for bonds, matching the WebGL 2 instancing model~\cite{webgl2,threejs}. The
+only structural additions are (i) a rotation-minimising frame in place of the
+fixed in-plane normal, and (ii) running the signal twice at half-period offset.
+The first is a linear-algebra change confined to the geometry module; the
+second is a loop in the signal update.
+
+\subsection{Risks and mitigations}
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{@{}p{0.34\linewidth}p{0.58\linewidth}@{}}
+\toprule
+\textbf{Risk} & \textbf{Mitigation} \\
+\midrule
+A return pass that hides behind the front must reverse direction, and the
+reversal duplicates lattice nodes. Measured on the production sheet: node
+clearance falls to $0.098$ against a required $0.118$, and the two passes come
+within $1.15$ where the band thickness needs $1.56$. &
+The fold has to be visible and designed: a U-turn of at least the half sheet
+thickness, or a thinner sheet, or a single closed stroke that spirals inward
+and merges instead of retracing. Do not ship a return that self-overlaps. \\
+The G tail doubles back, so the transported frame may flip or the ribbon may
+self-intersect. &
+Widen the tail's curvature radius in the control points; clamp
+$\lvert d\varphi/ds\rvert r$ below $0.6$; as a last resort hold $\varphi$
+constant across the doubling. This is the single largest implementation
+risk. \\
+The chord across the aperture is not part of the logo. &
+Render it as a deliberate thick bridge, so it reads as designed structure
+rather than as a patch. \\
+High twist rates alias on mobile. &
+Reduce $k$ on mobile, keep rows at two, and increase sphere radius --- the
+opposite of the usual instinct. \\
+The focus pass softens only behind the focal plane. &
+Acceptable and cited~\cite{hammon2007}, and well matched to a torus whose near
+limb is the anchor; do not design a hero that depends on near-field bokeh. \\
+\bottomrule
+\end{tabular}
+\caption{Risk register for the recommended shape.}
+\label{tab:risks}
+\end{table}
+
+\subsection{An orthogonal improvement}
+
+Independent of shape, the desktop focus pass should switch from a circular
+gather to a \emph{hexagonal} bokeh. Real cameras produce polygonal
+bokeh~\cite{mcintosh2012}, hexagonal apertures are separable and therefore
+cheap, and the object's material is a hexagonal carbon lattice. The theme and
+the optics would agree. No geometry change is required.
+
+\section{Limitations}
+
+The evaluation in Sections~\ref{sec:criteria}--\ref{sec:recommendation} is a
+structured argument, not a user study. Three limitations should be stated
+plainly. The weights in Table~\ref{tab:matrix} are a considered editorial
+choice; a different weighting, particularly a much heavier weight on
+implementation cost, changes the winner to the plain graphene torus. The
+candidates in Figure~\ref{fig:candidates} are orthographic projections of
+parametric surfaces, not photographs, and photographic plausibility is argued
+from the optics literature rather than measured. Finally, several citations
+that surfaced during the survey --- including a frequently mis-attributed
+post-process depth-of-field chapter and a paper on cyclic time in a
+multiverse setting --- were discarded because they could not be verified; only
+sources whose bibliographic record or DOI was directly retrieved are cited.
+
+\section{Conclusion}
+
+The shipped hero object is a legitimately generated shape: a corner-cut
+control polygon, arclength-parameterised, swept along a moving frame, and
+given depth by a super-linear ramp with a local occlusion correction. Its
+weaknesses are not geometric accidents but consequences of two decisions: the
+silhouette was left open, and time was illustrated rather than encoded.
+
+Closing the loop and twisting the cross-section over a rotation-minimising
+frame repairs both at once, is provably single-seam, fits the existing
+instanced architecture, and keeps the brand mark. The result is the
+phase-locked closed G torus, specified in \eqref{eq:helix} and justified in
+Table~\ref{tab:semantics}. A plain graphene torus ($k=0$) is the correct
+fallback if the twist proves too costly to build.
+
+\appendix
+\section{Reproducibility}
+
+All figures are produced by
+\texttt{site/research/figures/generate-shapes.mjs}, which imports the
+production module \texttt{site/src/scene/geometry.ts} and emits
+\texttt{figures/shapes.tex}. Re-run with
+\begin{verbatim}
+node --experimental-strip-types \\
+  site/research/figures/generate-shapes.mjs
+pdflatex hero-shape-study.tex
+pdflatex hero-shape-study.tex
+\end{verbatim}
+Any change to the production geometry therefore changes the figures in this
+document, which is the intended safety property: the document cannot silently
+describe a shape the site no longer renders.
+
+Figure~\ref{fig:page} shows the shipped page, captured by the browser test
+suite with reduced motion emulated; the visual weight judgements in
+Section~\ref{sec:criteria} refer to that rendering.
+
+\begin{thebibliography}{99}
+
+\bibitem{purchase1997}
+H.~Purchase.
+\newblock Which aesthetic has the greatest effect on human understanding?
+\newblock In \emph{Graph Drawing, 5th International Symposium (GD'97)},
+LNCS 1353, pages 248--261. Springer, 1997.
+\newblock \href{https://doi.org/10.1007/3-540-63938-1_67}{doi:10.1007/3-540-63938-1\_67}.
+
+\bibitem{cleveland1984}
+W.~S.~Cleveland and R.~McGill.
+\newblock Graphical perception: theory, experimentation, and application to
+  the development of graphical methods.
+\newblock \emph{Journal of the American Statistical Association},
+  79(387):531--554, 1984.
+\newblock \href{https://doi.org/10.1080/01621459.1984.10478080}{doi:10.1080/01621459.1984.10478080}.
+
+\bibitem{ware2008}
+C.~Ware and P.~Mitchell.
+\newblock Visualizing graphs in three dimensions.
+\newblock \emph{ACM Transactions on Applied Perception}, 5(1):1--15, 2008.
+\newblock \href{https://doi.org/10.1145/1279640.1279642}{doi:10.1145/1279640.1279642}.
+
+\bibitem{wagemans2012}
+J.~Wagemans, J.~H.~Elder, M.~Kubovy, S.~E.~Palmer, M.~A.~Peterson,
+  M.~Singh, and R.~von der Heydt.
+\newblock A century of Gestalt psychology in visual perception I: perceptual
+  grouping and figure--ground organization.
+\newblock \emph{Psychological Bulletin}, 138(6):1172--1217, 2012.
+\newblock \href{https://doi.org/10.1037/a0029333}{doi:10.1037/a0029333}.
+
+\bibitem{mcintosh2012}
+L.~McIntosh, B.~E.~Riecke, and S.~DiPaola.
+\newblock Efficiently simulating the bokeh of polygonal apertures in a
+  post-process depth of field shader.
+\newblock \emph{Computer Graphics Forum}, 31(6):1810--1822, 2012.
+\newblock \href{https://doi.org/10.1111/j.1467-8659.2012.02097.x}{doi:10.1111/j.1467-8659.2012.02097.x}.
+
+\bibitem{hammon2007}
+E.~Hammon.
+\newblock Practical post-process depth of field.
+\newblock In \emph{GPU Gems 3}, chapter 28, pages 583--605.
+  Addison-Wesley, 2007.
+\newblock \href{https://developer.nvidia.com/gpugems/gpugems3/part-iv-image-effects/chapter-28-practical-post-process-depth-field}{nvidia.com/gpugems}.
+
+\bibitem{scheuermann2004}
+T.~Scheuermann and N.~Tatarchuk.
+\newblock Improved depth-of-field rendering.
+\newblock In \emph{ShaderX 4}, pages 363--378. Charles River Media, 2004.
+
+\bibitem{geim2007}
+A.~K.~Geim and K.~S.~Novoselov.
+\newblock The rise of graphene.
+\newblock \emph{Nature Materials}, 6(3):183--191, 2007.
+\newblock \href{https://doi.org/10.1038/nmat1849}{doi:10.1038/nmat1849}.
+
+\bibitem{chaikin1975}
+G.~M.~Chaikin.
+\newblock An algorithm for high-speed curve generation.
+\newblock \emph{Computer Graphics and Image Processing}, 3(4):223--238, 1975.
+
+\bibitem{rougier2014}
+N.~P.~Rougier, M.~Droettboom, and P.~E.~Bourne.
+\newblock Ten simple rules for better figures.
+\newblock \emph{PLOS Computational Biology}, 10(9):e1003833, 2014.
+\newblock \href{https://doi.org/10.1371/journal.pcbi.1003833}{doi:10.1371/journal.pcbi.1003833}.
+
+\bibitem{franke2023}
+M.~Franke and S.~Koch.
+\newblock Compact phase histograms for guided exploration of periodicity.
+\newblock In \emph{IEEE VIS 2023}, pages 191--195, 2023.
+\newblock \href{https://doi.org/10.1109/VIS54172.2023.00047}{doi:10.1109/VIS54172.2023.00047}.
+
+\bibitem{rakuschek2026}
+J.~Rakuschek et~al.
+\newblock Guided spiral visualization for periodic time series and residual
+  analysis.
+\newblock \emph{Computers and Graphics}, 135:104535, 2026.
+\newblock \href{https://doi.org/10.1016/j.cag.2026.104535}{doi:10.1016/j.cag.2026.104535}.
+
+\bibitem{hygraph2025}
+C.~Bollen et~al.
+\newblock Towards hybrid graphs: unifying property graphs and time series.
+\newblock In \emph{EDBT 2025}, 2025.
+\newblock \href{https://openproceedings.org/2025/conf/edbt/paper-183.pdf}{openproceedings.org}.
+
+\bibitem{bonfietti2026}
+Combining time-series and graph data: a survey of existing systems and
+  approaches.
+\newblock Preprint, 2026.
+\newblock \href{https://arxiv.org/abs/2601.00304}{arXiv:2601.00304}.
+
+\bibitem{wang2008}
+J.~Wang, D.~J{\"o}nick, M.~Khoury, and W.~He.
+\newblock All-frustum free-form deformation.
+\newblock \emph{Computer Graphics Forum}, 27(2):605--613, 2008.
+\newblock \href{https://www.ag.jku.at/pubs/2007wjzl.pdf}{ag.jku.at/pubs/2007wjzl.pdf}.
+
+\bibitem{webgl2}
+Khronos Group.
+\newblock \emph{WebGL 2.0 Specification}.
+\newblock \href{https://registry.khronos.org/webgl/specs/2.0.0/}{registry.khronos.org}.
+
+\bibitem{threejs}
+three.js.
+\newblock \emph{InstancedMesh}.
+\newblock \href{https://threejs.org/docs/\#api/en/objects/InstancedMesh}{threejs.org}.
+
+\end{thebibliography}
+
+\end{document}

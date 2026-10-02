@@ -28,6 +28,18 @@ npm run preview
 Open `http://127.0.0.1:4173/graphfin/`. Output goes to `site/dist/`.
 No API server, database, C++ build, or secret is needed.
 
+### Compare the two G forms
+
+Open `/graphfin/research/g-comparison.html` for the live side-by-side study.
+Its links open the complete site with `?shape=fuller` (rounded tubular lattice)
+or `?shape=ribbon` (thin open sheet). Both variants retain the same round
+centerline, forward upper-right tip, recessed central tip, perspective camera,
+lighting, and evolving signal. Fuller Lattice is the selected default; the
+ribbon remains in research for comparison. `?lang=zh` can be combined with either variant.
+
+The approved brief, implementation details, concept images, and browser
+captures are documented in [research/g-implementation-study.md](research/g-implementation-study.md).
+
 ## Verification
 
 ```sh
@@ -45,8 +57,9 @@ Unit checks cover carbon-node degree, welded seam topology, continuous signal
 connectivity over several cycles, bounded geometry, node collision clearance in
 world and screen space, and mobile quality settings.
 Browser checks cover production subpaths and assets, English/Chinese switching,
-mobile menu/keyboard behavior, breakpoint changes, reduced motion, pause/resume,
-WebGL failure, context loss, and useful content without JavaScript. They use
+mobile menu/keyboard behavior, both shape variants and their comparison page,
+breakpoint changes, reduced motion, WebGL failure, context loss, and useful
+content without JavaScript. They use
 software WebGL for reproducibility; this is not a real-device performance claim.
 
 ## Architecture
@@ -54,18 +67,20 @@ software WebGL for reproducibility; this is not a real-device performance claim.
 | File                                     | Responsibility                                                                             |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------ |
 | `index.html`                             | Complete English page, semantic navigation, section scaffolding, fallback image, ownership |
-| `src/main.ts`                            | Menu, motion control, lazy scene loading, section observer, page lifecycle                 |
+| `src/main.ts`                            | Menu, shape selection and fallback, lazy scene loading, section observer, page lifecycle    |
 | `src/i18n.ts`                            | Chinese translations, document language/title/metadata, shareable language state           |
 | `src/style.css`, `src/styles/layout.css` | Brand styling, responsive layouts, focus and reduced-motion styles                         |
-| `src/scene/geometry.ts`                  | Welded hexagonal strip, periodic seam, logo-accurate G mapping with anamorphic depth of field, end fade |
-| `src/scene/signal.ts`                    | Continuous travelling pulse along a closed route of real lattice edges                     |
-| `src/scene/lattice-mesh.ts`              | Instanced spheres/bonds, material fade, small procedural signal halos                      |
-| `src/scene/camera.ts`                    | Composition fitting and restrained pointer parallax                                        |
+| `src/scene/geometry.ts`                  | Welded hexagonal lattice, circular G and smooth inward bend, sheet/tube sweep, real depth    |
+| `src/scene/signal.ts`                    | Stateful value-noise pulse with connected route, thermal afterimage, echo, and fork         |
+| `src/scene/lattice-mesh.ts`              | Instanced spheres/bonds, procedural material wear, damped follow-through, local light spill |
+| `src/scene/camera.ts`                    | Composition fitting, gentle orbit/dolly, and restrained pointer parallax                     |
 | `src/scene/quality.ts`                   | Geometry, resolution, and frame-rate budgets                                               |
-| `src/scene/scene.ts`                     | Renderer, IBL/tone mapping, desktop bloom, animation clock, visibility, resize, cleanup    |
-| `vite.config.ts`                         | Pages base path and branch-aware documentation links                                       |
+| `src/scene/focus-pass.ts`                | Thin-lens blur radius, soft aperture filtering of colour and coverage, reusable blur targets |
+| `src/scene/scene.ts`                     | Renderer, IBL/tone mapping, depth focus and desktop bloom, animation clock, visibility, resize, cleanup |
+| `research/g-comparison.html`, `src/research-comparison.ts` | Two live variants and links to their full site views                       |
+| `vite.config.ts`                         | Both build entries, Pages base path, and branch-aware documentation links                    |
 
-`SceneController` exposes `setSection`, `setPaused`, and `dispose`. Sections have
+`SceneController` exposes `setSection` and `dispose`. Sections have
 `data-scene-section` attributes and communicate through one observer. Future
 entity labels, query highlights, failure/restart sequences, or multi-graph
 transitions can extend this boundary without coupling geometry to page copy.
@@ -74,21 +89,35 @@ intentionally short, with links to existing source documentation and examples.
 
 ### Rendering budgets and lifecycle
 
-- Desktop: 272 nodes, 374 bonds, maximum DPR 1.75, 30 fps.
-- Mobile (viewport at most 760px): 144 nodes, 192 bonds, simpler spheres and
-  cylinders, maximum DPR 1.35, 24 fps, no pointer parallax.
+- Desktop ribbon: 384 nodes, 528 bonds. Fuller: 480 nodes, 720 bonds.
+  Both use maximum DPR 1.75 and 30 fps.
+- Mobile (viewport at most 760px) ribbon: 192 nodes, 256 bonds. Fuller:
+  256 nodes, 384 bonds. Both use simpler spheres and cylinders, maximum
+  DPR 1.35, 24 fps, reduced automatic camera travel, and no pointer parallax.
 - Two instanced meshes and one points layer. No image textures, physics, or
   continuously growing geometry. Three.js is the only runtime dependency.
 - Lighting uses a procedural `RoomEnvironment` IBL, ACES filmic tone mapping,
-  and a view-space fresnel rim for a ray-traced *look* (not path tracing).
-  Desktop adds a single `UnrealBloomPass` tuned for the gold signal; mobile keeps
-  direct rendering to protect its frame budget. IBL bake and bloom composer are
-  created after the first frame so software GL cannot stall mount.
-- The strip moves through a fixed parameter window. Its welded seam recycles
-  indefinitely; edges crossing the visible window boundary are suppressed, and
-  the ends disappear using opacity and fog. Buffers and instance counts remain fixed.
+  a warm key and cool rim reflected by polished metal. Only the signal emits
+  light; there are no painted emissive rims on inactive metal.
+  Both tiers use a depth-texture focus pass biased slightly toward the viewer.
+  Eight overlapping blur-radius bands spread linear colour and coverage with
+  a soft aperture profile. Desktop adds `UnrealBloomPass` for the gold signal;
+  mobile omits bloom. IBL bake and the post chain are created after the first frame
+  so software GL cannot stall mount.
+- The lattice is an infinite parameter stream. Its sites continuously advance
+  toward the viewer from the recessed central arm, pass the forward upper-right
+  arm, and recycle through the far cutoff. The periodic return bond is hidden
+  because it would span the open G aperture. Geometry continues through the
+  lens and beyond the rear clip plane; material opacity never fades. Optical
+  defocus grows before these hidden recycling boundaries. Buffers and instance
+  counts remain fixed, and blur targets are reused between frames.
+- Material phase is resampled by arc length through the visible depth range,
+  preventing the foreground cells from stretching into rods as they approach.
+  Additional longitudinal cells cover the extended arm at both quality tiers.
 - Hidden documents and offscreen scenes stop the animation loop. Elapsed time
-  does not jump on resume. Manual pause and reduced motion freeze the composition.
+  does not jump on resume. The system's reduced-motion preference freezes the
+  composition. There is no manual pause button; the always-on flow only stops
+  when the page is hidden/offscreen or reduced motion is requested.
 - Resize updates the camera and pixel ratio; crossing the mobile breakpoint
   disposes and rebuilds the small mesh set. Page exit/context loss frees meshes,
   materials, renderer, observers, listeners, and animation frames. Back/forward
@@ -96,32 +125,40 @@ intentionally short, with links to existing source documentation and examples.
 
 ### Assets and visual compromises
 
-The source assets are `../assets/logo.svg`, `../assets/logo.png`, and
-`../assets/hero.png` (there is no `asset/hero.png`). They are unmodified. The site
-uses the SVG in the header/favicon and the existing hero PNG as the static
-fallback. Vite fingerprints and rebases asset URLs. No external font/CDN is used.
+The original brand assets in `../assets/` are unmodified. The header/favicon
+use `logo.svg`; `research/current/*-fallback.png` contain snapshots of the
+implemented G forms. JavaScript selects the matching fallback; without
+JavaScript the default fuller snapshot is visible. The imagegen concept
+references stay in `research/concepts/` and are not used as live-render evidence.
+Vite fingerprints and rebases asset URLs. No external font/CDN is used.
 
-This is a stylized carbon ribbon, not a chemically exact molecular model. The
-strip follows the GraphFin logo G (defocused head in the right aperture, CCW
-arc, inward tail). Perspective, an anamorphic depth ramp that lunges the ends
-toward and away from the lens, progressively fading ends, and fog approximate
-depth of field; a decorative breakout frame under the canvas lets the G paint
-beyond the window, and a soft edge mask dissolves the hard clip. Materials use
-a low-roughness metalness/IBL sheen; desktop bloom is a cheap threshold pass,
-not a full deferred pipeline. The gold signal is a single route pulse whose
-speed, tail length, and edge brightness wobble on layered sines plus a seeded
-hash flicker (deterministic, still one connected trail). Static per-atom
-offsets and tint drift keep the lattice from looking CAD-perfect. The gold
-halo is a procedural soft point attached to active graph nodes, never a
-separate waveform. Reduced motion uses the same static 3D composition when
-supported; unavailable WebGL, context loss, or a failed renderer import leaves
-the existing hero image visible.
+These are stylized lattices with a reflective metal finish, inspired by the
+original carbon structure rather than chemically exact molecular models.
+A circular 300-degree outer arc and broad inward bend keep the G round and
+legible. The upper-right head sits in front of the middle plane and the inner
+tip sits behind it. Centerline perspective compensation preserves the round
+outline at the baseline view; cross-section width, node scale, occlusion, and
+camera travel retain real 3D depth. A fixed 40-degree perspective field of view
+avoids changing the lens while the camera gently orbits and moves closer/farther.
+The focus pass keeps the middle arc legible while foreground silhouettes expand
+and the receding center shrinks into defocus. Its image-space approximation uses
+a soft aperture, not a ray-traced lens. A decorative breakout frame establishes
+the screen plane. Materials use a silver-grey base, near-unit metalness,
+roughness around 0.2, and subtle surface variation. Studio reflections change
+with the moving surface and camera;
+focus and bloom use post-processing. The signal integrates value-noise pacing with stalls, surges, a
+short thermal afterimage, occasional forked heat, and a soft echo while its
+active gold trail remains one connected route. A motivated amber point light
+follows the head and spills onto neighboring bonds. Static offsets, a localized
+dull bend, thickness variation, and damped follow-through keep the lattice from
+looking CAD-perfect. The gold halo is a procedural soft point attached to active
+and residual-heat graph nodes, never a separate waveform. Reduced motion uses
+the same static 3D composition when supported; unavailable WebGL, context loss,
+or a failed renderer import leaves the matching static snapshot visible.
 
-The legacy PNG is about 1.1 MB. The deferred renderer bundle is about 142 KB
-gzipped. A future optimized fallback derivative can reduce first-load transfer
-without altering the original artwork. Vite reports the renderer's uncompressed
-chunk above its default 500 KB advisory threshold; it is loaded separately from
-the small page/navigation bundle.
+The deferred renderer bundle is about 146 KB gzipped. Vite reports its
+uncompressed chunk above the default 500 KB advisory threshold; it is loaded
+separately from the small page/navigation bundle.
 
 ## GitHub Pages
 

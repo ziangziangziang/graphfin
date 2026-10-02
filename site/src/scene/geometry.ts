@@ -19,7 +19,11 @@ export const smoothstep = (low: number, high: number, value: number) => {
 export const wrap = (value: number) => ((value % 1) + 1) % 1;
 
 /** Shared corners are welded before curving the sheet, preserving true hexagons. */
-export function createLattice(columns: number, rows: number): Lattice {
+export function createLattice(
+  columns: number,
+  rows: number,
+  tubular = false,
+): Lattice {
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
   const corners = new Map<string, number>();
@@ -32,13 +36,17 @@ export function createLattice(columns: number, rows: number): Lattice {
       for (let k = 0; k < 6; k++) {
         const angle = (k * Math.PI) / 3;
         const x = (((q * 1.5 + Math.cos(angle)) % period) + period) % period;
-        const y = height * (r + (q % 2) / 2) + Math.sin(angle);
+        const rawY = height * (r + (q % 2) / 2) + Math.sin(angle);
+        const y = tubular ? wrap(rawY / (height * rows)) * height * rows : rawY;
         const key = `${x.toFixed(4)},${y.toFixed(4)}`;
         let id = corners.get(key);
         if (id === undefined) {
           id = nodes.length;
           corners.set(key, id);
-          nodes.push({ u: x / period, v: y - (height * (rows - 0.5)) / 2 });
+          nodes.push({
+            u: x / period,
+            v: y - (height * (rows - (tubular ? 0 : 0.5))) / 2,
+          });
         }
         cell.push(id);
       }
@@ -64,7 +72,8 @@ export function createLattice(columns: number, rows: number): Lattice {
     (best, node, i) => (node.u < nodes[best].u ? i : best),
     0,
   );
-  // Welded longitudinal seam: recycle the sheet forever without a moving gap.
+  // Periodic topology lets lattice sites stream through the G forever. The
+  // mesh suppresses whichever bonds currently cross the recycling boundary.
   const end = neighbors[start].find((i) => nodes[i].u - nodes[start].u > 0.5)!;
   const parent = new Int32Array(nodes.length).fill(-1);
   const queue = [start];
@@ -84,198 +93,135 @@ export function createLattice(columns: number, rows: number): Lattice {
   return { nodes, edges, route };
 }
 
-const HEAD_END = 0.16;
-const TAIL_START = 0.82;
-const RIBBON_HALF = 0.2;
-const SLAB_Z = 0.26;
-const V_SCALE = 3.03;
-const TAN_EPS = 0.03;
-const CHAIKIN_ITERS = 3;
-/** Slightly oversized so the G crosses the decorative breakout frame. */
-const logoScale = 2.42 / 388;
-const logoCenterX = 546;
-const logoCenterY = 470;
+export type ShapeVariant = "fuller" | "ribbon";
 
-/** Chaikin-cut the skeleton so head/arc/tail junctions stay tangent-continuous. */
-function chaikin(
-  points: readonly (readonly [number, number])[],
-  iterations: number,
-): [number, number][] {
-  let current = points.map(([x, y]): [number, number] => [x, y]);
-  for (let iter = 0; iter < iterations; iter++) {
-    const next: [number, number][] = [current[0]];
-    for (let i = 0; i < current.length - 1; i++) {
-      const a = current[i];
-      const b = current[i + 1];
-      next.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25]);
-      next.push([a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]);
-    }
-    next.push(current[current.length - 1]);
-    current = next;
-  }
-  return current;
-}
+export const shapeVariant = (value: string | null): ShapeVariant =>
+  value === "ribbon" ? "ribbon" : "fuller";
 
-// Logo skeleton in SVG space (y-down): defocused head, outer spiral, G tail.
-const headPoints: readonly (readonly [number, number])[] = [
-  [842, 362],
-  [845, 311],
-  [829, 252],
-  [797, 191],
-  [748, 143],
-  [690, 112],
-];
-const arcPoints: readonly (readonly [number, number])[] = [
-  [690, 112],
-  [594, 100],
-  [505, 126],
-  [423, 171],
-  [347, 234],
-  [292, 314],
-  [260, 408],
-  [261, 510],
-  [296, 612],
-  [355, 700],
-  [437, 770],
-  [532, 817],
-  [636, 834],
-  [730, 811],
-  [801, 756],
-  [837, 676],
-  [824, 594],
-];
-const tailPoints: readonly (readonly [number, number])[] = [
-  [824, 594],
-  [748, 551],
-  [676, 545],
-  [618, 575],
-  [600, 605],
-  [590, 623],
-  [570, 615],
-  [548, 595],
-  [509, 588],
-  [475, 566],
-];
-const skeletonSvg: readonly (readonly [number, number])[] = [
-  ...headPoints,
-  ...arcPoints.slice(1),
-  ...tailPoints.slice(1),
-];
-
-interface LogoPath {
-  world: [number, number][];
-  cumulative: number[];
-  length: number;
-  /** Arclength of the original head→arc junction after smoothing. */
-  headJoin: number;
-  /** Arclength of the original arc→tail junction after smoothing. */
-  tailJoin: number;
-}
-
-function logoPath(
-  points: readonly (readonly [number, number])[],
-  joinA: readonly [number, number],
-  joinB: readonly [number, number],
-): LogoPath {
-  const smoothed = chaikin(points, CHAIKIN_ITERS).map(([x, y]): [number, number] => [
-    (x - logoCenterX) * logoScale,
-    (logoCenterY - y) * logoScale,
-  ]);
-  const cumulative = [0];
-  for (let i = 1; i < smoothed.length; i++) {
-    cumulative.push(
-      cumulative[i - 1] +
-        Math.hypot(
-          smoothed[i][0] - smoothed[i - 1][0],
-          smoothed[i][1] - smoothed[i - 1][1],
-        ),
-    );
-  }
-  const targetJoin = (svg: readonly [number, number]): number => {
-    const wx = (svg[0] - logoCenterX) * logoScale;
-    const wy = (logoCenterY - svg[1]) * logoScale;
-    let best = 0;
-    let bestDist = Infinity;
-    for (let i = 0; i < smoothed.length; i++) {
-      const dist = Math.hypot(smoothed[i][0] - wx, smoothed[i][1] - wy);
-      if (dist < bestDist) {
-        bestDist = dist;
-        best = cumulative[i];
-      }
-    }
-    return best;
-  };
-  return {
-    world: smoothed,
-    cumulative,
-    length: cumulative[cumulative.length - 1],
-    headJoin: targetJoin(joinA),
-    tailJoin: targetJoin(joinB),
-  };
-}
-
-const logo = logoPath(
-  skeletonSvg,
-  [690, 112],
-  [824, 594],
-);
-
-function alongPath(path: LogoPath, distance: number): [number, number] {
-  const target = Math.min(Math.max(distance, 0), path.length);
-  let lo = 0;
-  let hi = path.cumulative.length - 1;
-  while (lo + 1 < hi) {
-    const mid = (lo + hi) >> 1;
-    if (path.cumulative[mid] <= target) lo = mid;
-    else hi = mid;
-  }
-  const span = path.cumulative[hi] - path.cumulative[lo];
-  const f = span > 0 ? (target - path.cumulative[lo]) / span : 0;
-  const a = path.world[lo];
-  const b = path.world[hi];
-  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
-}
+const RADIUS = 2.24;
+const ARC_END = 0.82;
+const CAMERA_DISTANCE = 10.3;
 
 function centerline(u: number): [number, number] {
-  let distance: number;
-  if (u < HEAD_END) {
-    distance = (u / HEAD_END) * logo.headJoin;
-  } else if (u < TAIL_START) {
-    distance =
-      logo.headJoin +
-      ((u - HEAD_END) / (TAIL_START - HEAD_END)) *
-        (logo.tailJoin - logo.headJoin);
-  } else {
-    distance =
-      logo.tailJoin +
-      ((u - TAIL_START) / (1 - TAIL_START)) * (logo.length - logo.tailJoin);
+  if (u <= ARC_END) {
+    const angle = Math.PI / 6 + (u / ARC_END) * (Math.PI * 5 / 3);
+    return [Math.cos(angle) * RADIUS, Math.sin(angle) * RADIUS];
   }
-  return alongPath(logo, distance);
-}
-
-/** GraphFin logo G punching through the hero frame: DOF head, CCW arc, near tail. */
-export function positionOnSpiral(
-  u: number,
-  v: number,
-): [number, number, number] {
-  const before = centerline(Math.max(0, u - TAN_EPS));
-  const after = centerline(Math.min(1, u + TAN_EPS));
-  const point = centerline(u);
-  const tx = after[0] - before[0];
-  const ty = after[1] - before[1];
-  const tangent = Math.hypot(tx, ty) || 1;
-  const offset = (v * RIBBON_HALF) / V_SCALE;
-    // Ease the depth ramp so the visible mid-band stays sharp and the ends
-    // accelerate toward/away from the camera for naked-eye parallax.
-    const along = (u - 0.5) * 2;
-    const depth = Math.sign(along) * Math.pow(Math.abs(along), 1.15) * 3.15;
+  const t = (u - ARC_END) / (1 - ARC_END);
+  const s = 1 - t;
+  // A broad cubic bend shares the circle's tangent before turning inward.
+  const x = Math.cos(Math.PI / 6) * RADIUS;
+  const y = -RADIUS / 2;
   return [
-    point[0] - (ty / tangent) * offset,
-    point[1] + (tx / tangent) * offset,
-    depth + v * SLAB_Z,
+    s ** 3 * x + 3 * s * s * t * (x + 0.43) + 3 * s * t * t * 1.62 + t ** 3 * 0.04,
+    s ** 3 * y + 3 * s * s * t * (y + 0.745) + 3 * s * t * t * 0.12 + t ** 3 * 0.12,
   ];
 }
 
-export function visibility(u: number): number {
-  return smoothstep(0.015, 0.16, u) * (1 - smoothstep(0.78, 0.95, u));
+/** Positive z is toward the lens; decreasing u carries the lattice forward. */
+function center(u: number): [number, number, number] {
+  const point = centerline(u);
+  const depth =
+    2.62 * Math.max(0, 1 - u / 0.32) ** 2 -
+    2.57 * smoothstep(0.77, 1, u) +
+    0.36 * (0.5 - u);
+  // Compensate the centerline's perspective stretch, while spheres, ribbon
+  // width and overlaps retain real depth. The camera moves around this view.
+  const scale = 1 - depth / CAMERA_DISTANCE;
+  // Continue past the legible G, through the lens and beyond the rear clip
+  // plane. Do not perspective-compensate these extensions: the approaching
+  // arm grows naturally and leaves the sensor; the rear arm gets smaller.
+  const nearExtension = 18 * Math.max(0, 1 - u / 0.11) ** 3;
+  const farExtension = 60 * smoothstep(0.92, 1, u) ** 3;
+  return [point[0] * scale, point[1] * scale, depth + nearExtension - farExtension];
+}
+
+// Parameter speed is not distance along the metal. Distribute cells by arc
+// length through the visible volume, so the foreground extension doesn't pull
+// a handful of hexagons into long rods. Outside that volume only a small phase
+// budget is needed to recycle the hidden geometry.
+const FLOW_SAMPLES = 2048;
+const flowDistance = new Float64Array(FLOW_SAMPLES + 1);
+const flowPoint = (u: number) => {
+  const p = center(u);
+  p[2] = Math.max(-6, Math.min(8.5, p[2]));
+  return p;
+};
+let previousFlowPoint = flowPoint(0);
+for (let i = 1; i <= FLOW_SAMPLES; i++) {
+  const p = flowPoint(i / FLOW_SAMPLES);
+  flowDistance[i] = flowDistance[i - 1] + Math.max(
+    8 / FLOW_SAMPLES,
+    Math.hypot(...p.map((value, axis) => value - previousFlowPoint[axis])),
+  );
+  previousFlowPoint = p;
+}
+
+/** Map periodic material travel to distance along the visible G. */
+export function parameterForFlow(phase: number): number {
+  const distance = Math.max(0, Math.min(1, phase)) * flowDistance[FLOW_SAMPLES];
+  let low = 0;
+  let high = FLOW_SAMPLES;
+  while (high - low > 1) {
+    const middle = (low + high) >>> 1;
+    if (flowDistance[middle] < distance) low = middle;
+    else high = middle;
+  }
+  const fraction = (distance - flowDistance[low]) / (flowDistance[high] - flowDistance[low]);
+  return (low + fraction) / FLOW_SAMPLES;
+}
+
+/** Shared round G with either a welded tube or an open, lightly rolled sheet. */
+export function positionOnSpiral(
+  u: number,
+  v: number,
+  variant: ShapeVariant = "ribbon",
+  rows = 3,
+): [number, number, number] {
+  const before = center(Math.max(0, u - 0.001));
+  const after = center(Math.min(1, u + 0.001));
+  const point = center(u);
+  const tangent = after.map((value, axis) => value - before[axis]);
+  const length = Math.hypot(...tangent) || 1;
+  const [tx, ty, tz] = tangent.map((value) => value / length);
+  const planar = Math.hypot(tx, ty) || 1;
+  const nx = -ty / planar;
+  const ny = tx / planar;
+  // N lies in the image plane; B completes an orthonormal 3D sweep frame.
+  const bx = -tz * ny;
+  const by = tz * nx;
+  const bz = tx * ny - ty * nx;
+  let lateral: number;
+  let lift: number;
+  if (variant === "fuller") {
+    const angle = (v / (rows * Math.sqrt(3))) * Math.PI * 2;
+    lateral = Math.cos(angle) * 0.38;
+    lift = Math.sin(angle) * 0.38;
+  } else {
+    const width = v * 0.145;
+    const lean = 0.34 + Math.sin(u * Math.PI * 2) * 0.2;
+    lateral = width * Math.cos(lean);
+    lift = width * Math.sin(lean);
+  }
+  const sag = Math.sin(u * 27 + v * 1.7) * 0.004;
+  return [
+    point[0] + nx * lateral + bx * lift + sag,
+    point[1] + ny * lateral + by * lift,
+    point[2] + bz * lift + sag * 0.4,
+  ];
+}
+
+export function crossingScale(u: number): number {
+  return 1 - smoothstep(0.85, 1, u) * 0.08;
+}
+
+export function heroFlaw(u: number): number {
+  const distance = (wrap(u) - 0.64) / 0.115;
+  return Math.exp(-(distance * distance));
+}
+
+// Material never fades with progress. Recycling happens outside the camera;
+// the only visible loss of detail comes from optical defocus and distance.
+export function visibility(_u: number): number {
+  return 1;
 }

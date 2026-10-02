@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
+import { mkdirSync } from "node:fs";
+import { resolve } from "node:path";
 
 /** Install a drawElementsInstanced counter used by freeze/offscreen tests. */
 async function installDrawCounter(page: Page) {
@@ -52,6 +54,13 @@ test("production subpath, renderer, anchors, language and assets", async ({
     "data-quality",
     "desktop",
   );
+  await expect(page.locator("#scene-host")).toHaveAttribute("data-shape", "fuller");
+  await expect(page.locator(".breakout-shadow")).toHaveCount(0);
+  expect(
+    await page
+      .locator("#scene-host")
+      .evaluate((element) => getComputedStyle(element).maskImage),
+  ).toBe("none");
   await expect(page.locator("#menu")).toBeHidden();
   await expect(page.locator("h1")).toHaveText(
     "Relationshipsand observations,together.",
@@ -118,7 +127,7 @@ test("reduced motion freezes the composition, including pointer movement", async
     "data-renderer",
     "webgl",
   );
-  await expect(page.locator("#motion")).toBeHidden();
+  await expect(page.locator("#motion")).toHaveCount(0);
   await waitForEnhanced(page);
   await page.waitForTimeout(400);
   const before = await drawCount(page);
@@ -127,30 +136,46 @@ test("reduced motion freezes the composition, including pointer movement", async
   await page.waitForTimeout(600);
   expect(await drawCount(page)).toBe(before);
   await page.emulateMedia({ reducedMotion: "no-preference" });
-  await expect(page.locator("#motion")).toBeVisible();
+  await page.waitForTimeout(600);
+  expect(await drawCount(page)).toBeGreaterThan(before);
 });
 
-test("animation can be paused and resumed", async ({ page }) => {
-  await installDrawCounter(page);
-  await page.goto("./");
-  await expect(page.locator("#hero-visual")).toHaveAttribute(
-    "data-renderer",
-    "webgl",
-  );
-  await page.locator("#motion").click();
-  await expect(page.locator("#motion")).toHaveAttribute("aria-pressed", "true");
-  await waitForEnhanced(page);
-  await page.waitForTimeout(400);
-  const paused = await drawCount(page);
-  await page.waitForTimeout(600);
-  expect(await drawCount(page)).toBe(paused);
-  await page.locator("#motion").click();
-  await expect(page.locator("#motion")).toHaveAttribute(
-    "aria-pressed",
-    "false",
-  );
-  await page.waitForTimeout(600);
-  expect(await drawCount(page)).toBeGreaterThan(paused);
+for (const shape of ["fuller", "ribbon"]) {
+  test(`${shape} site view preserves variant through language and quality changes`, async ({ page }) => {
+    await page.goto(`./?shape=${shape}`);
+    await waitForEnhanced(page);
+    await expect(page.locator("#scene-host")).toHaveAttribute("data-shape", shape);
+    await expect(page.locator("#motion")).toHaveCount(0);
+    await page.locator("#language").click();
+    await expect(page).toHaveURL(new RegExp(`shape=${shape}.*lang=zh`));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator("#scene-host")).toHaveAttribute("data-quality", "mobile");
+    await expect(page.locator("#scene-host")).toHaveAttribute("data-shape", shape);
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await waitForEnhanced(page);
+    await expect(page.locator("#scene-host")).toHaveAttribute("data-quality", "desktop");
+    await expect(page.locator("#hero-visual")).toHaveAttribute("data-canvas-ready", "true");
+  });
+}
+
+test("comparison uses both live renderers and links to the correct site views", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.goto("./research/g-comparison.html");
+  for (const shape of ["fuller", "ribbon"]) {
+    await expect(page.locator(`#${shape}-host`)).toHaveAttribute("data-enhanced", "true", { timeout: 15000 });
+    await expect(page.locator(`#${shape}-host`)).toHaveAttribute("data-shape", shape);
+    await expect(page.locator(`[data-candidate="${shape}"] .study-visual`)).toHaveAttribute("data-canvas-ready", "true");
+    await expect(page.locator(`[data-candidate="${shape}"] a`)).toHaveAttribute("href", `../?shape=${shape}`);
+  }
+  await expect(page.locator("canvas")).toHaveCount(2);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+  for (const shape of ["fuller", "ribbon"]) {
+    await expect(page.locator(`#${shape}-host`)).toHaveAttribute("data-quality", "mobile");
+    await expect(page.locator(`#${shape}-host`)).toHaveAttribute("data-focus", "mobile");
+  }
+  expect(errors).toEqual([]);
 });
 
 test("WebGL failure keeps the static brand image and all content", async ({
@@ -169,19 +194,15 @@ test("WebGL failure keeps the static brand image and all content", async ({
       >);
     } as typeof original;
   });
-  await page.goto("./");
-  await expect(page.locator("#hero-visual")).toHaveAttribute(
-    "data-renderer",
-    "static",
-  );
-  await expect(page.locator(".hero-fallback")).toBeVisible();
-  expect(
-    await page
-      .locator(".hero-fallback")
-      .evaluate((el) => (el as HTMLImageElement).naturalWidth),
-  ).toBeGreaterThan(0);
+  for (const shape of ["fuller", "ribbon"]) {
+    await page.goto(`./?shape=${shape}`);
+    await expect(page.locator("#hero-visual")).toHaveAttribute("data-renderer", "static");
+    await expect(page.locator(".hero-fallback")).toBeVisible();
+    await expect(page.locator(".hero-fallback")).toHaveAttribute("src", new RegExp(`${shape}-fallback`));
+    expect(await page.locator(".hero-fallback").evaluate((el) => (el as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  }
   await expect(page.locator("h1")).toBeVisible();
-  await expect(page.locator("#motion")).toBeHidden();
+  await expect(page.locator("#motion")).toHaveCount(0);
 });
 
 test("context loss disposes the canvas and restores the image", async ({
@@ -222,15 +243,43 @@ test("without JavaScript the message, image, docs and mobile navigation remain a
 });
 
 test("visual review captures", async ({ page }) => {
+  // Seven full-page/canvas captures across six software-GL scene rebuilds.
+  test.setTimeout(60000);
+  const captures = resolve(import.meta.dirname, "../../research/current");
+  mkdirSync(captures, { recursive: true });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("./");
   await expect(page.locator("#hero-visual")).toHaveAttribute(
     "data-renderer",
     "webgl",
   );
+  await waitForEnhanced(page);
   await page.screenshot({ path: "/tmp/graphfin-desktop.png", fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: "/tmp/graphfin-mobile.png", fullPage: true });
+  for (const shape of ["fuller", "ribbon"]) {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto(`./?shape=${shape}`);
+    await waitForEnhanced(page);
+    await page.screenshot({ path: resolve(captures, `${shape}-desktop.png`), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator("#scene-host")).toHaveAttribute("data-quality", "mobile");
+    await waitForEnhanced(page);
+    await page.screenshot({ path: resolve(captures, `${shape}-mobile.png`), fullPage: true });
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("./research/g-comparison.html?still=1");
+  for (const shape of ["fuller", "ribbon"]) {
+    await expect(page.locator(`#${shape}-host`)).toHaveAttribute("data-enhanced", "true", { timeout: 15000 });
+  }
+  await page.screenshot({ path: resolve(captures, "comparison.png"), fullPage: true });
+  // Keep the decorative HTML frame separate from the reusable G fallback.
+  await page.addStyleTag({
+    content: "html, body { background: transparent !important; } .breakout-frame { visibility: hidden; }",
+  });
+  for (const shape of ["fuller", "ribbon"]) {
+    await page.locator(`#${shape}-host canvas`).screenshot({ path: resolve(captures, `${shape}-fallback.png`), omitBackground: true });
+  }
 });
 
 test("layouts fit small phones, tablets, and wide desktops in both languages", async ({

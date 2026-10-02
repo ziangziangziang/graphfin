@@ -130,25 +130,12 @@
   .breakout-frame {
     inset: 12% 10% 16% 14%;
   }
-  .breakout-shadow {
-    display: none;
-  }
-  .hero-fallback {
-    width: 86%;
-    max-height: 340px;
-    object-fit: contain;
-  }
   .visual-caption {
     bottom: 28px;
     left: 50%;
     transform: translateX(-50%);
     font-size: 8px;
     white-space: nowrap;
-  }
-  .motion-control {
-    bottom: 0;
-    right: 7%;
-    font-size: 9px;
   }
   .hero-bottom {
     height: 65px;
