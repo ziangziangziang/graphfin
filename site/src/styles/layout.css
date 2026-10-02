@@ -41,6 +41,9 @@
   .concept-label {
     font-size: 7px;
   }
+  .example-grid {
+    grid-column: 1 / -1;
+  }
 }
 @media (max-width: 760px) {
   .header {
@@ -163,6 +166,11 @@
   }
   .section-body p {
     font-size: 13px;
+  }
+  .example-grid {
+    grid-template-columns: 1fr;
+    gap: 28px;
+    margin-top: 0;
   }
   .concept,
   .section-aside {

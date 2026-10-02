@@ -1,7 +1,7 @@
-# Round G: two implemented forms
+# Round G: denser Fuller Lattice selected
 
-Approved implementation brief, 1 October 2026. Optical and material revision,
-2 October 2026.
+Approved implementation brief, 1 October 2026. Optical, material, foreground
+curve, and final Fuller selection/density revisions, 2 October 2026.
 
 The user approved developing both forms before deciding which to retain:
 a fuller carbon lattice with a round cross-section, and a thin open ribbon.
@@ -16,28 +16,28 @@ Both variants now use polished silver-grey metal on the same lattice topology.
 
 ## Review the result
 
-With the local development server running:
+The user selected Fuller Lattice as the only public visualization on 2 October,
+and requested a denser structure. The main site at `/graphfin/` now always uses
+Fuller, including old `?shape=ribbon` links, language changes, and all fallback
+paths. This is the single entry built for GitHub Pages.
 
-- `/graphfin/research/g-comparison.html`: both live forms side by side.
-- `/graphfin/?shape=fuller`: A in the complete landing page.
-- `/graphfin/?shape=ribbon`: B in the complete landing page.
+`/graphfin/research/g-comparison.html` remains available through `npm run dev`
+for local research. Its reference ribbon, comparison HTML, and comparison script
+are excluded from the production build. The Pages deployment uses a clean output,
+so any previously published comparison is removed on the next deployment.
 
-The same paths work under the production preview and the configured Pages base.
-Language switching retains the selected shape. The user selected Fuller Lattice
-on 2 October; it is now the default, including the no-JavaScript fallback.
-The ribbon remains available for comparison. The study does not add a shape
-picker to the public hero.
+![Selected denser Fuller Lattice, captured in the browser](current/fuller-hero.png)
 
-![Implemented forms, captured in the browser](current/comparison.png)
-
-| Form | Desktop | Mobile | Visual purpose |
+| Form | Desktop | Mobile | Status |
 | --- | --- | --- | --- |
-| A: fuller lattice | 480 nodes / 720 bonds | 256 nodes / 384 bonds | Round cross-section, more visible volume and layered reflections |
-| B: thin ribbon | 384 nodes / 528 bonds | 192 nodes / 256 bonds | Open sheet, lighter outline and clearer individual bonds |
+| Denser Fuller | 896 nodes / 1,344 bonds | 440 nodes / 660 bonds | Sole public visual |
+| Approved Fuller checkpoint | 480 nodes / 720 bonds | 256 nodes / 384 bonds | Preserved in `fc145ea1` |
+| Thin ribbon | 384 nodes / 528 bonds | 192 nodes / 256 bonds | Local research reference |
 
-Browser captures:
-[A desktop](current/fuller-desktop.png), [A mobile](current/fuller-mobile.png),
-[B desktop](current/ribbon-desktop.png), [B mobile](current/ribbon-mobile.png).
+Current browser captures: [Fuller desktop](current/fuller-desktop.png) and
+[Fuller mobile](current/fuller-mobile.png). Historical references:
+[earlier comparison](current/comparison.png),
+[ribbon desktop](current/ribbon-desktop.png), [ribbon mobile](current/ribbon-mobile.png).
 These show the actual Three.js implementation. The earlier
 [A concept](concepts/g-fuller.png) and [B concept](concepts/g-ribbon.png) are
 imagegen studies, with [saved prompts](concepts/prompts.md); their photographic
@@ -116,9 +116,30 @@ there is no progress-dependent opacity fade.
 Material phase is resampled by arc length through the visible depth range
 (z = −6 to +8.5). This keeps the foreground hexagons evenly spaced as the arm
 approaches the lens, instead of stretching a few cells into long streaks.
-The hidden ends use a smaller phase allocation. Desktop uses 48 longitudinal
-columns and mobile 32, adding cells for the extended foreground while preserving
-body legibility. A lookup table is built once and reused as the material flows.
+The hidden ends use a smaller phase allocation. Fuller now uses 64 longitudinal
+columns and 7 circumferential rows on desktop, and 44 × 5 on mobile. The prior
+48 × 5 and 32 × 4 budgets are preserved in checkpoint `fc145ea1`. This adds 87%
+and 72% more cells respectively without changing the tube radius or G outline.
+Node radii scale to 70% on desktop and 82% on mobile; bond radii scale to 82% and
+90%. World-space and projected clearance checks still require the same safety
+margins using the actual rendered radii. A lookup table is built once and reused
+as the material flows. The research ribbon keeps its 48/32 longitudinal columns.
+
+### Fuller foreground curve, after checkpoint `fc145ea1`
+
+The approved metal/optics version is preserved in commit `fc145ea1`
+(`feat(site): checkpoint approved fuller lattice`). The subsequent adjustment
+gives the approaching Fuller Lattice arm a small inward sweep:
+
+```text
+curl(u) = (1 − smoothstep(0, 0.15, u))²
+offsetXY = (−0.36, +0.12) × curl(u)
+```
+
+The offset eases into the round body without a tangent discontinuity. Depth,
+focus, material, and transport direction retain the approved settings. Each
+variant has its own arc-length lookup so spacing remains even along the new
+curve. The ribbon keeps its earlier centerline as a research reference.
 
 ## Optical cutoff revision
 
@@ -192,27 +213,29 @@ The manual pause button and its controller API are removed. The flow and signal
 are always on during an active page. The system's reduced-motion preference
 freezes camera, lattice motion, and signal; hidden/offscreen scenes also stop
 rendering to avoid wasting GPU work. Returning does not jump
-the animation clock. Resize preserves signal progress and the selected form.
+the animation clock. Resize preserves signal progress and forward-flow phase.
 
 ## Fallback and verification
 
-Each form has a static browser snapshot in `current/*-fallback.png`. The hero
-selects the matching image if WebGL, renderer import, or the context fails.
-The default fuller snapshot is also present in the HTML for no-JavaScript use.
-The comparison uses the same static snapshots when live rendering is unavailable.
-The decorative screen frame stays separate from the reusable images.
+The public site always uses `current/fuller-fallback.png` if WebGL, renderer
+import, or the context fails; that image is also in the HTML for no-JavaScript
+use. It is captured from the production renderer at a reproducible initial
+phase with reduced motion enabled, with a transparent background and separate
+decorative frame. The local comparison retains the earlier ribbon fallback.
 
-The browser capture test uses reduced motion and `?still=1` on the study page
-to hold a reproducible initial camera and signal phase. This switch is for
-research capture, not a new public motion control.
+The browser capture test writes review images to test results normally.
+`UPDATE_VISUALS=1` explicitly refreshes the checked-in Fuller previews and
+fallback; rebuild afterward to include the new fallback in the Pages artifact.
+The local comparison's `?still=1` remains a research capture aid only.
 
 Geometry checks cover both variants and quality tiers, degree/route topology,
 signal continuity over four minutes, roundness at the baseline projection,
 recycling boundaries outside the camera across two minutes of movement, optical
 near/far behaviour, absence of material fading, and node clearance.
-Browser checks cover both full-site routes, language and quality
-changes, two live comparison renderers, reduced motion, hidden/offscreen
-render gating, WebGL failure, context loss, and no-JavaScript content.
+Browser checks cover the sole Fuller site, legacy shape URLs, language and
+quality changes, exclusion of the comparison/ribbon from the Pages artifact,
+reduced motion, hidden/offscreen render gating, WebGL failure, context loss,
+and no-JavaScript content.
 
 Desktop targets 30 fps at DPR ≤ 1.75; mobile targets 24 fps at DPR ≤ 1.35.
 The comparison runs two small scenes, so it costs more than a single hero.
