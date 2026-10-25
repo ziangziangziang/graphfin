@@ -1,0 +1,38 @@
+:root { font-family: Inter, "Helvetica Neue", Arial, sans-serif; color: #eff0ec; background: #101315; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 1680px; margin: auto; padding: 32px clamp(20px, 4vw, 64px); }
+a { color: #c4cbc4; text-decoration: none; }
+a:hover { color: #fff; }
+a:focus-visible { outline: 2px solid #e6bb58; outline-offset: 5px; }
+.study-brand { font-size: 24px; font-weight: 700; letter-spacing: -1px; }
+.study-brand span { color: #e6bb58; }
+.eyebrow { margin-top: 38px; color: #e6bb58; font: 10px ui-monospace, monospace; letter-spacing: 2px; }
+h1 { font-size: clamp(30px, 4vw, 52px); letter-spacing: -2px; margin: 14px 0; }
+.study-intro { max-width: 620px; color: #a6aeab; font-size: 14px; line-height: 1.7; }
+.comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin-top: 34px; }
+.candidate { min-width: 0; border: 1px solid #ffffff1c; border-radius: 8px; overflow: hidden; }
+.candidate-heading { padding: 20px 22px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #ffffff1c; }
+.candidate-heading > div { display: flex; align-items: center; gap: 12px; }
+.candidate-index { color: #e6bb58; font: 12px ui-monospace, monospace; }
+h2 { margin: 0; font-size: 18px; font-weight: 500; }
+.candidate-heading a { font-size: 11px; white-space: nowrap; }
+.study-visual { position: relative; height: clamp(300px, calc(100svh - 400px), 610px); overflow: hidden; }
+.study-host { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
+.study-host canvas { display: block; width: 100%; height: 100%; }
+.breakout-frame { position: absolute; inset: 16% 13%; border: 1px solid #e6bb5845; box-shadow: 0 0 24px #e6bb5814; }
+.study-fallback { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+[data-renderer="webgl"][data-canvas-ready="true"] .study-host { opacity: 1; }
+[data-renderer="webgl"][data-canvas-ready="true"] .study-fallback { display: none; }
+.render-status { position: absolute; bottom: 8px; left: 22px; right: 22px; font-size: 11px; color: #a6aeab; }
+.render-status:empty { display: none; }
+.candidate-description { min-height: 72px; border-top: 1px solid #ffffff1c; margin: 0; padding: 18px 22px; color: #a6aeab; font-size: 12px; line-height: 1.7; }
+.study-footer { display: flex; justify-content: space-between; gap: 24px; padding: 24px 0 0; color: #a6aeab; font-size: 12px; line-height: 1.6; }
+.study-footer p { margin: 0; }
+@media (max-width: 760px) {
+  main { padding: 24px 18px; }
+  .comparison { grid-template-columns: 1fr; gap: 20px; }
+  .study-visual { height: 380px; }
+  .candidate-heading { padding: 16px; }
+  .study-footer { flex-direction: column; gap: 12px; }
+}

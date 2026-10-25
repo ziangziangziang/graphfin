@@ -10,7 +10,8 @@
   }
   .hero-visual {
     right: 0;
-    left: 45%;
+    left: 36%;
+    top: -6%;
   }
 }
 @media (max-width: 1050px) {
@@ -29,6 +30,7 @@
   .hero-visual {
     left: 39%;
     right: -13%;
+    top: -4%;
   }
   .hero-note {
     display: none;
@@ -38,6 +40,9 @@
   }
   .concept-label {
     font-size: 7px;
+  }
+  .example-grid {
+    grid-column: 1 / -1;
   }
 }
 @media (max-width: 760px) {
@@ -125,10 +130,8 @@
     height: 390px;
     margin-top: 5px;
   }
-  .hero-fallback {
-    width: 86%;
-    max-height: 340px;
-    object-fit: contain;
+  .breakout-frame {
+    inset: 12% 10% 16% 14%;
   }
   .visual-caption {
     bottom: 28px;
@@ -136,11 +139,6 @@
     transform: translateX(-50%);
     font-size: 8px;
     white-space: nowrap;
-  }
-  .motion-control {
-    bottom: 0;
-    right: 7%;
-    font-size: 9px;
   }
   .hero-bottom {
     height: 65px;
@@ -168,6 +166,11 @@
   }
   .section-body p {
     font-size: 13px;
+  }
+  .example-grid {
+    grid-template-columns: 1fr;
+    gap: 28px;
+    margin-top: 0;
   }
   .concept,
   .section-aside {

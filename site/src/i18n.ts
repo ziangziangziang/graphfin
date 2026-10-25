@@ -1,39 +1,49 @@
 const chinese: Record<string, string> = {
   skip: "跳转到正文",
-  whyNav: "为什么选择 GraphFin",
-  casesNav: "应用场景",
-  reliabilityNav: "可靠性",
+  whyNav: "能做什么",
+  casesNav: "示例",
+  reliabilityNav: "项目进展",
   docs: "文档",
   menu: "菜单",
-  eyebrow: "原生时序图数据库",
-  headlineOne: "关系与观测，",
-  headlineTwo: "融为一体。",
-  headlineThree: "洞见随之而生。",
-  description: "原生支持时间序列的图数据库，为关联金融智能而构建。",
-  explore: "探索 GraphFin",
+  eyebrow: "开源图数据库",
+  headlineOne: "关系和变化，",
+  headlineTwo: "",
+  headlineThree: "一库掌握",
+  description:
+    "把公司关系、股票价格和基金持仓放在一起。先找到相关对象，再看它们的数据怎样变化。",
+  explore: "了解它怎么用",
   readDocs: "阅读文档",
-  githubSource: "在 GitHub 查看开源代码",
-  structure: "结构之中，信号涌现",
-  pause: "暂停动画",
-  resume: "播放动画",
-  introduction: "初识 GRAPHFIN",
-  scroll: "沿着关系，发现更多",
-  native: "属性图 · 原生时间序列",
-  whyTitle: "让关联与历史相遇。",
+  githubSource: "在 GitHub 查看源码",
+  structure: "关系 + 时间序列",
+  introduction: "产品介绍",
+  scroll: "继续了解",
+  native: "关系查询 · 历史数据",
+  whyTitle: "相关的数据，放在一起。",
   whyText:
-    "关系告诉你去哪里找，观测告诉你发生了什么。GraphFin 将二者纳入同一数据模型，让顶点与边直接拥有原生时间序列字段。",
-  productLink: "了解数据模型",
-  casesTitle: "面向关联金融智能。",
-  casesText:
-    "公司、基金、证券与供应商，以及随时间变化的价格、持仓与风险敞口。投资分析是 GraphFin 这款通用数据库的首个主要应用场景。",
-  financeLink: "阅读金融示例",
-  casesAside: "关系 → 观测 → 洞见",
-  reliabilityTitle: "一个图，一个事务边界。",
+    "股票有自己的价格记录，基金和股票之间的持有关系有自己的持仓记录。沿着关系找到对象后，就能继续查询对应的历史数据。",
+  productLink: "看看数据怎么存",
+  conceptLabel: "基金 → 股票 · 历史价格",
+  casesTitle: "从这些问题开始。",
+  casesText: "示例整理中。每个示例会包含数据、查询步骤和结果。",
+  financeLink: "查看已有的金融示例代码",
+  casesAside: "数据 · 查询 · 结果",
+  financeCategory: "01 / 投资研究",
+  financeTitle: "基金持仓怎么变了？",
+  financeText: "从基金找到股票，查看一段时间内的持仓记录。",
+  equipmentCategory: "02 / 设备监测",
+  equipmentTitle: "这台设备的温度怎样变化？",
+  equipmentText: "找到设备上的传感器，读取过去一小时的温度记录。",
+  supplyCategory: "03 / 供应链",
+  supplyTitle: "交货时间变长了吗？",
+  supplyText: "找到一家公司的供应商，对比记录中的交货时间。",
+  examplePending: "示例待补充",
+  exampleContents: "示例数据 · 查询步骤 · 结果",
+  reliabilityTitle: "还在开发，欢迎试用。",
   reliabilityText:
-    "图记录与时序桶共享同一事务存储。GraphFin 目前处于 Alpha 阶段；恢复、隔离与复制的验证证据及其适用边界均有文档记录。",
-  reliabilityLink: "查看验证计划",
-  alpha: "0.1.0-ALPHA · 评估阶段",
-  tagline: "关系与观测，融为一体。",
+    "当前版本适合在测试环境中试用。重启、备份恢复等测试已有记录，更多稳定性测试还在继续。",
+  reliabilityLink: "查看测试进展",
+  alpha: "0.1.0-ALPHA · 适合试用评估",
+  tagline: "关系和变化，一库掌握",
   license: "开源 · Apache 2.0",
 };
 
@@ -42,12 +52,11 @@ export function setupLanguage(onChange: () => void) {
   const english = Object.fromEntries(
     elements.map((el) => [el.dataset.i18n!, el.textContent!]),
   ) as Record<string, string>;
-  english.resume = "Resume animation";
   const button = document.querySelector<HTMLButtonElement>("#language")!;
   let language: "en" | "zh" =
     new URL(location.href).searchParams.get("lang") === "zh" ? "zh" : "en";
   const text = (key: string) =>
-    (language === "zh" ? chinese[key] : english[key]) || english[key] || key;
+    (language === "zh" ? chinese[key] : english[key]) ?? english[key] ?? key;
 
   function apply() {
     document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
@@ -78,21 +87,21 @@ export function setupLanguage(onChange: () => void) {
       .setAttribute(
         "aria-label",
         language === "zh"
-          ? "石墨烯晶格中的连续金色信号"
-          : "A graphene lattice carrying a connected gold signal",
+          ? "金色光点沿着 G 形金属网格移动"
+          : "A metal G with a gold pulse moving through it",
       );
     document
       .querySelector("img.hero-fallback")!
       .setAttribute(
         "alt",
         language === "zh"
-          ? "GraphFin：G 形碳晶格，相连的金色键承载着信号。"
-          : "GraphFin: a carbon lattice shaped like a G, with connected gold bonds carrying a signal.",
+          ? "GraphFin：G 形金属网格，金色光点沿网格移动。"
+          : "GraphFin: a metal G with a gold pulse moving through it.",
       );
     document.title =
       language === "zh"
-        ? "GraphFin — 关系与观测，融为一体。"
-        : "GraphFin — Relationships and observations, together.";
+        ? "GraphFin — 关系和变化，一库掌握"
+        : "GraphFin — Query connections and track changes.";
     document
       .querySelector('meta[name="description"]')!
       .setAttribute("content", text("description"));

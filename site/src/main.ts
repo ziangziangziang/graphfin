@@ -1,26 +1,27 @@
 import "./style.css";
 import "./styles/layout.css";
 import { setupLanguage } from "./i18n";
+import { qualityFor } from "./scene/quality";
 import type { SceneController, SceneSection } from "./scene/scene";
 
 document.documentElement.classList.add("js");
 document.querySelector("#year")!.textContent = String(new Date().getFullYear());
 const menu = document.querySelector<HTMLButtonElement>("#menu")!;
 const navigation = document.querySelector<HTMLElement>("#navigation")!;
-const motion = document.querySelector<HTMLButtonElement>("#motion")!;
 const visual = document.querySelector<HTMLElement>("#hero-visual")!;
-const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+const sceneHost = document.querySelector<HTMLElement>("#scene-host")!;
 let controller: SceneController | undefined;
-let paused = false;
+sceneHost.dataset.shape = "fuller";
+visual.dataset.renderer = "webgl";
+visual.dataset.canvasReady = "false";
+sceneHost.dataset.quality = qualityFor(
+  window.innerWidth,
+  window.devicePixelRatio,
+).mobile
+  ? "mobile"
+  : "desktop";
 
-function updateMotionLabel() {
-  motion.dataset.i18n = paused ? "resume" : "pause";
-  motion.textContent = language.text(motion.dataset.i18n);
-  motion.setAttribute("aria-pressed", String(paused));
-  motion.hidden = !controller || reducedMotion.matches;
-}
-// setupLanguage applies synchronously, before the returned dictionary exists.
-const language = setupLanguage(() => queueMicrotask(updateMotionLabel));
+setupLanguage(() => {});
 
 menu.hidden = false;
 function closeMenu() {
@@ -41,17 +42,10 @@ document.addEventListener("keydown", (event) => {
     menu.focus();
   }
 });
-motion.addEventListener("click", () => {
-  paused = !paused;
-  controller?.setPaused(paused);
-  updateMotionLabel();
-});
-reducedMotion.addEventListener("change", updateMotionLabel);
-
 function fallback() {
   controller = undefined;
   visual.dataset.renderer = "static";
-  updateMotionLabel();
+  visual.dataset.canvasReady = "false";
 }
 
 let pageActive = true;
@@ -61,10 +55,7 @@ async function mountScene() {
   try {
     const { createScene } = await import("./scene/scene");
     if (!pageActive || generation !== initialization) return;
-    controller = createScene(document.querySelector("#scene-host")!, fallback);
-    controller.setPaused(paused);
-    visual.dataset.renderer = "webgl";
-    updateMotionLabel();
+    controller = createScene(sceneHost, fallback);
   } catch {
     fallback();
   }

@@ -28,6 +28,18 @@ npm run preview
 Open `http://127.0.0.1:4173/graphfin/`. Output goes to `site/dist/`.
 No API server, database, C++ build, or secret is needed.
 
+### Selected G form
+
+The denser Fuller Lattice is the only public visualization, including the
+no-JavaScript and WebGL-failure image. Older `?shape=ribbon` links also display
+Fuller; language switching and responsive quality never change the form.
+
+The earlier ribbon remains a local research reference at
+`/graphfin/research/g-comparison.html` through `npm run dev`. The comparison
+HTML, its script and the ribbon fallback are excluded from the production build.
+The approved brief, implementation details, concept images, and browser
+captures are documented in [research/g-implementation-study.md](research/g-implementation-study.md).
+
 ## Verification
 
 ```sh
@@ -41,48 +53,84 @@ On Linux, use `npx playwright install --with-deps chromium`.
 To use an existing local Chrome, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to its
 executable path. Tests start the production preview server automatically.
 
+To refresh the checked-in Fuller previews and transparent fallback after a
+visual change, run `UPDATE_VISUALS=1 npm run test:browser -- --grep "visual review captures"`
+and rebuild afterward to bundle the new image. Ordinary browser runs save
+captures under the ignored test-results directory.
+
 Unit checks cover carbon-node degree, welded seam topology, continuous signal
-connectivity over several cycles, bounded geometry, and mobile quality settings.
+connectivity over several cycles, bounded geometry, node collision clearance in
+world and screen space, and mobile quality settings.
 Browser checks cover production subpaths and assets, English/Chinese switching,
-mobile menu/keyboard behavior, breakpoint changes, reduced motion, pause/resume,
-WebGL failure, context loss, and useful content without JavaScript. They use
-software WebGL for reproducibility; this is not a real-device performance claim.
+mobile menu/keyboard behavior, Fuller-only rendering through legacy shape URLs,
+production exclusion of the research comparison, breakpoint changes, reduced
+motion, WebGL failure, context loss, and useful content without JavaScript.
+They use software WebGL for reproducibility; this is not a real-device
+performance claim.
 
 ## Architecture
 
 | File                                     | Responsibility                                                                             |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------ |
 | `index.html`                             | Complete English page, semantic navigation, section scaffolding, fallback image, ownership |
-| `src/main.ts`                            | Menu, motion control, lazy scene loading, section observer, page lifecycle                 |
+| `src/main.ts`                            | Menu, Fuller scene and fallback, lazy scene loading, section observer, page lifecycle    |
 | `src/i18n.ts`                            | Chinese translations, document language/title/metadata, shareable language state           |
 | `src/style.css`, `src/styles/layout.css` | Brand styling, responsive layouts, focus and reduced-motion styles                         |
-| `src/scene/geometry.ts`                  | Welded hexagonal strip, periodic seam, curved G/spiral mapping, end fade                   |
-| `src/scene/signal.ts`                    | Continuous travelling pulse along a closed route of real lattice edges                     |
-| `src/scene/lattice-mesh.ts`              | Instanced spheres/bonds, material fade, small procedural signal halos                      |
-| `src/scene/camera.ts`                    | Composition fitting and restrained pointer parallax                                        |
+| `src/scene/geometry.ts`                  | Welded hexagonal lattice, circular G and smooth inward bend, sheet/tube sweep, real depth    |
+| `src/scene/signal.ts`                    | Stateful value-noise pulse with connected route, thermal afterimage, echo, and fork         |
+| `src/scene/lattice-mesh.ts`              | Instanced spheres/bonds, procedural material wear, damped follow-through, local light spill |
+| `src/scene/camera.ts`                    | Composition fitting, gentle orbit/dolly, and restrained pointer parallax                     |
 | `src/scene/quality.ts`                   | Geometry, resolution, and frame-rate budgets                                               |
-| `src/scene/scene.ts`                     | Renderer, lighting, animation clock, visibility, resize, resource cleanup                  |
-| `vite.config.ts`                         | Pages base path and branch-aware documentation links                                       |
+| `src/scene/focus-pass.ts`                | Thin-lens blur radius, soft aperture filtering of colour and coverage, reusable blur targets |
+| `src/scene/scene.ts`                     | Renderer, IBL/tone mapping, depth focus and desktop bloom, animation clock, visibility, resize, cleanup |
+| `research/g-comparison.html`, `src/research-comparison.ts` | Local-only comparison with the archived ribbon reference                       |
+| `vite.config.ts`                         | Single public entry, Pages base path, and branch-aware documentation links                    |
 
-`SceneController` exposes `setSection`, `setPaused`, and `dispose`. Sections have
+`SceneController` exposes `setSection` and `dispose`. Sections have
 `data-scene-section` attributes and communicate through one observer. Future
 entity labels, query highlights, failure/restart sequences, or multi-graph
 transitions can extend this boundary without coupling geometry to page copy.
-The first milestone only animates the introduction; the following sections are
-intentionally short, with links to existing source documentation and examples.
+The first milestone only animates the introduction. The English and Chinese
+copy explains the product through stock prices and fund holdings. Three
+clearly marked example placeholders reserve space for sample data, queries,
+and results covering holdings, equipment temperature, and delivery times.
+The existing finance script and product/testing documentation remain linked.
 
 ### Rendering budgets and lifecycle
 
-- Desktop: 272 nodes, 374 bonds, maximum DPR 1.75, 30 fps.
-- Mobile (viewport at most 760px): 144 nodes, 192 bonds, simpler spheres and
-  cylinders, maximum DPR 1.35, 24 fps, no pointer parallax.
-- Two instanced meshes and one points layer. No image textures, postprocessing,
-  physics, or continuously growing geometry. Three.js is the only runtime dependency.
-- The strip moves through a fixed parameter window. Its welded seam recycles
-  indefinitely; edges crossing the visible window boundary are suppressed, and
-  the ends disappear using opacity and fog. Buffers and instance counts remain fixed.
+- Desktop Fuller: 896 nodes and 1,344 bonds (64 longitudinal columns × 7
+  circumferential rows), up 87% from the approved 480-node lattice. Maximum
+  DPR 1.75 and 30 fps.
+- Mobile (viewport at most 760px): 440 nodes and 660 bonds (44 × 5), up 72%
+  from 256 nodes. Simpler spheres and cylinders, maximum DPR 1.35, 24 fps,
+  reduced automatic camera travel, and no pointer parallax.
+- The tube radius stays 0.38 world units. Node radii use 70% of the earlier
+  desktop scale and 82% on mobile; bond radii use 82% and 90%, respectively.
+  This preserves clear gaps and reflections within the denser mesh.
+- Two instanced meshes and one points layer. No image textures, physics, or
+  continuously growing geometry. Three.js is the only runtime dependency.
+- Lighting uses a procedural `RoomEnvironment` IBL, ACES filmic tone mapping,
+  a warm key and cool rim reflected by polished metal. Only the signal emits
+  light; there are no painted emissive rims on inactive metal.
+  Both tiers use a depth-texture focus pass biased slightly toward the viewer.
+  Eight overlapping blur-radius bands spread linear colour and coverage with
+  a soft aperture profile. Desktop adds `UnrealBloomPass` for the gold signal;
+  mobile omits bloom. IBL bake and the post chain are created after the first frame
+  so software GL cannot stall mount.
+- The lattice is an infinite parameter stream. Its sites continuously advance
+  toward the viewer from the recessed central arm, pass the forward upper-right
+  arm, and recycle through the far cutoff. The periodic return bond is hidden
+  because it would span the open G aperture. Geometry continues through the
+  lens and beyond the rear clip plane; material opacity never fades. Optical
+  defocus grows before these hidden recycling boundaries. Buffers and instance
+  counts remain fixed, and blur targets are reused between frames.
+- Material phase is resampled by arc length through the visible depth range,
+  preventing the foreground cells from stretching into rods as they approach.
+  Additional longitudinal cells cover the extended arm at both quality tiers.
 - Hidden documents and offscreen scenes stop the animation loop. Elapsed time
-  does not jump on resume. Manual pause and reduced motion freeze the composition.
+  does not jump on resume. The system's reduced-motion preference freezes the
+  composition. There is no manual pause button; the always-on flow only stops
+  when the page is hidden/offscreen or reduced motion is requested.
 - Resize updates the camera and pixel ratio; crossing the mobile breakpoint
   disposes and rebuilds the small mesh set. Page exit/context loss frees meshes,
   materials, renderer, observers, listeners, and animation frames. Back/forward
@@ -90,45 +138,62 @@ intentionally short, with links to existing source documentation and examples.
 
 ### Assets and visual compromises
 
-The source assets are `../assets/logo.svg`, `../assets/logo.png`, and
-`../assets/hero.png` (there is no `asset/hero.png`). They are unmodified. The site
-uses the SVG in the header/favicon and the existing hero PNG as the static
-fallback. Vite fingerprints and rebases asset URLs. No external font/CDN is used.
+The original brand assets in `../assets/` are unmodified. The header/favicon
+use `logo.svg`; `research/current/fuller-fallback.png` is a transparent snapshot
+of the selected live Fuller renderer, shared by all fallback paths including
+no JavaScript. The imagegen concept references stay in `research/concepts/` and are not used as live-render evidence.
+Vite fingerprints and rebases asset URLs. No external font/CDN is used.
 
-This is a stylized carbon ribbon, not a chemically exact molecular model.
-Perspective, progressively fading ends, and fog approximate depth of field;
-there is no expensive blur/bloom postprocessing. The gold halo is a procedural
-soft point attached to active graph nodes, never a separate waveform. Reduced
-motion uses the same static 3D composition when supported; unavailable WebGL,
-context loss, or a failed renderer import leaves the existing hero image visible.
+These are stylized lattices with a reflective metal finish, inspired by the
+original carbon structure rather than chemically exact molecular models.
+A circular 300-degree outer arc and broad inward bend keep the G round and
+legible. The upper-right head sits in front of the middle plane and the inner
+tip sits behind it. Centerline perspective compensation preserves the round
+outline at the baseline view; cross-section width, node scale, occlusion, and
+camera travel retain real 3D depth. A fixed 40-degree perspective field of view
+avoids changing the lens while the camera gently orbits and moves closer/farther.
+The focus pass keeps the middle arc legible while foreground silhouettes expand
+and the receding center shrinks into defocus. Its image-space approximation uses
+a soft aperture, not a ray-traced lens. A decorative breakout frame establishes
+the screen plane. Materials use a silver-grey base, near-unit metalness,
+roughness around 0.2, and subtle surface variation. Studio reflections change
+with the moving surface and camera;
+focus and bloom use post-processing. The signal integrates value-noise pacing with stalls, surges, a
+short thermal afterimage, occasional forked heat, and a soft echo while its
+active gold trail remains one connected route. A motivated amber point light
+follows the head and spills onto neighboring bonds. Static offsets, a localized
+dull bend, thickness variation, and damped follow-through keep the lattice from
+looking CAD-perfect. The gold halo is a procedural soft point attached to active
+and residual-heat graph nodes, never a separate waveform. Reduced motion uses
+the same static 3D composition when supported; unavailable WebGL, context loss,
+or a failed renderer import leaves the Fuller static snapshot visible.
 
-The legacy PNG is about 1.1 MB. The deferred renderer bundle is about 136 KB
-gzipped. A future optimized fallback derivative can reduce first-load transfer
-without altering the original artwork. Vite reports the renderer's uncompressed
-chunk above its default 500 KB advisory threshold; it is loaded separately from
-the small page/navigation bundle.
+The deferred renderer bundle is about 147 KB gzipped. Vite reports its
+uncompressed chunk above the default 500 KB advisory threshold; it is loaded
+separately from the small page/navigation bundle.
 
 ## GitHub Pages
 
 `.github/workflows/documentation.yml` builds this site and deploys it to the
 `gh-pages` branch (same rule as the inherited Docusaurus workflow). It is the
-only Pages workflow; unrelated CI and C++ workflows are untouched.
+only Pages deployment workflow.
 
 1. In repository **Settings → Pages → Build and deployment**, select
    **Deploy from a branch** with branch `gh-pages` (root). The workflow
    force-updates that branch on each deploy.
-2. Merge these changes into `main`. Changes to `site/`, `assets/`, or this
-   workflow trigger deployment. Pull requests build and test but never deploy.
+2. Merge these changes into `main`. Changes to `site/` trigger deployment.
+   The separate Website checks workflow validates pull requests; it does not deploy.
 3. The workflow installs locked dependencies, runs unit checks, type-checks and
    builds, runs browser tests, then publishes `site/dist/` to `gh-pages` via
    `JamesIves/github-pages-deploy-action` (`clean: true` so stale Docusaurus
-   files are removed). `contents: write` is limited to the deploy job.
+   files and the superseded comparison page are removed). The published build
+   contains one HTML entry and one G fallback, with no ribbon assets.
 4. The expected URL is `https://ziangziangziang.github.io/graphfin/`.
    A manual **GraphFin website** workflow run on `main` can also deploy.
 
-The first successful run after the workflow is on `main` replaces the legacy
-site at that URL; old generated Docusaurus URLs are not maintained by this
-milestone.
+Deployment replaces the previous site at that URL with this build; old
+generated Docusaurus URLs and the research comparison are not maintained as
+public routes.
 
 ### Base path and documentation source
 

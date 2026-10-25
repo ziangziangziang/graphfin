@@ -19,7 +19,11 @@ export const smoothstep = (low: number, high: number, value: number) => {
 export const wrap = (value: number) => ((value % 1) + 1) % 1;
 
 /** Shared corners are welded before curving the sheet, preserving true hexagons. */
-export function createLattice(columns: number, rows: number): Lattice {
+export function createLattice(
+  columns: number,
+  rows: number,
+  tubular = false,
+): Lattice {
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
   const corners = new Map<string, number>();
@@ -32,13 +36,17 @@ export function createLattice(columns: number, rows: number): Lattice {
       for (let k = 0; k < 6; k++) {
         const angle = (k * Math.PI) / 3;
         const x = (((q * 1.5 + Math.cos(angle)) % period) + period) % period;
-        const y = height * (r + (q % 2) / 2) + Math.sin(angle);
+        const rawY = height * (r + (q % 2) / 2) + Math.sin(angle);
+        const y = tubular ? wrap(rawY / (height * rows)) * height * rows : rawY;
         const key = `${x.toFixed(4)},${y.toFixed(4)}`;
         let id = corners.get(key);
         if (id === undefined) {
           id = nodes.length;
           corners.set(key, id);
-          nodes.push({ u: x / period, v: y - (height * (rows - 0.5)) / 2 });
+          nodes.push({
+            u: x / period,
+            v: y - (height * (rows - (tubular ? 0 : 0.5))) / 2,
+          });
         }
         cell.push(id);
       }
@@ -64,7 +72,8 @@ export function createLattice(columns: number, rows: number): Lattice {
     (best, node, i) => (node.u < nodes[best].u ? i : best),
     0,
   );
-  // Welded longitudinal seam: recycle the sheet forever without a moving gap.
+  // Periodic topology lets lattice sites stream through the G forever. The
+  // mesh suppresses whichever bonds currently cross the recycling boundary.
   const end = neighbors[start].find((i) => nodes[i].u - nodes[start].u > 0.5)!;
   const parent = new Int32Array(nodes.length).fill(-1);
   const queue = [start];
@@ -84,22 +93,152 @@ export function createLattice(columns: number, rows: number): Lattice {
   return { nodes, edges, route };
 }
 
-/** A shallow helix seen almost along its axis; the inward curl suggests the G. */
-export function positionOnSpiral(
-  u: number,
-  v: number,
-): [number, number, number] {
-  // Slow the angular sweep as the ribbon turns inward, leaving the G's aperture
-  // open on the right. The two ends retreat along the depth axis into the fade.
-  const angle = 0.15 + u * 7.45 - 3.8 * smoothstep(0.68, 1, u) * (u - 0.68);
-  const radius = 2.15 - 1.7 * smoothstep(0.72, 1, u) + v * 0.19;
+export type ShapeVariant = "fuller" | "ribbon";
+
+
+const RADIUS = 2.24;
+const ARC_END = 0.82;
+const CAMERA_DISTANCE = 10.3;
+
+function centerline(u: number): [number, number] {
+  if (u <= ARC_END) {
+    const angle = Math.PI / 6 + (u / ARC_END) * (Math.PI * 5 / 3);
+    return [Math.cos(angle) * RADIUS, Math.sin(angle) * RADIUS];
+  }
+  const t = (u - ARC_END) / (1 - ARC_END);
+  const s = 1 - t;
+  // A broad cubic bend shares the circle's tangent before turning inward.
+  const x = Math.cos(Math.PI / 6) * RADIUS;
+  const y = -RADIUS / 2;
   return [
-    Math.cos(angle) * radius,
-    Math.sin(angle) * radius + (u - 0.5) * 0.85,
-    (u - 0.5) * 3.0 + v * 0.14 + Math.sin(angle) * 0.22,
+    s ** 3 * x + 3 * s * s * t * (x + 0.43) + 3 * s * t * t * 1.62 + t ** 3 * 0.04,
+    s ** 3 * y + 3 * s * s * t * (y + 0.745) + 3 * s * t * t * 0.12 + t ** 3 * 0.12,
   ];
 }
 
-export function visibility(u: number): number {
-  return smoothstep(0.015, 0.16, u) * (1 - smoothstep(0.82, 0.985, u));
+/** Positive z is toward the lens; decreasing u carries the lattice forward. */
+export function centerOnSpiral(
+  u: number,
+  variant: ShapeVariant = "ribbon",
+): [number, number, number] {
+  const point = centerline(u);
+  const depth =
+    2.62 * Math.max(0, 1 - u / 0.32) ** 2 -
+    2.57 * smoothstep(0.77, 1, u) +
+    0.36 * (0.5 - u);
+  // Compensate the centerline's perspective stretch, while spheres, ribbon
+  // width and overlaps retain real depth. The camera moves around this view.
+  const scale = 1 - depth / CAMERA_DISTANCE;
+  // Continue past the legible G, through the lens and beyond the rear clip
+  // plane. Do not perspective-compensate these extensions: the approaching
+  // arm grows naturally and leaves the sensor; the rear arm gets smaller.
+  const nearExtension = 18 * Math.max(0, 1 - u / 0.11) ** 3;
+  const farExtension = 60 * smoothstep(0.92, 1, u) ** 3;
+  // Ease the fuller foreground arm into a gentle inward curl. The squared
+  // blend joins the round body without a kink; depth and optical focus stay
+  // unchanged, and the original ribbon remains a research reference.
+  const curl = variant === "fuller" ? (1 - smoothstep(0, 0.15, u)) ** 2 : 0;
+  return [
+    point[0] * scale - 0.36 * curl,
+    point[1] * scale + 0.12 * curl,
+    depth + nearExtension - farExtension,
+  ];
+}
+
+// Parameter speed is not distance along the metal. Distribute cells by arc
+// length through the visible volume, so the foreground extension doesn't pull
+// a handful of hexagons into long rods. Outside that volume only a small phase
+// budget is needed to recycle the hidden geometry.
+const FLOW_SAMPLES = 2048;
+function createFlowDistance(variant: ShapeVariant): Float64Array {
+  const distance = new Float64Array(FLOW_SAMPLES + 1);
+  const flowPoint = (u: number) => {
+    const p = centerOnSpiral(u, variant);
+    p[2] = Math.max(-6, Math.min(8.5, p[2]));
+    return p;
+  };
+  let previous = flowPoint(0);
+  for (let i = 1; i <= FLOW_SAMPLES; i++) {
+    const p = flowPoint(i / FLOW_SAMPLES);
+    distance[i] = distance[i - 1] + Math.max(
+      8 / FLOW_SAMPLES,
+      Math.hypot(...p.map((value, axis) => value - previous[axis])),
+    );
+    previous = p;
+  }
+  return distance;
+}
+const flowDistances = {
+  fuller: createFlowDistance("fuller"),
+  ribbon: createFlowDistance("ribbon"),
+};
+
+/** Map periodic material travel to distance along the visible G. */
+export function parameterForFlow(phase: number, variant: ShapeVariant = "ribbon"): number {
+  const flowDistance = flowDistances[variant];
+  const distance = Math.max(0, Math.min(1, phase)) * flowDistance[FLOW_SAMPLES];
+  let low = 0;
+  let high = FLOW_SAMPLES;
+  while (high - low > 1) {
+    const middle = (low + high) >>> 1;
+    if (flowDistance[middle] < distance) low = middle;
+    else high = middle;
+  }
+  const fraction = (distance - flowDistance[low]) / (flowDistance[high] - flowDistance[low]);
+  return (low + fraction) / FLOW_SAMPLES;
+}
+
+/** Shared round G with either a welded tube or an open, lightly rolled sheet. */
+export function positionOnSpiral(
+  u: number,
+  v: number,
+  variant: ShapeVariant = "ribbon",
+  rows = 3,
+): [number, number, number] {
+  const before = centerOnSpiral(Math.max(0, u - 0.001), variant);
+  const after = centerOnSpiral(Math.min(1, u + 0.001), variant);
+  const point = centerOnSpiral(u, variant);
+  const tangent = after.map((value, axis) => value - before[axis]);
+  const length = Math.hypot(...tangent) || 1;
+  const [tx, ty, tz] = tangent.map((value) => value / length);
+  const planar = Math.hypot(tx, ty) || 1;
+  const nx = -ty / planar;
+  const ny = tx / planar;
+  // N lies in the image plane; B completes an orthonormal 3D sweep frame.
+  const bx = -tz * ny;
+  const by = tz * nx;
+  const bz = tx * ny - ty * nx;
+  let lateral: number;
+  let lift: number;
+  if (variant === "fuller") {
+    const angle = (v / (rows * Math.sqrt(3))) * Math.PI * 2;
+    lateral = Math.cos(angle) * 0.38;
+    lift = Math.sin(angle) * 0.38;
+  } else {
+    const width = v * 0.145;
+    const lean = 0.34 + Math.sin(u * Math.PI * 2) * 0.2;
+    lateral = width * Math.cos(lean);
+    lift = width * Math.sin(lean);
+  }
+  const sag = Math.sin(u * 27 + v * 1.7) * 0.004;
+  return [
+    point[0] + nx * lateral + bx * lift + sag,
+    point[1] + ny * lateral + by * lift,
+    point[2] + bz * lift + sag * 0.4,
+  ];
+}
+
+export function crossingScale(u: number): number {
+  return 1 - smoothstep(0.85, 1, u) * 0.08;
+}
+
+export function heroFlaw(u: number): number {
+  const distance = (wrap(u) - 0.64) / 0.115;
+  return Math.exp(-(distance * distance));
+}
+
+// Material never fades with progress. Recycling happens outside the camera;
+// the only visible loss of detail comes from optical defocus and distance.
+export function visibility(_u: number): number {
+  return 1;
 }
