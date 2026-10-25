@@ -68,8 +68,9 @@ jobs:
           fi
 
   # ---------------------------------------------------------------------------
-  # Fast checks — PR and main (~1–2 min): lint + typecheck + unit only.
-  # No C++ build here; the targeted C++ gate lives in pr_engine_gate below.
+  # Fast checks — PR and main (~1–2 min): lint and documentation checks.
+  # Website checks live in site.yml and run only for site/ changes.
+  # The targeted C++ gate lives in pr_engine_gate below.
   # ---------------------------------------------------------------------------
   lint:
     runs-on: ubuntu-latest
@@ -85,27 +86,6 @@ jobs:
         # logic are extracted from this file at test time, so a filter edit
         # that lets engine PRs skip the gate fails here instead of silently.
         run: python3 test/check_pr_filter.py
-
-  site:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: site
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: site/package-lock.json
-      - name: Install
-        run: npm ci
-      - name: Typecheck
-        run: npx tsc --noEmit
-      - name: Unit tests
-        run: npm test
 
   # ---------------------------------------------------------------------------
   # PR-only: targeted C++ build + pr-unit slice (series/sharding/admission +

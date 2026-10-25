@@ -2,7 +2,7 @@ name: GraphFin website
 on:
   push:
     branches: [main]
-    paths: ["site/**", "assets/**", ".github/workflows/documentation.yml"]
+    paths: ["site/**"]
   workflow_dispatch:
 
 permissions:

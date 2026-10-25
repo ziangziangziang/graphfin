@@ -1,0 +1,38 @@
+name: Website checks
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ["site/**"]
+  push:
+    branches: [main]
+    paths: ["site/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: site-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  site:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Unit tests
+        run: npm test
