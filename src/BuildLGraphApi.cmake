@@ -123,9 +123,7 @@ target_include_directories(${TARGET_LGRAPH} PUBLIC
 if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     target_link_libraries(${TARGET_LGRAPH} PUBLIC
             vsag
-            libgomp.a
-            -static-libstdc++
-            -static-libgcc
+            gomp
             libstdc++fs.a
             ${Boost_LIBRARIES}
             -Wl,-Bdynamic
@@ -137,14 +135,14 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
             pthread
             rt
             z
-            /opt/OpenBLAS/lib/libopenblas.a
+            ${LGRAPH_ROOT_DIR}/deps/install/OpenBLAS/lib/libopenblas.a
             faiss
             )
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     if (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
         target_link_libraries(${TARGET_LGRAPH} PUBLIC
                 vsag
-                /opt/OpenBLAS/lib/libopenblas.a
+                ${LGRAPH_ROOT_DIR}/deps/install/OpenBLAS/lib/libopenblas.a
                 faiss
                 ${Boost_LIBRARIES}
                 omp
@@ -155,7 +153,7 @@ elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     else ()
         target_link_libraries(${TARGET_LGRAPH} PUBLIC
                 vsag
-                /opt/OpenBLAS/lib/libopenblas.a
+                ${LGRAPH_ROOT_DIR}/deps/install/OpenBLAS/lib/libopenblas.a
                 faiss
                 rt
                 omp

@@ -137,3 +137,8 @@ REPORT.md
 TEST-REMOTE.md
 
 site/research/
+
+# Low-memory host build scaffolding: downloaded toolchain + compiler logs
+.clangpkg/
+.clangpkg12/
+.build-logs/

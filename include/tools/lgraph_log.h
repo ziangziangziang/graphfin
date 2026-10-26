@@ -18,14 +18,30 @@
 #include <string>
 #include <iostream>
 #include <boost/date_time/posix_time/posix_time.hpp>
-#include <boost/log/common.hpp>
-#include <boost/log/expressions.hpp>
-#include <boost/log/attributes.hpp>
-#include <boost/log/sinks.hpp>
+// Boost.Log is pulled in header-by-header rather than through boost/log/common.hpp
+// and boost/log/sinks.hpp: the umbrella headers drag in every sink, every
+// attribute factory and every expression formatter, which costs ~170 MB of AST
+// in every translation unit that only needs the handful of facilities used
+// below.
+#include <boost/log/core.hpp>
+#include <boost/log/attributes/clock.hpp>
+#include <boost/log/attributes/constant.hpp>
+#include <boost/log/attributes/current_thread_id.hpp>
+#include <boost/log/attributes/value_extraction.hpp>
+#include <boost/log/expressions/attr.hpp>
+#include <boost/log/expressions/keyword.hpp>
+#include <boost/log/expressions/formatters/stream.hpp>
+#include <boost/log/expressions/formatters/date_time.hpp>
 #include <boost/log/support/date_time.hpp>
+#include <boost/log/sinks/sync_frontend.hpp>
+#include <boost/log/sinks/text_file_backend.hpp>
+#include <boost/log/sinks/text_ostream_backend.hpp>
 #include <boost/log/sources/logger.hpp>
+#include <boost/log/sources/severity_logger.hpp>
+#include <boost/log/sources/global_logger_storage.hpp>
+#include <boost/log/sources/record_ostream.hpp>
 #include <boost/log/utility/manipulators/add_value.hpp>
-#include <boost/phoenix/bind/bind_function.hpp>
+#include <boost/phoenix/operator.hpp>
 #include <boost/core/null_deleter.hpp>
 #include "tools/json.hpp"
 
