@@ -39,6 +39,7 @@
 #include "cypher/rewriter/PushDownFilterAstRewriter.h"
 #include "cypher/execution_plan/clause_read_only_decider.h"
 
+#include "bolt/connection.h"
 #include "server/bolt_session.h"
 
 namespace cypher {

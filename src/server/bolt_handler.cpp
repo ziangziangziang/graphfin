@@ -25,6 +25,10 @@
 #include "bolt_raft/raft_driver.h"
 #include "bolt_raft/bolt_raft.pb.h"
 
+#ifndef _WIN32
+#include "cypher/execution_plan/scheduler.h"
+#endif
+
 using namespace lgraph_api;
 namespace bolt {
 geax::frontend::Expr* ConvertParameters(geax::common::ObjectArenaAllocator &obj_alloc_,

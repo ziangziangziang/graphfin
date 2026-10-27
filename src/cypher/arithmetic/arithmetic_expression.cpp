@@ -25,6 +25,8 @@
 #include <utility>
 #include <vector>
 #include <regex>
+#include <boost/algorithm/string/classification.hpp>
+#include <boost/algorithm/string/split.hpp>
 #include "cypher/cypher_exception.h"
 #include "cypher/cypher_types.h"
 #include "cypher/procedure/utils.h"
