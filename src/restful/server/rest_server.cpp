@@ -12,9 +12,8 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
 
-#include <set>
-
 #include <pplx/threadpool.h>
+#include <set>
 
 #include "fma-common/file_system.h"
 #include "fma-common/fma_stream.h"
