@@ -13,16 +13,23 @@
 # The PCH chain has to be compiled with *exactly* the same flags as the
 # translation units that use it, otherwise clang rejects it ("OpenMP support
 # and version of OpenMP differs in PCH file vs. current file").
-R=/home/pdfexe/graphfin
-B=$R/build
-CLANGDIR=$R/.clangpkg
+R=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+B=${BUILD_DIR:-$R/build}
+CLANGDIR=${LGRAPH_CLANG_ROOT:-$R/.clangpkg}
 SHIM=$CLANGDIR/include-shim
-GCCDIR=/usr/lib/gcc/x86_64-redhat-linux/10
+# The GCC internal include directory that clang's shim mirrors. Derive it from
+# the active compiler instead of hardcoding the distro's GCC 10 path.
+GCCDIR=${GCCDIR:-$(gcc -print-file-name=include 2>/dev/null | sed 's#/include$##')}
 export LD_LIBRARY_PATH=$CLANGDIR/usr/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 
 # Pull CXX_DEFINES / CXX_INCLUDES / CXX_FLAGS straight out of CMake's
 # flags.make so the PCH chain can never drift from the real build.
 FLAGS_MAKE=${FLAGS_MAKE:-$B/src/CMakeFiles/lgraph_server_lib.dir/flags.make}
+if [ ! -f "$FLAGS_MAKE" ]; then
+  echo "flags.make not found: $FLAGS_MAKE" >&2
+  echo "Configure the build first (cmake -S \"$R\" -B \"$B\" ...)." >&2
+  exit 1
+fi
 _cmake_flags() { grep "^$1" "$FLAGS_MAKE" | sed "s/^$1 = //"; }
 
 CXX_DEFINES=$(_cmake_flags CXX_DEFINES)
@@ -55,6 +62,11 @@ while IFS= read -r line; do PCH_FLAGS+=("$line"); done < <(_norm_flags $CXX_DEFI
 PCH_FLAGS+=("-w" "-fno-omit-frame-pointer")
 
 CLANG=$CLANGDIR/usr/bin/clang++
+if [ ! -x "$CLANG" ]; then
+  echo "clang++ not found at $CLANG" >&2
+  echo "Set LGRAPH_CLANG_ROOT to an LLVM 17 tree (expected layout: <root>/usr/bin/clang++)." >&2
+  exit 1
+fi
 CLANG_COMMON=("--gcc-install-dir=$GCCDIR" "-I$SHIM" "-I$GCCDIR/include")
 
 # Push the page cache out of RAM so the kernel can hand cold pages to the

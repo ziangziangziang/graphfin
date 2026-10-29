@@ -135,14 +135,14 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
             pthread
             rt
             z
-            ${LGRAPH_ROOT_DIR}/deps/install/OpenBLAS/lib/libopenblas.a
+            ${LGRAPH_OPENBLAS_LIBRARY}
             faiss
             )
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     if (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
         target_link_libraries(${TARGET_LGRAPH} PUBLIC
                 vsag
-                ${LGRAPH_ROOT_DIR}/deps/install/OpenBLAS/lib/libopenblas.a
+                ${LGRAPH_OPENBLAS_LIBRARY}
                 faiss
                 ${Boost_LIBRARIES}
                 omp
@@ -153,7 +153,7 @@ elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     else ()
         target_link_libraries(${TARGET_LGRAPH} PUBLIC
                 vsag
-                ${LGRAPH_ROOT_DIR}/deps/install/OpenBLAS/lib/libopenblas.a
+                ${LGRAPH_OPENBLAS_LIBRARY}
                 faiss
                 rt
                 omp

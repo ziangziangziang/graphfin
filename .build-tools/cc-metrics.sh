@@ -15,18 +15,23 @@
 #     is RAM-neutral on this host and cannot be used to create headroom.
 #   * The cypher library is prebuilt with its own clang PCH (op.h); keep
 #     using it and keep its flag combination untouched.
-L=/home/pdfexe/graphfin/.build-logs
-R=/home/pdfexe/graphfin
-B=$R/build
-CLANG=$R/.clangpkg/usr/bin/clang++
+R=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+L=${LGRAPH_BUILD_LOGS:-$R/.build-logs}
+B=${BUILD_DIR:-$R/build}
+CLANGDIR=${LGRAPH_CLANG_ROOT:-$R/.clangpkg}
+CLANG=$CLANGDIR/usr/bin/clang++
 CYPHER_PCH=$B/op_pch.h.pch
-SHIM=$R/.clangpkg/include-shim
-GCCDIR=/usr/lib/gcc/x86_64-redhat-linux/10
+SHIM=$CLANGDIR/include-shim
+GCCDIR=${GCCDIR:-$(gcc -print-file-name=include 2>/dev/null | sed 's#/include$##')}
 TU_TIMEOUT=${TU_TIMEOUT:-2400}
 ATTEMPTS=${ATTEMPTS:-3}
 mkdir -p "$L"
 ERR=$(mktemp "$L/cc.XXXXXX")
-export LD_LIBRARY_PATH=$R/.clangpkg/usr/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+if [ ! -x "$CLANG" ]; then
+  echo "cc-metrics: clang++ not found at $CLANG (set LGRAPH_CLANG_ROOT)" >&2
+  exit 127
+fi
+export LD_LIBRARY_PATH=$CLANGDIR/usr/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 
 # Push the page cache out of RAM so the kernel can hand cold pages to the
 # compiler instead of OOM-killing it.

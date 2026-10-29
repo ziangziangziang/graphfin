@@ -15,11 +15,27 @@
 # "materialise the parent + parse the new headers", so a long chain of small
 # levels has a lower worst case than one big level.
 set -uo pipefail
-R=/home/pdfexe/graphfin
-B=$R/build
-L=$R/.build-logs
-source "$R/.build-tools/flags.sh"
+R=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+B=${BUILD_DIR:-$R/build}
+L=${LGRAPH_BUILD_LOGS:-$R/.build-logs}
+source "$R/.build-tools/flags.sh" || exit 1
 mkdir -p "$L"
+
+# The chain is expensive to rebuild (minutes and ~1 GB peak). Reuse it while
+# the script, the flag normaliser and the CMake flags are unchanged. Hash the
+# contents: a reconfigure rewrites flags.make even when the flags are identical.
+# Header edits are not part of the hash; rerun with FORCE=1 after changing one,
+# otherwise clang rejects the stale family PCH that includes it.
+_pch_chain_hash() {
+  cat "$0" "$R/.build-tools/flags.sh" "$FLAGS_MAKE" 2>/dev/null | sha256sum | cut -d' ' -f1
+}
+PCH_HASH=$(_pch_chain_hash)
+if [ "${FORCE:-0}" != "1" ] && [ -f "$L/pch-chain.stamp" ] \
+   && [ "$(cat "$L/pch-chain.stamp")" = "$PCH_HASH" ] \
+   && [ -f "$B/pch_srv.h.pch" ]; then
+  echo "PCH chain up to date ($PCH_HASH)"
+  exit 0
+fi
 
 # --- family definitions -------------------------------------------------
 printf '#include "tools/lgraph_log.h"\n' > "$B/pch_base.h"
@@ -166,4 +182,5 @@ build IMPORT "$B/pch_import.h" "$B/pch_import.h.pch" "$B/pch_l1.h.pch"     || ex
 build HTTP   "$B/pch_http.h"   "$B/pch_http.h.pch"   "$B/pch_l4.h.pch"     || exit 1
 build REST   "$B/pch_rest.h"   "$B/pch_rest.h.pch"   "$B/pch_l4.h.pch"     || exit 1
 build SRV    "$B/pch_srv.h"    "$B/pch_srv.h.pch"    "$B/pch_l4.h.pch"     || exit 1
+printf '%s\n' "$PCH_HASH" > "$L/pch-chain.stamp"
 echo "PCH CHAIN COMPLETE"
