@@ -17,6 +17,7 @@ import urllib.request
 
 DEFAULT_USER = "admin"
 DEFAULT_PASSWORD = "73@TuGraph"
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def http(url, body=None, token=None, method=None, timeout=60):
@@ -52,8 +53,9 @@ def wait_up(base, deadline_s=120):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--binary", default="/home/pdfexe/graphfin/build/output/lgraph_server")
-    ap.add_argument("--config", default="/home/pdfexe/graphfin/src/server/lgraph_standalone.json")
+    ap.add_argument("--binary", default=os.path.join(REPO_ROOT, "build/output/lgraph_server"))
+    ap.add_argument("--config", default=os.path.join(
+        REPO_ROOT, "src/server/lgraph_standalone.json"))
     ap.add_argument("--datadir", default="/tmp/graphfin_smoke_db")
     ap.add_argument("--port", type=int, default=7073)
     ap.add_argument("--rpc-port", type=int, default=9093)
@@ -111,6 +113,22 @@ def main():
                          "parameters": {}},
                         token=token)
         print("cypher MATCH  ->", st, json.dumps(body)[:300])
+
+        # Nested containers keep their nesting as JSON text over REST, and
+        # strings that look like JSON stay strings.
+        st, body = http(base + "/cypher",
+                        {"graph": "default",
+                         "script": "RETURN {a: 1, b: [1, 2], c: {d: 'x'}} AS m, "
+                                   "['[]', '{}'] AS s",
+                         "parameters": {}},
+                        token=token)
+        rows = body.get("result", [])
+        expected_map = '{"a":1,"b":[1,2],"c":{"d":"x"}}'
+        expected_list = '["[]","{}"]'
+        if st != 200 or len(rows) != 1 or rows[0][0] != expected_map \
+                or rows[0][1] != expected_list:
+            raise RuntimeError("nested result mismatch: %s %s" % (st, body))
+        print("cypher NESTED -> ok")
     finally:
         proc.send_signal(signal.SIGTERM)
         try:
