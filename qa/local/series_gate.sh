@@ -1,18 +1,16 @@
 #!/usr/bin/env bash
-# Series acceptance gate (REVIEW.md P2-8).
+# Series acceptance gate.
 #
 # Runs the series-focused gtest selection in the pinned compile container and
-# FAILS nonzero on any test failure, crash, or missing output. This is the
-# opposite policy from dev/phase0/run_tests.sh, which records upstream failures
-# and always exits 0 (Phase 0 baseline policy, left intact).
+# fails nonzero on any test failure, crash, or missing output.
 #
 # Usage:
-#   dev/phase0/run_series_tests.sh                 # incremental build + gate
-#   CLEAN=1 dev/phase0/run_series_tests.sh         # clean build + gate
-#   SKIP_BUILD=1 dev/phase0/run_series_tests.sh    # gate only, reuse build/
-#   GTEST_FILTER='TestSeries*' dev/phase0/run_series_tests.sh
+#   qa/local/run.sh series                      # incremental build + gate
+#   CLEAN=1 qa/local/run.sh series              # clean build + gate
+#   SKIP_BUILD=1 qa/local/run.sh series         # gate only, reuse build/
+#   GTEST_FILTER='TestSeries*' qa/local/run.sh series
 #
-# Output: phase0-results/series.log, series-<stamp>.xml (+ series-latest.xml
+# Output: qa-results/series.log, series-<stamp>.xml (+ series-latest.xml
 # copy), series-summary.json. The summary records commit id, source-diff and
 # untracked-content hashes, binary hashes, image digest, actual CMake options,
 # and parsed test outputs together, so a green gate is reproducible evidence
@@ -38,7 +36,7 @@ if [[ -z "${GTEST_FILTER:-}" ]]; then
 fi
 KNOWN_FAILURES="${KNOWN_FAILURES:-}"
 
-RESULTS_DIR="${REPO_ROOT}/phase0-results"
+RESULTS_DIR="${REPO_ROOT}/qa-results"
 OUT_LOG="${RESULTS_DIR}/series.log"
 RUN_STAMP="$(date +%Y%m%d-%H%M%S)"
 OUT_XML="${RESULTS_DIR}/series-${RUN_STAMP}.xml"
@@ -57,17 +55,17 @@ echo "series-gate: exceptions [${KNOWN_FAILURES}]"
 echo "series-gate: xml        ${OUT_XML}"
 
 if [[ "${SKIP_BUILD}" != "1" ]]; then
-    CLEAN="${CLEAN}" JOBS="${JOBS}" BUILD_TYPE="${BUILD_TYPE}" bash "${PHASE0_DIR}/build.sh"
+    CLEAN="${CLEAN}" JOBS="${JOBS}" BUILD_TYPE="${BUILD_TYPE}" bash "${QA_DIR}/build-server.sh"
 fi
 
-phase0_check_image "$PHASE0_COMPILE_IMAGE" --verify-id
-IMAGE_ID="$(docker image inspect "$PHASE0_COMPILE_IMAGE" --format '{{.Id}}')"
-echo "series-gate: image      ${PHASE0_COMPILE_IMAGE} ${IMAGE_ID}"
+qa_check_image "$QA_COMPILE_IMAGE" --verify-id
+IMAGE_ID="$(docker image inspect "$QA_COMPILE_IMAGE" --format '{{.Id}}')"
+echo "series-gate: image      ${QA_COMPILE_IMAGE} ${IMAGE_ID}"
 
 set +e
-phase0_run_compile bash -lc "cd '${PHASE0_WORKDIR}/build/output' \
+qa_run_compile bash -lc "cd '${QA_WORKDIR}/build/output' \
   && rm -rf testdb* .import_tmp \
-  && ./unit_test --gtest_filter='${GTEST_FILTER}' --gtest_output=xml:'${PHASE0_WORKDIR}/phase0-results/series-${RUN_STAMP}.xml' 2>&1; \
+  && ./unit_test --gtest_filter='${GTEST_FILTER}' --gtest_output=xml:'${QA_WORKDIR}/qa-results/series-${RUN_STAMP}.xml' 2>&1; \
   echo SERIES_GATE_RC=\$?; rm -rf testdb* .import_tmp" 2>&1 | tee "$OUT_LOG"
 PIPE_RC=${PIPESTATUS[0]}
 set -e

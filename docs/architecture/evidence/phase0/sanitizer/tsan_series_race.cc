@@ -6,7 +6,7 @@
 // detector actually runs over concurrent Range/Count/Latest/Upsert traffic
 // on one shared SeriesStore - the exact R3 shape (plus writer overlap).
 //
-// Build (in tugraph-compile-arm64:phase0, from the repo root):
+// Build (in graphfin-compile-arm64:local, from the repo root):
 //   c++ -std=c++17 -g -fsanitize=thread -fno-omit-frame-pointer \
 //     -I include -I src -I deps/geax-front-end/include \
 //     /tmp/tsan_series_race.cc <objects...> -o /tmp/tsan_series_race \

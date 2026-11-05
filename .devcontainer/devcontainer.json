@@ -1,8 +1,8 @@
 {
-  "name": "GraphFin Phase 0 (arm64 Linux, CentOS 7 / GCC 8.4)",
-  // Local pinned compile image (see dev/phase0/images.lock), NOT a registry
-  // image — Phase 0 needs the full GCC/CMake toolchain to build from source.
-  // Runtime-only image: idefinity/graphfin:latest on Docker Hub.
+  "name": "GraphFin QA (arm64 Linux, CentOS 7 / GCC 8.4)",
+  // Local pinned compile image (see qa/local/images.lock), NOT a registry
+  // image — the QA harness needs the full GCC/CMake toolchain to build from
+  // source. Runtime-only image: idefinity/graphfin:latest on Docker Hub.
   "image": "graphfin-compile-arm64:local",
   "runArgs": [
     "--platform=linux/arm64",
@@ -12,12 +12,12 @@
   "workspaceFolder": "/workspace",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
   "mounts": [
-    "source=graphfin-phase0-data,target=/data,type=volume"
+    "source=graphfin-qa-data,target=/data,type=volume"
   ],
   "remoteEnv": {
     "LD_LIBRARY_PATH": "/usr/local/lib64/lgraph:/usr/local/lib64:/usr/local/lib:/usr/lib/jvm/java-11-openjdk/lib/server",
     "PYTHONPATH": "/usr/local/lib64/lgraph:/usr/local/lib64",
-    "PHASE0_DATA_DIR": "/data"
+    "QA_DATA_DIR": "/data"
   },
   "customizations": {
     "vscode": {
@@ -28,5 +28,5 @@
       ]
     }
   },
-  "postCreateCommand": "bash dev/phase0/doctor.sh || true"
+  "postCreateCommand": "bash qa/local/run.sh doctor || true"
 }

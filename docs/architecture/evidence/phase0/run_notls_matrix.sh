@@ -10,8 +10,8 @@
 # to one binary, so nothing but the policy differs between the two arms.
 #
 # Usage:
-#   dev/phase0/experiments/run_notls_matrix.sh on  4
-#   dev/phase0/experiments/run_notls_matrix.sh off 4
+#   docs/architecture/evidence/phase0/run_notls_matrix.sh on  4
+#   docs/architecture/evidence/phase0/run_notls_matrix.sh off 4
 #
 # Each arm takes roughly 16 minutes per run. If a run crashes, the core is
 # preserved and a backtrace is printed, which is the evidence needed to tell an
@@ -20,7 +20,7 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${HERE}/../container.sh"
+source "${HERE}/../../../../qa/local/container.sh"
 
 MODE="${1:-}"
 RUNS="${2:-3}"
@@ -40,14 +40,14 @@ esac
 # "lmdb_notls": false in src/server/lgraph_standalone.json for the `off` arm;
 # otherwise server-spawning tests (e.g. TestBackupRestore) still use the default.
 
-phase0_require_docker
-phase0_check_image "$PHASE0_COMPILE_IMAGE" --verify-id
+qa_require_docker
+qa_check_image "$QA_COMPILE_IMAGE" --verify-id
 
 echo "=== NOTLS $MODE x $RUNS runs ==="
 
-phase0_run_bench bash -lc "
+qa_run_bench bash -lc "
 set -uo pipefail
-cd '${PHASE0_WORKDIR}/build/output'
+cd '${QA_WORKDIR}/build/output'
 ln -sfn ../../test/integration/data data 2>/dev/null
 echo \"core_pattern: \$(cat /proc/sys/kernel/core_pattern 2>/dev/null)\"
 

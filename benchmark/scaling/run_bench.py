@@ -645,8 +645,8 @@ def parse_args(argv):
                     help="path to lgraph_server (default: build/output/lgraph_server)")
     ap.add_argument("--config", default=None,
                     help="server config JSON (default: build/output/lgraph_standalone.json)")
-    ap.add_argument("--data-dir", default=os.environ.get("PHASE0_DATA_DIR", "/data"),
-                    help="scratch directory for databases (default: $PHASE0_DATA_DIR or /data)")
+    ap.add_argument("--data-dir", default=os.environ.get("QA_DATA_DIR", "/data"),
+                    help="scratch directory for databases (default: $QA_DATA_DIR or /data)")
     ap.add_argument("--out", default=None,
                     help="result JSON path (default: benchmark/scaling/results/baseline.json)")
     ap.add_argument("--max-size-gb", type=int, default=1,
@@ -694,7 +694,7 @@ def main(argv=None):
 
     if not os.path.isfile(args.binary):
         eprint("ERROR: server binary not found: %s" % args.binary)
-        eprint("Build it first with dev/phase0/build.sh")
+        eprint("Build it first with qa/local/run.sh build")
         return 2
     if not os.path.isfile(args.config):
         eprint("ERROR: server config not found: %s" % args.config)

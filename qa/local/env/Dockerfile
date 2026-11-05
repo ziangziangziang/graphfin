@@ -1,6 +1,6 @@
-# Phase 0 derived compile image.
+# Derived compile image.
 #
-# Base: the pinned tugraph-compile-arm64 image (see ../images.lock).
+# Base: the pinned graphfin-compile-arm64:base image (see ../images.lock).
 #
 # WHY THIS EXISTS
 # ---------------
@@ -24,19 +24,19 @@
 # BUILD
 # -----
 #   cd <repo root>
-#   # arm64 (the Phase 0 baseline environment)
-#   docker build -f dev/phase0/env/Dockerfile.phase0 -t tugraph-compile-arm64:phase0 .
+#   # arm64 (the pinned baseline environment)
+#   docker build -f qa/local/env/Dockerfile -t graphfin-compile-arm64:local .
 #
 #   # amd64 (CI runners; base image from the upstream registry)
-#   docker build -f dev/phase0/env/Dockerfile.phase0 \
+#   docker build -f qa/local/env/Dockerfile \
 #       --build-arg BASE_IMAGE=tugraph/tugraph-compile-centos7:latest \
-#       -t tugraph-compile-amd64:phase0 .
+#       -t graphfin-compile-amd64:local .
 #
 # Record the resulting `docker image inspect ... --format '{{.Id}}'` value in
-# dev/phase0/images.lock under [compile_phase0]. dev/phase0/container.sh verifies
+# qa/local/images.lock under [compile_qa]. qa/local/container.sh verifies
 # it on every build and benchmark run.
 
-ARG BASE_IMAGE=tugraph-compile-arm64:local
+ARG BASE_IMAGE=graphfin-compile-arm64:base
 FROM ${BASE_IMAGE}
 
 RUN pip3 install --no-cache-dir cython==3.0.0 \

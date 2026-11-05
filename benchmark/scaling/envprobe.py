@@ -16,7 +16,7 @@ import subprocess
 import sys
 import time
 
-PHASE0_LIB_VERSION = "1.0.0"
+QA_LIB_VERSION = "1.0.0"
 
 
 def _read(path, default=""):
@@ -140,7 +140,7 @@ def capture(data_dir=None, repo_root=None):
     osr = _os_release()
 
     env = {
-        "lib_version": PHASE0_LIB_VERSION,
+        "lib_version": QA_LIB_VERSION,
         "captured_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "host": {
             "hostname": platform.node(),
@@ -183,7 +183,7 @@ def capture(data_dir=None, repo_root=None):
     # Image identity, when running in the pinned container. This is the single
     # most important reproducibility anchor, so try hard to record it.
     env["container"] = {
-        "image_id": os.environ.get("PHASE0_IMAGE_ID", ""),
+        "image_id": os.environ.get("QA_IMAGE_ID", ""),
         "cgroup": _read("/proc/self/cgroup", ""),
     }
 
@@ -198,8 +198,8 @@ def capture(data_dir=None, repo_root=None):
 def main():
     import argparse
     ap = argparse.ArgumentParser(description="Capture Phase 0 environment metadata")
-    ap.add_argument("--data-dir", default=os.environ.get("PHASE0_DATA_DIR", ""))
-    ap.add_argument("--repo-root", default=os.environ.get("PHASE0_REPO_ROOT", "."))
+    ap.add_argument("--data-dir", default=os.environ.get("QA_DATA_DIR", ""))
+    ap.add_argument("--repo-root", default=os.environ.get("QA_REPO_ROOT", "."))
     args = ap.parse_args()
     print(json.dumps(capture(args.data_dir, args.repo_root), indent=2, sort_keys=True))
 

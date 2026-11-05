@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Phase 0 preflight: verify the pinned toolchain is complete and sane.
+# Local QA preflight: verify the pinned toolchain is complete and sane.
 #
 # Run this before trusting any build or benchmark result.
-#   dev/phase0/doctor.sh
+#   qa/local/run.sh doctor
 #
 # Exits non-zero if a required component is missing.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/container.sh"
 
-phase0_require_docker
+qa_require_docker
 
 echo "=== host ==="
 echo "host arch:   $(uname -m)"
@@ -19,15 +19,21 @@ echo "vm memory:   $(docker info --format '{{.MemTotal}}') bytes"
 echo "vm cpus:     $(docker info --format '{{.NCPU}}')"
 echo
 
-echo "=== pinned images ==="
-phase0_check_image "$PHASE0_COMPILE_IMAGE" --verify-id
-phase0_check_image "$PHASE0_RUNTIME_IMAGE" --verify-id
-echo "compile:     $PHASE0_COMPILE_IMAGE $(docker image inspect "$PHASE0_COMPILE_IMAGE" --format '{{.Id}}')"
-echo "runtime:     $PHASE0_RUNTIME_IMAGE $(docker image inspect "$PHASE0_RUNTIME_IMAGE" --format '{{.Id}}')"
+echo "=== images ==="
+qa_check_image "$QA_COMPILE_IMAGE" --verify-id
+echo "compile:     $QA_COMPILE_IMAGE $(docker image inspect "$QA_COMPILE_IMAGE" --format '{{.Id}}')"
+# The runtime image validates the install layout; it is not needed for builds,
+# tests or benchmarks and is not built by the x86 from-source path.
+if docker image inspect "$QA_RUNTIME_IMAGE" >/dev/null 2>&1; then
+    qa_check_image "$QA_RUNTIME_IMAGE" --verify-id
+    echo "runtime:     $QA_RUNTIME_IMAGE $(docker image inspect "$QA_RUNTIME_IMAGE" --format '{{.Id}}')"
+else
+    echo "runtime:     $QA_RUNTIME_IMAGE absent (optional)"
+fi
 echo
 
 echo "=== container preflight ==="
-phase0_run_compile bash -lc '
+qa_run_compile bash -lc '
 set -uo pipefail
 fail=0
 check() {

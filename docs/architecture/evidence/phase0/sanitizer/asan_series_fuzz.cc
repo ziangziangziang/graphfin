@@ -2,7 +2,7 @@
 // store round-trips, reusing the exact mutation battery from
 // TestSeriesStore.AdversarialBucketMutationsNeverCrash at higher volume.
 //
-// Build (in tugraph-compile-arm64:phase0, from the repo root), reusing the
+// Build (in graphfin-compile-arm64:local, from the repo root), reusing the
 // ASan+UBSan-instrumented objects from build-asan; see REPORT.md for the
 // object list and link flags.
 #include <cstdint>

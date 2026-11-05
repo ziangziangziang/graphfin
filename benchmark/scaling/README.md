@@ -40,22 +40,22 @@ separate experiment per graph count.
 ## Running
 
 All runs happen inside the pinned arm64 container. Scratch databases live in a
-named Docker volume (`graphfin-phase0-data`), **not** in the repo bind mount:
+named Docker volume (`graphfin-qa-data`), **not** in the repo bind mount:
 on macOS the bind mount is virtiofs, whose mmap/fsync behaviour is not
 representative of a Linux filesystem and would distort storage, snapshot and
 restore numbers.
 
 ```bash
 # prerequisites
-dev/phase0/doctor.sh
-dev/phase0/build.sh
+qa/local/run.sh doctor
+qa/local/run.sh build
 
 # smoke run (fast, good for validating the harness)
-dev/phase0/run_bench.sh --quick --graphs 1 100
+qa/local/run.sh bench --quick --graphs 1 100
 
 # full baseline with explicit, reproducible resource limits
-PHASE0_DOCKER_EXTRA='--cpus=4 --memory=6g' \
-  dev/phase0/run_bench.sh --graphs 1 100 1000 4000 \
+QA_DOCKER_EXTRA='--cpus=4 --memory=6g' \
+  qa/local/run.sh bench --graphs 1 100 1000 4000 \
     --out benchmark/scaling/results/baseline.json
 
 # render the markdown report
@@ -105,11 +105,11 @@ Run with explicit limits so results are comparable, and make sure the container
 allows enough of each:
 
 ```bash
-PHASE0_DOCKER_EXTRA='--cpus=4 --memory=6g --pids-limit=8192' \
-  dev/phase0/run_bench.sh --graphs 1 100 1000 4000
+QA_DOCKER_EXTRA='--cpus=4 --memory=6g --pids-limit=8192' \
+  qa/local/run.sh bench --graphs 1 100 1000 4000
 ```
 
-`dev/phase0/container.sh` already sets `--ulimit nofile=1048576:1048576`. The
+`qa/local/container.sh` already sets `--ulimit nofile=1048576:1048576`. The
 harness records `vm.max_map_count`, cgroup pids/memory/cpu limits and the image
 ID with every result, and reports the exact graph index at which a create or
 delete failed — which is how the 998-graph ceiling was found.

@@ -15,7 +15,7 @@
  * uses, with and without MDB_NOTLS, and reports where it fails.
  *
  * Build and run:
- *   dev/phase0/experiments/run_lmdb_tls_limit.sh
+ *   docs/architecture/evidence/phase0/run_lmdb_tls_limit.sh
  *
  * Expected result on glibc (verified on the pinned arm64 image):
  *   TLS    failed at env #1025 with EAGAIN
