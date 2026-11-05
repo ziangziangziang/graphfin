@@ -174,31 +174,25 @@ separately from the small page/navigation bundle.
 
 ## GitHub Pages
 
-`.github/workflows/documentation.yml` builds this site and deploys it to the
-`gh-pages` branch (same rule as the inherited Docusaurus workflow). It is the
-only Pages deployment workflow.
+There is no deployment workflow. `ci.yml` type-checks and unit-tests the site
+on pull requests and `main` pushes, but publishing is manual.
 
 1. In repository **Settings → Pages → Build and deployment**, select
-   **Deploy from a branch** with branch `gh-pages` (root). The workflow
-   force-updates that branch on each deploy.
-2. Merge these changes into `main`. Changes to `site/` trigger deployment.
-   The separate Website checks workflow validates pull requests; it does not deploy.
-3. The workflow installs locked dependencies, runs unit checks, type-checks and
-   builds, runs browser tests, then publishes `site/dist/` to `gh-pages` via
-   `JamesIves/github-pages-deploy-action` (`clean: true` so stale Docusaurus
-   files and the superseded comparison page are removed). The published build
+   **Deploy from a branch** with branch `gh-pages` (root).
+2. Install locked dependencies, test, and build:
+   `npm ci && npm test && npm run build && npm run test:browser`.
+3. Publish `site/dist/` to `gh-pages`, replacing stale files so old Docusaurus
+   pages and the superseded comparison page are removed. The published build
    contains one HTML entry and one G fallback, with no ribbon assets.
 4. The expected URL is `https://ziangziangziang.github.io/graphfin/`.
-   A manual **GraphFin website** workflow run on `main` can also deploy.
 
-Deployment replaces the previous site at that URL with this build; old
-generated Docusaurus URLs and the research comparison are not maintained as
-public routes.
+Publishing replaces the previous site at that URL; old generated Docusaurus
+URLs and the research comparison are not maintained as public routes.
 
 ### Base path and documentation source
 
-`/graphfin/` is the default base. CI derives it from the repository name. Override
-it for a different Pages subpath or a custom-domain root:
+`/graphfin/` is the default base. Override it for a different Pages subpath or
+a custom-domain root:
 
 ```sh
 SITE_BASE_PATH=/ SITE_SOURCE_REF=main npm run build
@@ -206,7 +200,7 @@ SITE_BASE_PATH=/ SITE_SOURCE_REF=main npm run build
 
 `SITE_SOURCE_REF` controls GitHub documentation/example/license links. Locally
 it defaults to the checked-out branch, or the commit SHA in a detached checkout.
-CI supplies the built branch. This keeps the website's claims linked to the code
+A manual release build should pass the branch being published. This keeps the website's claims linked to the code
 being built, rather than assuming the development changes already exist on
 `main`. A source archive without Git metadata must set `SITE_SOURCE_REF`.
 
