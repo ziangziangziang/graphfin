@@ -21,7 +21,8 @@ class TestAlgoV2:
     @pytest.mark.parametrize("server", [SERVEROPT], indirect=True)
     @pytest.mark.parametrize("client", [CLIENTOPT], indirect=True)
     def test_algo_v2(self, importor, server, client):
-        algos = ["libbfs_v2.so", "liblcc_v2.so", "liblpa_v2.so", "libpagerank_v2.so", "libsssp_v2.so", "libwcc_v2.so"]
+        algos = ["libbfs_v2.so", "liblcc_v2.so", "liblpa_v2.so", "libpagerank_v2.so", "libsssp_v2.so", "libwcc_v2.so",
+                 "libscc_v2.so", "libhits_v2.so", "liblocate_cycle_v2.so", "libspsp_v2.so"]
         algo_dir = "./algo/"
         for algo in algos:
             ret = client.loadProcedure(algo_dir + algo, "CPP", algo.split('.')[0], "SO", "test plugin", True, "v2")
@@ -83,3 +84,49 @@ class TestAlgoV2:
         assert ret[0]
         result = json.loads(ret[1])[0].get("distance")
         assert result == 1
+
+        ret = client.callCypher("MATCH (n:node) RETURN COUNT(n)")
+        assert ret[0]
+        total_vertices = json.loads(ret[1])[0].get("COUNT(n)")
+
+        # Test SCC: every vertex gets a component label.
+        ret = client.callCypher("CALL plugin.cpp.libscc_v2() "
+                                "YIELD node, component "
+                                "RETURN COUNT(component), COUNT(DISTINCT component)")
+        assert ret[0]
+        row = json.loads(ret[1])[0]
+        assert row.get("COUNT(component)") == total_vertices
+        assert row.get("COUNT(DISTINCT component)") >= 1
+
+        # Test HITS: hub and authority scores are positive on a graph with edges.
+        ret = client.callCypher("CALL plugin.cpp.libhits_v2(20, 0.0001) "
+                                "YIELD node, authority, hub "
+                                "RETURN MAX(authority), MAX(hub)")
+        assert ret[0]
+        row = json.loads(ret[1])[0]
+        assert row.get("MAX(authority)") > 0
+        assert row.get("MAX(hub)") > 0
+
+        # Test ring counting.
+        ret = client.callCypher("CALL plugin.cpp.liblocate_cycle_v2(3) "
+                                "YIELD num_rings, num_vertices, num_edges "
+                                "RETURN num_rings, num_vertices, num_edges")
+        assert ret[0]
+        row = json.loads(ret[1])[0]
+        assert row.get("num_rings") >= 0
+        assert row.get("num_vertices") == total_vertices
+        assert row.get("num_edges") > 0
+
+        # Test SPSP, and that dropping direction never lengthens a path.
+        ret = client.callCypher("MATCH (a:node{id:0}), (b:node{id:10}) "
+                                "CALL plugin.cpp.libspsp_v2(a, b, true) "
+                                "YIELD length RETURN length")
+        assert ret[0]
+        directed_length = json.loads(ret[1])[0].get("length")
+        assert directed_length == 1
+
+        ret = client.callCypher("MATCH (a:node{id:0}), (b:node{id:10}) "
+                                "CALL plugin.cpp.libspsp_v2(a, b, false) "
+                                "YIELD length RETURN length")
+        assert ret[0]
+        assert json.loads(ret[1])[0].get("length") <= directed_length
