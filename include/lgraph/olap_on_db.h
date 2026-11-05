@@ -17,6 +17,7 @@
 #pragma once
 
 #include <exception>
+#include <type_traits>
 #include "lgraph/lgraph.h"
 #include "lgraph/lgraph_txn.h"
 #include "lgraph/lgraph_utils.h"
@@ -50,6 +51,39 @@ static constexpr size_t SNAPSHOT_OUT_EDGES = 1ul << 5;
 // Generate the out edges
 static constexpr size_t SNAPSHOT_IN_EDGES = 1ul << 6;
 // Generate the in edges
+
+/**
+ * @brief   Convert one OLAP vertex result into a FieldData of its own type.
+ *
+ *          Write-back stores numbers as numbers, so the field a procedure writes
+ *          into can stay numeric and queries can compare or aggregate it. Stringify
+ *          would only fit a STRING column and would drop the ordering of the result.
+ *
+ *          Integers of every width land in INT64, which the storage layer narrows
+ *          for INT8/INT16/INT32 columns after a range check.
+ *
+ * @tparam  VertexData  bool, an arithmetic type or std::string.
+ */
+template <typename VertexData>
+FieldData VertexFieldData(const VertexData &value) {
+    static_assert(std::is_arithmetic_v<VertexData> || std::is_same_v<VertexData, std::string>,
+                  "WriteToGraphDB can only write back bool, numeric or string vertex data");
+    if constexpr (std::is_same_v<VertexData, float> || std::is_same_v<VertexData, double>) {
+        return FieldData(value);
+    } else if constexpr (std::is_floating_point_v<VertexData>) {
+        return FieldData(static_cast<double>(value));
+    } else if constexpr (std::is_integral_v<VertexData>) {
+        // bool is integral and has its own FieldData constructor, so it must not
+        // be widened to a count.
+        if constexpr (std::is_same_v<VertexData, bool>) {
+            return FieldData(value);
+        } else {
+            return FieldData(static_cast<int64_t>(value));
+        }
+    } else {
+        return FieldData(value);
+    }
+}
 
 /**
  * @brief   Snapshot is a derived class of Graph.
@@ -1551,6 +1585,18 @@ class OlapOnDB : public OlapBase<EdgeData> {
     /**
      * @brief    Write vertex data to the graph database.
      *
+     *          Values keep the type of the result vector: a ParallelVector<double>
+     *          needs a DOUBLE field (or one the storage layer can convert to), a
+     *          ParallelVector<size_t> an INT64 field, and so on. The whole write is
+     *          one transaction, so a single incompatible field definition aborts it
+     *          and leaves the graph untouched.
+     *
+     *          The snapshot is read-only and a thread may hold only one transaction,
+     *          so the snapshot transaction must be committed or aborted before
+     *          calling this. The consequence is that the write applies to the graph
+     *          as of now, not as of the snapshot: vertices deleted in the meantime
+     *          are skipped.
+     *
      * @param [in,out]   vertex_data    The parallel vector storing the vertex data.
      * @param [in]       vertex_field   The name of the vertex field.
      *
@@ -1560,13 +1606,17 @@ class OlapOnDB : public OlapBase<EdgeData> {
         if (db_ == nullptr) {
             throw std::runtime_error("can't write to graph because db is null");
         }
+        if (txn_.IsValid()) {
+            throw std::runtime_error(
+                "can't write to graph while the snapshot transaction is open: commit or abort it "
+                "before calling WriteToGraphDB");
+        }
         auto write_txn = db_->CreateWriteTxn();
         auto vit = write_txn.GetVertexIterator();
         for (size_t i = 0; i < this->num_vertices_; i++) {
-            FieldData local_distance(std::to_string(vertex_data[i]));
             vit.Goto(OriginalVid(i));
             if (vit.IsValid()) {
-                vit.SetField(vertex_field, local_distance);
+                vit.SetField(vertex_field, VertexFieldData(vertex_data[i]));
             }
         }
         write_txn.Commit();

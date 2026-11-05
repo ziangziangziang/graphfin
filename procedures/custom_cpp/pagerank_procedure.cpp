@@ -29,7 +29,7 @@ using json = nlohmann::json;
  *        - "num_iterations": The number of iterations.
  *        - "vertex_label_filter": Filter vertex sets based on vertex labels
  *        - "edge_label_filter": Filter edge sets based on edge labels
- *        - "pr_value": Vertex field name to be written back into the database.
+ *        - "pr_value": Name of a DOUBLE vertex field the scores are written back into.
  *        - "output_file": Pr value to be written to the file.
  * @param response The output response in JSON format.
  *       The response will contain the following parameters:
@@ -102,18 +102,20 @@ extern "C" bool Process(GraphDB& db, const std::string& request, std::string& re
         olapondb.WriteToFile<double>(true, pr, output_file);
     }
 
-    if (pr_value != "") {
-        olapondb.WriteToGraphDB<double>(pr, pr_value);
-    }
-
     printf("max rank value is pr[%ld] = %lf\n", olapondb.OriginalVid(max_pr_vi), pr[max_pr_vi]);
-    auto output_cost = get_time() - start_time;
-
-
     auto vit = txn.GetVertexIterator(olapondb.OriginalVid(max_pr_vi), false);
     auto vit_label = vit.GetLabel();
     auto primary_field = txn.GetVertexPrimaryField(vit_label);
     auto field_data = vit.GetField(primary_field);
+
+    if (pr_value != "") {
+        // Write-back is a transaction of its own and a thread may hold only one, so the
+        // read snapshot has to be closed before the scores go into the graph.
+        txn.Commit();
+        olapondb.WriteToGraphDB<double>(pr, pr_value);
+    }
+    auto output_cost = get_time() - start_time;
+
     // return
     {
         json output;
