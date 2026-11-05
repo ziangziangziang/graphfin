@@ -23,6 +23,7 @@
 // files, and e.g. use '_XPLATSTR' instead.
 #define _TURN_OFF_PLATFORM_STRING
 #include "cpprest/http_client.h"
+#include "restful/server/json_convert.h"
 #include "restful/server/stdafx.h"
 #include "client/cpp/restful/rest_client.h"
 #include "server/lgraph_server.h"
