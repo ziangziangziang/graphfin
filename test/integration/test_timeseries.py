@@ -9,7 +9,7 @@ stale (it posts `userName`, the server requires `user`), and driving the wire
 directly is exactly what pins the client-visible contract.
 
 Run:
-  PHASE0_TEST_FILES=test_timeseries.py dev/phase0/run_tests.sh it
+  QA_TEST_FILES=test_timeseries.py qa/local/run.sh it
 """
 
 import json
@@ -24,7 +24,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from phase0_util import (DEFAULT_PASSWORD, DEFAULT_USER, ServerHandle, create_graph,
+from server_harness import (DEFAULT_PASSWORD, DEFAULT_USER, ServerHandle, create_graph,
                            cypher)
 
 log = logging.getLogger(__name__)
@@ -641,7 +641,7 @@ def backup_binary():
         candidate = os.path.abspath(candidate)
         if os.path.isfile(candidate):
             return candidate
-    raise RuntimeError("lgraph_backup not found. Build it with dev/phase0/build.sh first.")
+    raise RuntimeError("lgraph_backup not found. Build it with qa/local/run.sh build first.")
 
 
 def test_sigkill_durable_recovery(tmp_path):
@@ -747,7 +747,7 @@ def test_eviction_reopen_preserves_series(tmp_path):
 
     import httpx
 
-    from phase0_util import free_port
+    from server_harness import free_port
     monitor_port = free_port()
     db_dir = str(tmp_path / "evict_db")
     srv = ServerHandle(db_dir, extra_args=["--max_open_graphs", "2",

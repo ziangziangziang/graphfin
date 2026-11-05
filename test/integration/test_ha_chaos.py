@@ -12,7 +12,7 @@ Design notes (learned against this build):
     expected value appears (eventual consistency) rather than reading once.
   * The default 500ms election timeout flaps on a busy host; ha_util raises it.
 
-Runs locally (TEST_TYPE=ha via the Phase 0 tooling) and supports a manual
+Runs locally (TEST_TYPE=ha via the qa/local tooling) and supports a manual
 invocation via the HA_WORK_DIR env var.
 """
 

@@ -1,6 +1,6 @@
 """Reusable helpers for Phase 3 HA/Replication integration tests.
 
-Builds on the pattern from phase0_util.py: launches 3-node lgraph_server
+Builds on the pattern from server_harness.py: launches 3-node lgraph_server
 processes on localhost, manages them as a HA cluster, and provides helpers
 for leader election, restart, and state verification.
 

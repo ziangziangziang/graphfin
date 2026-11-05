@@ -1,4 +1,4 @@
-"""Shared helpers for the Phase 0 multi-graph integration tests.
+"""Shared helpers for the multi-graph integration tests.
 
 These tests are deliberately self-contained: they launch and control their own
 `lgraph_server` processes so they can exercise restart, SIGKILL and multi-graph
@@ -6,7 +6,7 @@ scaling without fighting the function-scoped fixtures in conftest.py.
 
 There is intentional overlap with benchmark/scaling/{serverctl,restclient}.py.
 The test tree is copied into build/output by the CI flow (see
-ci/github_ci.sh and dev/phase0/run_tests_inner.sh), so keeping these helpers
+ci/github_ci.sh and qa/local/entrypoint.sh), so keeping these helpers
 dependency-free and local keeps the tests hermetic.
 
 Client API facts these helpers rely on (verified against TuGraph 4.5.2):
@@ -56,7 +56,7 @@ def server_binary():
         if os.path.isfile(candidate):
             return os.path.abspath(candidate)
     raise RuntimeError(
-        "lgraph_server not found. Build it with dev/phase0/build.sh first.")
+        "lgraph_server not found. Build it with qa/local/run.sh build first.")
 
 
 def server_config():
@@ -224,7 +224,7 @@ def cypher_ok(client, script, graph="default"):
     return bool(ok)
 
 
-def create_graph(client, name, size_gb=GRAPH_SIZE_GB, desc="phase0 test graph"):
+def create_graph(client, name, size_gb=GRAPH_SIZE_GB, desc="qa test graph"):
     return cypher(client, "CALL dbms.graph.createGraph('%s', '%s', %d)"
                   % (name, desc, size_gb))
 

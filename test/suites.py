@@ -66,7 +66,7 @@ def main(argv):
         value = suite_map[field]
     elif field in data:
         # Catalog-global fallback (e.g. procedure_off_exclusions shared by
-        # main-it and the Phase 0 runner); suite values override it.
+        # main-it and the qa/local runner); suite values override it.
         value = data[field]
     else:
         sys.exit("suites: unknown suite/field: %s/%s" % (suite, field))

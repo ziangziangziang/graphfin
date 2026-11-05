@@ -1,4 +1,4 @@
-"""Phase 0: multi-graph lifecycle correctness tests.
+"""Multi-graph lifecycle correctness tests.
 
 Covers graph creation, deletion, reopening (restart with graphs already on
 disk), listing consistency, and the hard graph-count limit.
@@ -8,15 +8,15 @@ count used here is small (tens) -- the large-scale behaviour is measured by
 benchmark/scaling/, not asserted here.
 
 Run:
-  dev/phase0/run_tests.sh it     # everything
-  PHASE0_TEST_FILES=test_multi_graph_lifecycle.py dev/phase0/run_tests.sh it
+  qa/local/run.sh it     # everything
+  QA_TEST_FILES=test_multi_graph_lifecycle.py qa/local/run.sh it
 """
 
 import logging
 
 import pytest
 
-from phase0_util import (ServerHandle, count_vertices, create_graph, cypher,
+from server_harness import (ServerHandle, count_vertices, create_graph, cypher,
     delete_graph, graph_exists, list_graphs, scalar, setup_graph, wait_for)
 
 log = logging.getLogger(__name__)

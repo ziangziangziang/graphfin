@@ -1,5 +1,5 @@
 {
-  "_comment": "Canonical suite catalog: single source of truth for test selection. Runners (ci/github_pr.sh, ci/github_ci.sh, dev/phase0/*, ci/merge/run.py) must query this file via test/suites.py instead of hardcoding filters. JSON (not YAML) so every runner works with stdlib python only. Tier: pr = pre-merge fast, merge = post-merge gate, main = full branch suite, dev = local pinned-container gate.",
+  "_comment": "Canonical suite catalog: single source of truth for test selection. Runners (ci/github_pr.sh, ci/github_ci.sh, qa/local/*, ci/merge/run.py) must query this file via test/suites.py instead of hardcoding filters. JSON (not YAML) so every runner works with stdlib python only. Tier: pr = pre-merge fast, merge = post-merge gate, main = full branch suite, dev = local pinned-container gate.",
   "version": 1,
   "procedure_off_exclusions": [
     "test_algo.py",
@@ -77,10 +77,43 @@
       "owner": "graphfin-core"
     },
     "main-it": {
-      "description": "Main-branch full integration suite. procedure_off_exclusions apply when BUILD_PROCEDURE=OFF.",
+      "description": "Main-branch full integration suite. Correctness only: perf and soak markers are excluded. procedure_off_exclusions apply when BUILD_PROCEDURE=OFF.",
       "tier": "main",
       "type": "pytest",
       "pytest_files": [],
+      "pytest_marker": "not perf and not soak",
+      "min_cases": 1,
+      "required_artifacts": ["lgraph_server"],
+      "owner": "graphfin-core"
+    },
+    "perf-smoke": {
+      "description": "Short series performance run: ingest/read latency, memory and storage footprint, eviction churn. Records to qa-results/series-perf-smoke.json; never a gate.",
+      "tier": "nightly",
+      "type": "pytest",
+      "pytest_files": ["test_perf_series_latency.py", "test_perf_series_storage.py"],
+      "pytest_marker": "perf_smoke",
+      "perf_profile": "smoke",
+      "min_cases": 4,
+      "required_artifacts": ["lgraph_server"],
+      "owner": "graphfin-core"
+    },
+    "perf-series": {
+      "description": "Full-scale series performance profile. Records to qa-results/series-perf-full.json; never a gate.",
+      "tier": "nightly",
+      "type": "pytest",
+      "pytest_files": ["test_perf_series_latency.py", "test_perf_series_storage.py"],
+      "pytest_marker": "perf",
+      "perf_profile": "full",
+      "min_cases": 4,
+      "required_artifacts": ["lgraph_server"],
+      "owner": "graphfin-core"
+    },
+    "perf-soak": {
+      "description": "Sustained mixed append/read/correction soak with a per-minute resource timeline and an exact integrity check after restart. Duration from QA_SOAK_MINUTES. Records to qa-results/series-perf-soak.json; never a gate.",
+      "tier": "nightly",
+      "type": "pytest",
+      "pytest_files": ["test_perf_series_soak.py"],
+      "pytest_marker": "soak",
       "min_cases": 1,
       "required_artifacts": ["lgraph_server"],
       "owner": "graphfin-core"
