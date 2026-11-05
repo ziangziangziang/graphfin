@@ -19,8 +19,14 @@
 #include "core/data_type.h"
 #include "core/field_data_helper.h"
 #include "import/import_config_parser.h"
-#include "restful/server/json_convert.h"
-#include "tools/json.hpp"
+
+// Only cpprest's JSON parser is needed here.  Pulling
+// restful/server/json_convert.h instead dragged server/state_machine.h and
+// with it the whole cypher execution-plan closure into every import
+// translation unit.
+#define _TURN_OFF_PLATFORM_STRING
+#include "cpprest/json.h"
+#include "core/utility_string.h"
 
 #include <boost/iostreams/stream.hpp>
 #include <boost/iostreams/device/array.hpp>
@@ -483,7 +489,7 @@ class JsonLinesParser : public BlockParser {
         // use stream parse to avoid memory copy
         iostreams::stream<iostreams::array_source> istr(start, end - start);
         std::error_code err_code;
-        json::value json_obj = json::value::parse(istr, err_code);
+        web::json::value json_obj = web::json::value::parse(istr, err_code);
         switch (err_code.value()) {
         case 0:
             break;

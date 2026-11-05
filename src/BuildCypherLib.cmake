@@ -72,6 +72,9 @@ set(LGRAPH_CYPHER_SRC   # find cypher/ -name "*.cpp" | sort
         cypher/parser/generated/LcypherParser.cpp
         cypher/parser/generated/LcypherVisitor.cpp
         cypher/procedure/procedure.cpp
+        cypher/procedure/procedure_bolt.cpp
+        cypher/procedure/procedure_import.cpp
+        cypher/procedure/procedure_import_v3.cpp
         cypher/procedure/utils.cpp
         cypher/resultset/record.cpp
         cypher/monitor/monitor_manager.cpp

@@ -1,17 +1,17 @@
-"""Phase 0: CRUD, transactions, indexes and schemas across multiple graphs.
+"""Multi-graph CRUD, transactions, indexes and schemas.
 
 Verifies that per-graph stores are genuinely independent: schema, data, indexes
 and failed transactions in one graph must not affect another.
 
 Run:
-  PHASE0_TEST_FILES=test_multi_graph_crud.py dev/phase0/run_tests.sh it
+  QA_TEST_FILES=test_multi_graph_crud.py qa/local/run.sh it
 """
 
 import logging
 
 import pytest
 
-from phase0_util import (CypherError, ServerHandle, count_vertices,
+from server_harness import (CypherError, ServerHandle, count_vertices,
     create_graph, create_graph_if_missing, cypher, scalar)
 
 log = logging.getLogger(__name__)

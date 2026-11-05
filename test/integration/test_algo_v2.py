@@ -83,3 +83,89 @@ class TestAlgoV2:
         assert ret[0]
         result = json.loads(ret[1])[0].get("distance")
         assert result == 1
+
+    # A CPP plugin links OpenBLAS statically, and every copy of it carries about
+    # 8 KiB of initial-exec thread-local data that the loader must fit in the
+    # process-wide static TLS surplus. These plugins therefore get their own
+    # server process instead of joining the list above.
+
+    @pytest.mark.parametrize("importor", [IMPORTOPT], indirect=True)
+    @pytest.mark.parametrize("server", [SERVEROPT], indirect=True)
+    @pytest.mark.parametrize("client", [CLIENTOPT], indirect=True)
+    def test_scc_v2(self, importor, server, client):
+        ret = client.loadProcedure("./algo/libscc_v2.so", "CPP", "libscc_v2",
+                                   "SO", "test plugin", True, "v2")
+        assert ret[0]
+
+        ret = client.callCypher("MATCH (n:node) RETURN COUNT(n)")
+        assert ret[0]
+        total_vertices = json.loads(ret[1])[0].get("COUNT(n)")
+
+        # Every vertex gets a component label.
+        ret = client.callCypher("CALL plugin.cpp.libscc_v2() "
+                                "YIELD node, component "
+                                "RETURN COUNT(component), COUNT(DISTINCT component)")
+        assert ret[0]
+        row = json.loads(ret[1])[0]
+        assert row.get("COUNT(component)") == total_vertices
+        assert row.get("COUNT(DISTINCT component)") >= 1
+
+    @pytest.mark.parametrize("importor", [IMPORTOPT], indirect=True)
+    @pytest.mark.parametrize("server", [SERVEROPT], indirect=True)
+    @pytest.mark.parametrize("client", [CLIENTOPT], indirect=True)
+    def test_hits_v2(self, importor, server, client):
+        ret = client.loadProcedure("./algo/libhits_v2.so", "CPP", "libhits_v2",
+                                   "SO", "test plugin", True, "v2")
+        assert ret[0]
+
+        # Hub and authority scores are positive on a graph with edges.
+        ret = client.callCypher("CALL plugin.cpp.libhits_v2(20, 0.0001) "
+                                "YIELD node, authority, hub "
+                                "RETURN MAX(authority), MAX(hub)")
+        assert ret[0]
+        row = json.loads(ret[1])[0]
+        assert row.get("MAX(authority)") > 0
+        assert row.get("MAX(hub)") > 0
+
+    @pytest.mark.parametrize("importor", [IMPORTOPT], indirect=True)
+    @pytest.mark.parametrize("server", [SERVEROPT], indirect=True)
+    @pytest.mark.parametrize("client", [CLIENTOPT], indirect=True)
+    def test_locate_cycle_v2(self, importor, server, client):
+        ret = client.loadProcedure("./algo/liblocate_cycle_v2.so", "CPP",
+                                   "liblocate_cycle_v2", "SO", "test plugin", True, "v2")
+        assert ret[0]
+
+        ret = client.callCypher("MATCH (n:node) RETURN COUNT(n)")
+        assert ret[0]
+        total_vertices = json.loads(ret[1])[0].get("COUNT(n)")
+
+        ret = client.callCypher("CALL plugin.cpp.liblocate_cycle_v2(3) "
+                                "YIELD num_rings, num_vertices, num_edges "
+                                "RETURN num_rings, num_vertices, num_edges")
+        assert ret[0]
+        row = json.loads(ret[1])[0]
+        assert row.get("num_rings") >= 0
+        assert row.get("num_vertices") == total_vertices
+        assert row.get("num_edges") > 0
+
+    @pytest.mark.parametrize("importor", [IMPORTOPT], indirect=True)
+    @pytest.mark.parametrize("server", [SERVEROPT], indirect=True)
+    @pytest.mark.parametrize("client", [CLIENTOPT], indirect=True)
+    def test_spsp_v2(self, importor, server, client):
+        ret = client.loadProcedure("./algo/libspsp_v2.so", "CPP", "libspsp_v2",
+                                   "SO", "test plugin", True, "v2")
+        assert ret[0]
+
+        # Dropping direction must not lengthen a path.
+        ret = client.callCypher("MATCH (a:node{id:0}), (b:node{id:10}) "
+                                "CALL plugin.cpp.libspsp_v2(a, b, true) "
+                                "YIELD length RETURN length")
+        assert ret[0]
+        directed_length = json.loads(ret[1])[0].get("length")
+        assert directed_length == 1
+
+        ret = client.callCypher("MATCH (a:node{id:0}), (b:node{id:10}) "
+                                "CALL plugin.cpp.libspsp_v2(a, b, false) "
+                                "YIELD length RETURN length")
+        assert ret[0]
+        assert json.loads(ret[1])[0].get("length") <= directed_length

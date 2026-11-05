@@ -13,6 +13,7 @@
  */
 
 #include "http/import_task.h"
+#include <boost/algorithm/string/join.hpp>
 #include "tools/lgraph_log.h"
 #include "import/import_config_parser.h"
 #include "import/file_cutter.h"

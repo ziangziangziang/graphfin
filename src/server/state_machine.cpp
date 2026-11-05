@@ -25,6 +25,7 @@
 #include "server/state_machine.h"
 #ifndef _WIN32
 #include "brpc/controller.h"
+#include "cypher/execution_plan/scheduler.h"
 #include "import/import_v3.h"
 #endif
 
@@ -33,6 +34,9 @@ using namespace fma_common;
 lgraph::StateMachine::StateMachine(const Config& config,
                                    std::shared_ptr<GlobalConfig> global_config)
     : config_(config), global_config_(global_config) {
+#ifndef _WIN32
+    cypher_scheduler_ = std::make_unique<cypher::Scheduler>();
+#endif
     if (global_config_ && !global_config_->monitor_host.empty()) {
         monitor_.reset(new monitor::ResourceMonitor(global_config_->monitor_host));
         // Report graph lifecycle metrics every 5s. The monitor lives for the
@@ -1040,7 +1044,7 @@ bool lgraph::StateMachine::ApplyGraphQueryRequest(const LGraphRequest* lgraph_re
     }
 
     ctx.optimistic_ = config_.optimistic_txn;
-    cypher_scheduler_.Eval(&ctx, convert::ToLGraphT(req.type()), req.query(), elapsed);
+    cypher_scheduler_->Eval(&ctx, convert::ToLGraphT(req.type()), req.query(), elapsed);
     elapsed.t_total = elapsed.t_compile + elapsed.t_exec;
     if (req.result_in_json_format()) {
         auto result = ctx.result_->Dump(false);

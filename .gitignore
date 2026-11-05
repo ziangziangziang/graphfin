@@ -123,9 +123,9 @@ deps/geax-front-end/LEGAL.md
 deps/geax-front-end/README.md
 deps/geax-front-end/cpplint
 
-# Phase 0 build/benchmark logs and scratch artifacts
-phase0-logs/
-phase0-results/
+# QA build/benchmark logs and scratch artifacts
+qa-logs/
+qa-results/
 
 # Remote test-host notes (contains host credentials; never commit)
 TEST-REMOTE.md
@@ -137,3 +137,9 @@ REPORT.md
 TEST-REMOTE.md
 
 site/research/
+
+# Low-memory host build scaffolding: downloaded toolchain + compiler logs
+.clangpkg/
+.clangpkg12/
+.build-logs/
+.build-tools/

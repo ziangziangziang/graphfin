@@ -1,7 +1,8 @@
 #!/bin/bash
 # Fast PR path: lint + targeted build/tests only.
 # Full suite (asan, coverage, sphinx docs, web UI, full ut/it) remains in
-# ci/github_ci.sh (driven by BUILD_TYPE/TEST_TYPE from the main-push jobs).
+# ci/github_ci.sh (driven by BUILD_TYPE/TEST_TYPE from the release-tag/manual
+# dispatch jobs).
 set -euo pipefail
 
 cd "$WORKSPACE"
@@ -75,13 +76,14 @@ cp -rf ../../test/integration/* ./
 export PYTHONPATH="${WORKSPACE}/build/output:${WORKSPACE}/src/client/python/TuGraphClient:${PYTHONPATH:-}"
 export PYTHONDONTWRITEBYTECODE=1
 
-# Fast subset: merge gate + phase0 multi-graph/lifecycle files (~19s measured).
+# Fast subset: merge gate + multi-graph/lifecycle/recovery integrity files.
 python3 -m pytest -v \
   test_merge_series.py \
   test_multi_graph_lifecycle.py \
   test_multi_graph_crud.py \
   test_multi_graph_acl.py \
   test_restart_and_failure_recovery.py \
+  test_series_recovery_integrity.py \
   test_backup_restore_scale.py \
   test_graph_ceiling_regression.py \
   test_graph_lifecycle_eviction.py \

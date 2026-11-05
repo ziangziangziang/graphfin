@@ -12,6 +12,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
 
+#include <pplx/threadpool.h>
 #include <set>
 
 #include "fma-common/file_system.h"
@@ -32,6 +33,7 @@
 #include "tools/lgraph_log.h"
 
 #ifndef _WIN32
+#include "cypher/execution_plan/scheduler.h"
 #include "execution_plan/runtime_context.h"
 #include "cypher/resultset/record.h"
 #endif
@@ -504,6 +506,21 @@ void RestServer::Stop() {
 }
 
 RestServer::~RestServer() { Stop(); }
+
+std::unique_ptr<IRestServer> CreateRestServer(StateMachine *state_machine,
+                                              const std::shared_ptr<GlobalConfig> &config) {
+    RestServer::Config rest_config(*config);
+    return std::make_unique<RestServer>(state_machine, rest_config, config);
+}
+
+void InitRestThreadPool(int thread_limit) {
+    if (thread_limit == 0) return;
+    try {
+        crossplat::threadpool::initialize_with_threads(thread_limit);
+    } catch (const std::exception &e) {
+        LOG_WARN() << "failed to init cpprest threadpool, exception:" << e.what();
+    }
+}
 
 static void ListDirFiles(const std::string& directory, std::vector<std::string>& files) {
     auto& fs = fma_common::FileSystem::GetFileSystem(directory);

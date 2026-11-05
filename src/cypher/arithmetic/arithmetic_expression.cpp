@@ -25,6 +25,8 @@
 #include <utility>
 #include <vector>
 #include <regex>
+#include <boost/algorithm/string/classification.hpp>
+#include <boost/algorithm/string/split.hpp>
 #include "cypher/cypher_exception.h"
 #include "cypher/cypher_types.h"
 #include "cypher/procedure/utils.h"
@@ -661,6 +663,118 @@ cypher::FieldData BuiltinFunction::Sign(RTContext *ctx, const Record &record,
         return cypher::FieldData(lgraph::FieldData(sign));
     }
     CYPHER_ARGUMENT_ERROR();
+}
+
+namespace {
+
+/* Operand kinds for the math functions. */
+enum class MathOperand { NullValue, Number, Invalid };
+
+/*
+ * Shared coercion for sqrt/ln/log/exp/pow. Null propagates as null. Anything that
+ * is not a number, including a vertex or a string, is reported by the caller as an
+ * argument error: tofloat() is the documented narrowing call, and an implicit
+ * conversion here would turn a bad expression into a plausible number.
+ */
+MathOperand EvalMathOperand(const ArithExprNode &operand, RTContext *ctx, const Record &record,
+                            double *value) {
+    auto r = operand.Evaluate(ctx, record);
+    if (r.type != Entry::CONSTANT) return MathOperand::Invalid;
+    if (r.constant.IsNull()) return MathOperand::NullValue;
+    if (r.constant.IsInteger()) {
+        *value = static_cast<double>(r.constant.scalar.integer());
+        return MathOperand::Number;
+    }
+    if (r.constant.IsReal()) {
+        *value = r.constant.scalar.real();
+        return MathOperand::Number;
+    }
+    return MathOperand::Invalid;
+}
+
+/*
+ * Non-finite results are refused rather than returned as NaN or infinity, in
+ * line with the write boundaries: such values serialize as JSON null while
+ * staying non-null in the engine, which silently conflates a domain mistake
+ * with a missing observation.
+ */
+cypher::FieldData MathResult(const char *func, double result) {
+    if (!std::isfinite(result)) {
+        throw lgraph::CypherException(std::string("Domain error in function ") + func +
+                                      ": the result is not a finite number.");
+    }
+    return cypher::FieldData(lgraph::FieldData(result));
+}
+
+}  // namespace
+
+cypher::FieldData BuiltinFunction::Sqrt(RTContext *ctx, const Record &record,
+                                        const std::vector<ArithExprNode> &args) {
+    if (args.size() != 2) CYPHER_ARGUMENT_ERROR();
+    double value = 0;
+    auto kind = EvalMathOperand(args[1], ctx, record, &value);
+    if (kind == MathOperand::NullValue) return cypher::FieldData(lgraph::FieldData());
+    if (kind == MathOperand::Invalid) CYPHER_ARGUMENT_ERROR();
+    if (value < 0) {
+        throw lgraph::CypherException(
+            "Domain error in function Sqrt: the argument must not be negative.");
+    }
+    return MathResult(__func__, std::sqrt(value));
+}
+
+cypher::FieldData BuiltinFunction::Ln(RTContext *ctx, const Record &record,
+                                      const std::vector<ArithExprNode> &args) {
+    if (args.size() != 2) CYPHER_ARGUMENT_ERROR();
+    double value = 0;
+    auto kind = EvalMathOperand(args[1], ctx, record, &value);
+    if (kind == MathOperand::NullValue) return cypher::FieldData(lgraph::FieldData());
+    if (kind == MathOperand::Invalid) CYPHER_ARGUMENT_ERROR();
+    if (value <= 0) {
+        throw lgraph::CypherException(
+            "Domain error in function Ln: the argument must be positive.");
+    }
+    return MathResult(__func__, std::log(value));
+}
+
+/* log() is the natural logarithm, matching the openCypher and Neo4j spelling. */
+cypher::FieldData BuiltinFunction::Log(RTContext *ctx, const Record &record,
+                                       const std::vector<ArithExprNode> &args) {
+    if (args.size() != 2) CYPHER_ARGUMENT_ERROR();
+    double value = 0;
+    auto kind = EvalMathOperand(args[1], ctx, record, &value);
+    if (kind == MathOperand::NullValue) return cypher::FieldData(lgraph::FieldData());
+    if (kind == MathOperand::Invalid) CYPHER_ARGUMENT_ERROR();
+    if (value <= 0) {
+        throw lgraph::CypherException(
+            "Domain error in function Log: the argument must be positive.");
+    }
+    return MathResult(__func__, std::log(value));
+}
+
+cypher::FieldData BuiltinFunction::Exp(RTContext *ctx, const Record &record,
+                                       const std::vector<ArithExprNode> &args) {
+    if (args.size() != 2) CYPHER_ARGUMENT_ERROR();
+    double value = 0;
+    auto kind = EvalMathOperand(args[1], ctx, record, &value);
+    if (kind == MathOperand::NullValue) return cypher::FieldData(lgraph::FieldData());
+    if (kind == MathOperand::Invalid) CYPHER_ARGUMENT_ERROR();
+    return MathResult(__func__, std::exp(value));
+}
+
+cypher::FieldData BuiltinFunction::Pow(RTContext *ctx, const Record &record,
+                                       const std::vector<ArithExprNode> &args) {
+    if (args.size() != 3) CYPHER_ARGUMENT_ERROR();
+    double base = 0, exponent = 0;
+    auto base_kind = EvalMathOperand(args[1], ctx, record, &base);
+    auto exponent_kind = EvalMathOperand(args[2], ctx, record, &exponent);
+    if (base_kind == MathOperand::NullValue || exponent_kind == MathOperand::NullValue) {
+        return cypher::FieldData(lgraph::FieldData());
+    }
+    if (base_kind == MathOperand::Invalid || exponent_kind == MathOperand::Invalid) {
+        CYPHER_ARGUMENT_ERROR();
+    }
+    /* pow(-2, 0.5) and 0^-1 come back NaN or infinite and are refused. */
+    return MathResult(__func__, std::pow(base, exponent));
 }
 
 cypher::FieldData BuiltinFunction::ToBoolean(RTContext *ctx, const Record &record,

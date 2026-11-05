@@ -14,6 +14,10 @@
 
 #include <set>
 
+#include <boost/algorithm/string/classification.hpp>
+#include <boost/algorithm/string/join.hpp>
+#include <boost/algorithm/string/split.hpp>
+
 #include "fma-common/string_formatter.h"
 
 #include "core/vertex_index.h"

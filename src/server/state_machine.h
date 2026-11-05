@@ -17,6 +17,7 @@
 //
 #pragma once
 
+#include <memory>
 #include <utility>
 
 #include "fma-common/rotating_files.h"
@@ -43,7 +44,12 @@ class ResourceMonitor;
 #include "server/proto_convert.h"
 
 #ifndef _WIN32
-#include "cypher/execution_plan/scheduler.h"
+// The cypher scheduler is only referenced through a pointer: keeping the
+// definition out of this header keeps the whole cypher execution-plan closure
+// out of every server translation unit that merely holds a StateMachine.
+namespace cypher {
+class Scheduler;
+}
 #endif
 
 namespace lgraph {
@@ -152,7 +158,7 @@ class StateMachine {
     std::shared_ptr<GlobalConfig> global_config_;
     std::unique_ptr<Galaxy> galaxy_;
 #ifndef _WIN32
-    cypher::Scheduler cypher_scheduler_;
+    std::unique_ptr<cypher::Scheduler> cypher_scheduler_;
 #endif
     double start_time_ = fma_common::GetTime();
 
@@ -174,7 +180,7 @@ class StateMachine {
     inline bool IsCypherV2() { return global_config_->is_cypher_v2; }
 
 #ifndef _WIN32
-    inline cypher::Scheduler* GetCypherScheduler() { return &cypher_scheduler_; }
+    inline cypher::Scheduler* GetCypherScheduler() { return cypher_scheduler_.get(); }
 #endif
     virtual double GetUpTimeInSeconds() const { return fma_common::GetTime() - start_time_; }
 

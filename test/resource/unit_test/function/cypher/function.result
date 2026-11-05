@@ -74,6 +74,35 @@ RETURN coalesce(null, null);
 [{"coalesce(null, null)":null}]
 MATCH (n) RETURN coalesce(n.birthyear, n.name);
 [{"coalesce(n.birthyear, n.name)":1910},{"coalesce(n.birthyear, n.name)":1908},{"coalesce(n.birthyear, n.name)":1937},{"coalesce(n.birthyear, n.name)":1939},{"coalesce(n.birthyear, n.name)":1952},{"coalesce(n.birthyear, n.name)":1963},{"coalesce(n.birthyear, n.name)":1930},{"coalesce(n.birthyear, n.name)":1954},{"coalesce(n.birthyear, n.name)":1986},{"coalesce(n.birthyear, n.name)":1965},{"coalesce(n.birthyear, n.name)":1873},{"coalesce(n.birthyear, n.name)":1932},{"coalesce(n.birthyear, n.name)":1970},{"coalesce(n.birthyear, n.name)":"New York"},{"coalesce(n.birthyear, n.name)":"London"},{"coalesce(n.birthyear, n.name)":"Houston"},{"coalesce(n.birthyear, n.name)":null},{"coalesce(n.birthyear, n.name)":null},{"coalesce(n.birthyear, n.name)":null},{"coalesce(n.birthyear, n.name)":null},{"coalesce(n.birthyear, n.name)":null}]
+# Math functions: exact results are asserted directly, transcendental ones through round() so the golden text is not tied to a float repr.
+RETURN sqrt(16);
+[{"sqrt(16)":4.0}]
+RETURN sqrt(0);
+[{"sqrt(0)":0.0}]
+RETURN pow(2, 10);
+[{"pow(2, 10)":1024.0}]
+RETURN pow(2, -1);
+[{"pow(2, -1)":0.5}]
+RETURN ln(1);
+[{"ln(1)":0.0}]
+RETURN log(1);
+[{"log(1)":0.0}]
+RETURN exp(0);
+[{"exp(0)":1.0}]
+RETURN round(sqrt(2) * 100000) = 141421.0;
+[{"round(sqrt(2) * 100000) = 141421.0":true}]
+RETURN round(exp(1) * 100000) = 271828.0;
+[{"round(exp(1) * 100000) = 271828.0":true}]
+RETURN round(ln(2) * 100000) = 69315.0;
+[{"round(ln(2) * 100000) = 69315.0":true}]
+WITH 100.0 AS n_parent, 4.0 AS n_node, 3.5 AS q_value RETURN round((q_value + sqrt(log(n_parent) / n_node)) * 1000) / 1000 = 4.573 AS ucb;
+[{"ucb":true}]
+RETURN sqrt(null);
+[{"sqrt(null)":null}]
+RETURN pow(null, 2);
+[{"pow(null, 2)":null}]
+RETURN pow(2, null);
+[{"pow(2, null)":null}]
 RETURN abs('haha');
 [CypherException] CypherException: There are errors in the number of arguments or the type of arguments of function Abs.
 RETURN ceil('haha');
@@ -90,3 +119,23 @@ RETURN tofloat('haha');
 [CypherException] CypherException: There are errors in the number of arguments or the type of arguments of function ToFloat.
 RETURN tointeger('haha');
 [CypherException] CypherException: There are errors in the number of arguments or the type of arguments of function ToInteger.
+RETURN sqrt('haha');
+[CypherException] CypherException: There are errors in the number of arguments or the type of arguments of function Sqrt.
+RETURN sqrt(true);
+[CypherException] CypherException: There are errors in the number of arguments or the type of arguments of function Sqrt.
+RETURN pow('haha', 2);
+[CypherException] CypherException: There are errors in the number of arguments or the type of arguments of function Pow.
+RETURN pow(2, 'haha');
+[CypherException] CypherException: There are errors in the number of arguments or the type of arguments of function Pow.
+RETURN sqrt(-1);
+[CypherException] CypherException: Domain error in function Sqrt: the argument must not be negative.
+RETURN ln(0);
+[CypherException] CypherException: Domain error in function Ln: the argument must be positive.
+RETURN log(-1);
+[CypherException] CypherException: Domain error in function Log: the argument must be positive.
+RETURN exp(1000);
+[CypherException] CypherException: Domain error in function Exp: the result is not a finite number.
+RETURN pow(0, -1);
+[CypherException] CypherException: Domain error in function Pow: the result is not a finite number.
+RETURN pow(-8, 0.5);
+[CypherException] CypherException: Domain error in function Pow: the result is not a finite number.

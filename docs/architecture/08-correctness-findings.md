@@ -3,7 +3,7 @@
 Correctness defects discovered while building the Phase 0 test harness. They were
 originally recorded here rather than fixed, because Phase 0 is measurement-only.
 Both were found by running ordinary Cypher against the built server
-(`lgraph_server` from `dev/phase0/build.sh`), not by static inspection.
+(`lgraph_server` from `qa/local/run.sh build`), not by static inspection.
 
 > **Update (Phase 2 validation):** F1 and F2 have since been fixed, together
 > with two crashes introduced during the scaling work — F3a (eviction task
@@ -136,7 +136,7 @@ natural emptiness check unusable.
 
 ### Workaround used by the Phase 0 tests
 
-`count_vertices()` in `test/integration/phase0_util.py` tries the
+`count_vertices()` in `test/integration/server_harness.py` tries the
 label-filtered count and falls back to counting returned rows via
 `MATCH (n:Label) RETURN n`, which does not hit the faulty path.
 
@@ -246,8 +246,8 @@ relying on it to validate the graph-count work.
 
 ```bash
 # A/B harness (test-only --lmdb_notls switch, see test/main.cpp)
-dev/phase0/experiments/run_notls_matrix.sh on 4
-dev/phase0/experiments/run_notls_matrix.sh off 4
+docs/architecture/evidence/phase0/run_notls_matrix.sh on 4
+docs/architecture/evidence/phase0/run_notls_matrix.sh off 4
 ```
 
 ### Status update (Phase 4 review) — still open, diagnosis blocked in this window

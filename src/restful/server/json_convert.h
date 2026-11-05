@@ -36,19 +36,12 @@
 #include "core/task_tracker.h"
 #include "core/schema.h"
 #include "core/field_extractor_base.h"
+#include "core/utility_string.h"
 #include "db/acl.h"
 #include "plugin/plugin_desc.h"
 #include "server/state_machine.h"
 
 namespace lgraph {
-
-#ifdef _WIN32
-#define ToUtilityStringT(str) utility::conversions::to_string_t(str)
-#define ToStdString(str) utility::conversions::to_utf8string(str)
-#else
-#define ToUtilityStringT(buf) buf
-#define ToStdString(buf) buf
-#endif
 
 #define _TU ToUtilityStringT
 #define _TS ToStdString

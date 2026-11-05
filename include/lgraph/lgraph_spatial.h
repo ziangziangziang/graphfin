@@ -25,13 +25,17 @@
 #include <vector>
 #include <iostream>
 
-#include <boost/geometry/algorithms/equals.hpp>
-#include <boost/geometry/geometries/geometries.hpp>
-#include <boost/geometry/io/wkt/read.hpp>
-#include <boost/geometry/extensions/gis/io/wkb/write_wkb.hpp>
-#include <boost/geometry/extensions/gis/io/wkb/utility.hpp>
-#include <boost/geometry/io/wkt/wkt.hpp>
-#include <boost/geometry/extensions/gis/io/wkb/read_wkb.hpp>
+#include <boost/cstdint.hpp>
+
+// Only the geometry *model* types are needed here (they are member variables of
+// Point/LineString/Polygon).  The algorithm, relate/overlay and io/wkt/wkb
+// headers are pulled in by src/core/lgraph_spatial.cpp instead: they cost tens
+// of thousands of template-heavy lines and used to be dragged into every
+// translation unit that includes lgraph/lgraph_types.h.
+#include <boost/geometry/core/cs.hpp>
+#include <boost/geometry/geometries/linestring.hpp>
+#include <boost/geometry/geometries/point.hpp>
+#include <boost/geometry/geometries/polygon.hpp>
 
 namespace lgraph_api {
 

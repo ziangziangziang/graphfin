@@ -34,11 +34,11 @@ and vendor-specific ingestion are application projects, not engine milestones.
 | Status | Item |
 | --- | --- |
 | done (unpushed) | PR fast checks vs main full suite; `pr-targeted` Docker gate disabled |
-| done (unpushed) | `ci/phase0/` → `dev/phase0/` |
+| done (unpushed) | `dev/phase0/` → `qa/local/`; experiment/sanitizer sources archived under `docs/architecture/evidence/phase0/` |
 | done (unpushed) | `graphfin_server` alias, `lgraph_server` compat + smoke check |
-| done (unpushed) | `test/suites.json` catalog; pr/merge/phase0 runners wired |
+| done (unpushed) | `test/suites.json` catalog; pr/merge/main/qa runners wired |
+| done (unpushed) | Perf/soak tiers (`perf-smoke`, `perf-series`, `perf-soak`) split from the main correctness gate |
 | TODO | Push the 4 local commits to PR #1 |
-| TODO | `dev/phase0/experiments/` → `test/stress/`; tests under GraphFin name |
 | TODO | Decide PR C++ slice: catalog has `pr-unit`, job currently disabled |
 | TODO | Scope CodeQL c-cpp off PRs (settings change, not code) |
 | TODO | GraphFin-tagged images + new lockfile; client/lib/storage migration per REVIEW stages |

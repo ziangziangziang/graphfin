@@ -1,4 +1,4 @@
-"""Phase 0: per-graph ACL correctness across multiple graphs.
+"""Per-graph ACL correctness across multiple graphs.
 
 Verifies that graph-level access levels are enforced per graph:
 a role granted FULL on one graph and READ on another must be able to write the
@@ -8,14 +8,14 @@ ACL is server-wide storage but per-graph in effect
 (src/db/acl.h:139-163, src/db/acl.cpp:76-107).
 
 Run:
-  PHASE0_TEST_FILES=test_multi_graph_acl.py dev/phase0/run_tests.sh it
+  QA_TEST_FILES=test_multi_graph_acl.py qa/local/run.sh it
 """
 
 import logging
 
 import pytest
 
-from phase0_util import (CypherError, ServerHandle, count_vertices,
+from server_harness import (CypherError, ServerHandle, count_vertices,
     create_graph_if_missing, cypher, cypher_ok, scalar)
 
 log = logging.getLogger(__name__)
@@ -25,9 +25,9 @@ VERTEX_SCHEMA = (
     "'id', 'INT64', false, 'name', 'string', true)"
 )
 
-ROLE = "phase0_acl_role"
-USER = "phase0_acl_user"
-PASSWORD = "phase0_password"
+ROLE = "qa_acl_role"
+USER = "qa_acl_user"
+PASSWORD = "qa_password"
 GRAPHS = ("acl_full", "acl_read", "acl_none")
 
 
@@ -70,7 +70,7 @@ def acl_setup(srv):
                 cypher(c, "CREATE (n:aclitem {id: 1, name: '%s'})" % g, g)
 
         for stmt in (
-            "CALL dbms.security.createRole('%s', 'phase0 acl test')" % ROLE,
+            "CALL dbms.security.createRole('%s', 'qa acl test')" % ROLE,
             "CALL dbms.security.modRoleAccessLevel('%s', "
             "{acl_full:'FULL', acl_read:'READ', acl_none:'NONE'})" % ROLE,
             "CALL dbms.security.createUser('%s', '%s')" % (USER, PASSWORD),

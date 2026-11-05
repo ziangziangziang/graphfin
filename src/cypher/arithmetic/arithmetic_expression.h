@@ -262,6 +262,21 @@ struct BuiltinFunction {
     static cypher::FieldData Sign(RTContext *ctx, const Record &record,
                                   const std::vector<ArithExprNode> &args);
 
+    static cypher::FieldData Sqrt(RTContext *ctx, const Record &record,
+                                  const std::vector<ArithExprNode> &args);
+
+    static cypher::FieldData Ln(RTContext *ctx, const Record &record,
+                                const std::vector<ArithExprNode> &args);
+
+    static cypher::FieldData Log(RTContext *ctx, const Record &record,
+                                 const std::vector<ArithExprNode> &args);
+
+    static cypher::FieldData Exp(RTContext *ctx, const Record &record,
+                                 const std::vector<ArithExprNode> &args);
+
+    static cypher::FieldData Pow(RTContext *ctx, const Record &record,
+                                 const std::vector<ArithExprNode> &args);
+
     static cypher::FieldData ToBoolean(RTContext *ctx, const Record &record,
                                        const std::vector<ArithExprNode> &args);
 
@@ -610,6 +625,11 @@ struct ArithOpNode {
         ae_registered_funcs.emplace("rand", BuiltinFunction::Rand);
         ae_registered_funcs.emplace("round", BuiltinFunction::Round);
         ae_registered_funcs.emplace("sign", BuiltinFunction::Sign);
+        ae_registered_funcs.emplace("sqrt", BuiltinFunction::Sqrt);
+        ae_registered_funcs.emplace("ln", BuiltinFunction::Ln);
+        ae_registered_funcs.emplace("log", BuiltinFunction::Log);
+        ae_registered_funcs.emplace("exp", BuiltinFunction::Exp);
+        ae_registered_funcs.emplace("pow", BuiltinFunction::Pow);
         ae_registered_funcs.emplace("toboolean", BuiltinFunction::ToBoolean);
         ae_registered_funcs.emplace("tofloat", BuiltinFunction::ToFloat);
         ae_registered_funcs.emplace("tostring", BuiltinFunction::ToString);

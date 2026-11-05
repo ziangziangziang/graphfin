@@ -114,6 +114,26 @@ if (WITH_TESTS)
     message("Build with tests.")
 endif (WITH_TESTS)
 
+option(LGRAPH_STATIC_RUNTIME "Link libstdc++/libgcc statically when the toolchain supports it." ON)
+set(LGRAPH_OPENBLAS_ROOT "/opt/OpenBLAS" CACHE PATH "OpenBLAS installation prefix (include/ and lib/).")
+
+# CI images install OpenBLAS under /opt; the low-memory host keeps a copy under
+# deps/install instead. Resolve the library once so every target links the same
+# file and a missing OpenBLAS fails at configure time with a usable message.
+if (EXISTS "${LGRAPH_OPENBLAS_ROOT}/lib/libopenblas.a")
+    set(LGRAPH_OPENBLAS_LIBRARY "${LGRAPH_OPENBLAS_ROOT}/lib/libopenblas.a")
+elseif (EXISTS "${LGRAPH_OPENBLAS_ROOT}/lib/libopenblas.so")
+    set(LGRAPH_OPENBLAS_LIBRARY "${LGRAPH_OPENBLAS_ROOT}/lib/libopenblas.so")
+elseif (EXISTS "${CMAKE_CURRENT_LIST_DIR}/deps/install/OpenBLAS/lib/libopenblas.a")
+    message(STATUS "OpenBLAS not found at ${LGRAPH_OPENBLAS_ROOT}; using deps/install/OpenBLAS.")
+    set(LGRAPH_OPENBLAS_ROOT "${CMAKE_CURRENT_LIST_DIR}/deps/install/OpenBLAS")
+    set(LGRAPH_OPENBLAS_LIBRARY "${LGRAPH_OPENBLAS_ROOT}/lib/libopenblas.a")
+else ()
+    message(FATAL_ERROR
+        "OpenBLAS not found at ${LGRAPH_OPENBLAS_ROOT}. "
+        "Set -DLGRAPH_OPENBLAS_ROOT=<prefix> or install it under deps/install/OpenBLAS.")
+endif ()
+
 # disable krb5
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DOPENSSL_NO_KRB5=1")
 
@@ -197,12 +217,23 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # GNU: static link libstdc++ and libgcc
 # Clang: static link libc++
+include(CheckCXXSourceCompiles)
 if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    CHECK_CXX_COMPILER_FLAG("-static-libstdc++ -static-libgcc" COMPILER_SUPPORTS_STATIC_GCC)
-    if (COMPILER_SUPPORTS_STATIC_GCC)
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -static-libstdc++ -static-libgcc")
-    else ()
-        message(SEND_ERROR "The compiler ${CMAKE_CXX_COMPILER} has no static libgcc support. Please use a different C++ compiler.")
+    if (LGRAPH_STATIC_RUNTIME)
+        # Accepting the flag is not enough: the static archives must also be
+        # installed. Try a real link so hosts without libstdc++.a fall back to
+        # dynamic linking instead of failing at the final link.
+        set(CMAKE_REQUIRED_FLAGS "-static-libstdc++ -static-libgcc")
+        check_cxx_source_compiles(
+            "#include <string>\nint main() { std::string s = \"x\"; return s.empty() ? 0 : 1; }"
+            LGRAPH_STATIC_RUNTIME_LINKS)
+        unset(CMAKE_REQUIRED_FLAGS)
+        if (LGRAPH_STATIC_RUNTIME_LINKS)
+            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -static-libstdc++ -static-libgcc")
+        else ()
+            message(WARNING "LGRAPH_STATIC_RUNTIME=ON but the toolchain cannot link the "
+                            "static C++ runtime; linking dynamically.")
+        endif ()
     endif ()
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     CHECK_CXX_COMPILER_FLAG("-stdlib=libc++" COMPILER_SUPPORTS_STATIC_CLANG)

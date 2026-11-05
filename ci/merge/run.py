@@ -105,7 +105,7 @@ def main():
         for name in ["lgraph_standalone.json", "lgraph_ha.json"]:
             shutil.copy2(str(ROOT / "build" / "output" / name), str(output / name))
         for name in ["test_merge_series.py", "test_merge_series_ha.py", "test_timeseries.py",
-                     "phase0_util.py", "ha_util.py", "bolt_driver.py"]:
+                     "server_harness.py", "ha_util.py", "bolt_driver.py"]:
             shutil.copy2(str(ROOT / "test" / "integration" / name), str(tests / name))
         env = dict(os.environ)
         env["PYTHONPATH"] = ":".join([str(ROOT / "build/output"), str(tests),

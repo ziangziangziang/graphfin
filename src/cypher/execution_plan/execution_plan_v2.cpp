@@ -21,6 +21,9 @@
 #include "cypher/execution_plan/validation/graph_name_checker.h"
 #include "cypher/execution_plan/optimization/pass_manager.h"
 
+#include "bolt/connection.h"
+#include "server/bolt_session.h"
+
 namespace cypher {
 
 ExecutionPlanV2::~ExecutionPlanV2() { OpBase::FreeStream(root_); }

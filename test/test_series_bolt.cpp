@@ -21,8 +21,9 @@
  * i.e. `ResultElement::ToBolt()` per cell: scalars convert to Bolt natives
  * (INT64, DOUBLE, LocalDateTime, ...), while LIST/MAP cells become JSON
  * *strings* (the structured std::any conversion is commented out upstream).
- * REST, by contrast, serves structured JSON. Both shapes are pinned here
- * end-to-end: Cypher -> Result -> BoltRecords -> PackStream bytes.
+ * REST's binary result path flattens LIST/MAP columns to the same JSON text.
+ * Both shapes are pinned here end-to-end: Cypher -> Result -> BoltRecords ->
+ * PackStream bytes.
  */
 
 #include <any>
@@ -248,6 +249,26 @@ TEST_F(TestSeriesBolt, BoltScalarsNullsAndBoundaries) {
         ASSERT_EQ(cells.size(), 1u);
         EXPECT_EQ(std::any_cast<std::string>(cells[0][0]), "[]");
         EXPECT_EQ(std::any_cast<std::string>(cells[0][1]), "{}");
+        ExpectPackable(cells);
+    }
+    // Non-empty containers keep their nesting, including maps inside arrays.
+    // A string that looks like JSON must stay a string at any depth.
+    ASSERT_TRUE(RunCypher(
+        "RETURN {a: 1, b: [1, 2], c: {d: 'x'}} AS m, ['[]', '{}'] AS s"));
+    {
+        auto cells = BoltCells();
+        ASSERT_EQ(cells.size(), 1u);
+        EXPECT_EQ(std::any_cast<std::string>(cells[0][0]),
+                  "{\"a\":1,\"b\":[1,2],\"c\":{\"d\":\"x\"}}");
+        EXPECT_EQ(std::any_cast<std::string>(cells[0][1]), "[\"[]\",\"{}\"]");
+        ExpectPackable(cells);
+    }
+    // A null inside a map stays JSON null.
+    ASSERT_TRUE(RunCypher("RETURN {a: null, b: 1} AS m"));
+    {
+        auto cells = BoltCells();
+        ASSERT_EQ(cells.size(), 1u);
+        EXPECT_EQ(std::any_cast<std::string>(cells[0][0]), "{\"a\":null,\"b\":1}");
         ExpectPackable(cells);
     }
     // A string that looks like JSON stays a string (detached property read).

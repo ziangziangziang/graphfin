@@ -1,4 +1,4 @@
-"""Phase 0: snapshot and restore correctness with multiple graphs.
+"""Snapshot and restore correctness with multiple graphs.
 
 Exercises the only whole-server backup path available in-process:
 `CALL dbms.takeSnapshot()` -> `Galaxy::SaveSnapshot`
@@ -11,7 +11,7 @@ Restore has no dedicated tool: it is a directory copy plus a server start
 performs exactly that procedure and verifies the restored database.
 
 Run:
-  PHASE0_TEST_FILES=test_backup_restore_scale.py dev/phase0/run_tests.sh it
+  QA_TEST_FILES=test_backup_restore_scale.py qa/local/run.sh it
 """
 
 import logging
@@ -20,7 +20,7 @@ import shutil
 
 import pytest
 
-from phase0_util import (ServerHandle, count_vertices, create_graph, cypher,
+from server_harness import (ServerHandle, count_vertices, create_graph, cypher,
     graph_exists, list_graphs, scalar, wait_for)
 
 log = logging.getLogger(__name__)
