@@ -1,4 +1,4 @@
-"""Phase 0: restart and crash recovery with multiple graphs.
+"""Restart and crash recovery with multiple graphs.
 
 Covers:
   * graceful restart with data written across several graphs
@@ -15,7 +15,7 @@ lose recently acknowledged writes. These tests assert *consistency and
 recoverability*, not durability of unflushed writes.
 
 Run:
-  PHASE0_TEST_FILES=test_restart_and_failure_recovery.py dev/phase0/run_tests.sh it
+  QA_TEST_FILES=test_restart_and_failure_recovery.py qa/local/run.sh it
 """
 
 import logging
@@ -24,7 +24,7 @@ import time
 
 import pytest
 
-from phase0_util import (ServerHandle, count_vertices, create_graph, cypher,
+from server_harness import (ServerHandle, count_vertices, create_graph, cypher,
     graph_exists, list_graphs, scalar)
 
 log = logging.getLogger(__name__)

@@ -12,11 +12,21 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <random>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#include <Windows.h>
+#define GetCurrentPid GetCurrentProcessId
+#else
+#include <unistd.h>
+#define GetCurrentPid getpid
+#endif
 
 #include "gtest/gtest.h"
 #include "./ut_utils.h"
@@ -107,7 +117,9 @@ std::vector<int64_t> RangeTimes(const std::vector<Point>& points) {
 class TestSeriesStore : public TuGraphTest {
  protected:
     void SetUp() override {
-        dir_ = "./test_series_store_db";
+        // Unique per process so concurrent unit_test processes sharing a cwd
+        // cannot race on the same LMDB directory.
+        dir_ = "./test_series_store_db_" + std::to_string(GetCurrentPid());
         fma_common::file_system::RemoveDir(dir_);
         fma_common::file_system::MkDir(dir_);
     }
@@ -810,4 +822,330 @@ TEST_F(TestSeriesStore, FailedSplitLeavesStoredBucketsUntouched) {
     EXPECT_EQ(session.series().Table()->GetKeyCount(session.txn()), 1u);
     ASSERT_TRUE(session.series().Range(session.txn(), v, 0, kMinTs, kMaxTs, cols, &points));
     EXPECT_EQ(points.size(), 4u);
+}
+
+namespace {
+
+/** (bucket_start, encoded bytes) of one element's field 0, in key order. Two
+ *  elements written through different paths are byte-equivalent exactly when
+ *  their snapshots match. */
+std::vector<std::pair<int64_t, std::string>> BucketSnapshot(SeriesSession& s,
+                                                            const ElementKey& v) {
+    std::string prefix;
+    SeriesStore::MakeFieldPrefix(v, 0, &prefix);
+    std::vector<std::pair<int64_t, std::string>> out;
+    auto it = s.series().Table()->GetIterator(s.txn());
+    for (it->GotoFirstKey(); it->IsValid(); it->Next()) {
+        const std::string key = it->GetKey().AsString();
+        if (key.compare(0, prefix.size(), prefix) != 0) continue;
+        uint16_t fid = 0;
+        int64_t start = 0;
+        EXPECT_TRUE(SeriesStore::ParseBucketKey(it->GetKey(), &fid, &start));
+        out.emplace_back(start, it->GetValue().AsString());
+    }
+    return out;
+}
+
+/** Non-decreasing timestamps with gaps of 0, half a day or a day (gap 0 makes
+ *  a duplicate, i.e. a correction), random values and occasional nulls. */
+std::vector<Point> RandomPoints(size_t n, uint64_t seed) {
+    std::mt19937_64 rng(seed);
+    std::vector<Point> pts;
+    int64_t ts = 0;
+    for (size_t i = 0; i < n; ++i) {
+        ts += static_cast<int64_t>(rng() % 3) * (kUsPerDay / 2);
+        Point p;
+        p.ts = ts;
+        p.values = Point5(static_cast<double>(rng() % 100000) / 8.0);
+        if (rng() % 7 == 0) p.values[rng() % 5] = N();
+        pts.push_back(std::move(p));
+    }
+    return pts;
+}
+
+}  // namespace
+
+TEST_F(TestSeriesStore, BatchMatchesSequentialAscendingBytes) {
+    SeriesSession session(dir_);
+    const std::vector<MeasureColumn> cols = OhlcColumns();
+
+    // One element receives every point through sequential Upsert in ascending
+    // order, its twin the same points through UpsertBatch in shuffled order.
+    // When the point cap (or the span cap) binds, the batch must split at the
+    // same moments, so the stored bytes are identical. Phase two back-fills
+    // interleaved timestamps and corrections across the existing buckets.
+    auto check_equivalence = [&](int64_t seq_vid, int64_t batch_vid, const BucketPolicy& policy,
+                                 uint64_t seed) {
+        const ElementKey seq = ElementKey::FromVertex(seq_vid);
+        const ElementKey batch = ElementKey::FromVertex(batch_vid);
+        std::mt19937_64 rng(seed);
+        for (int phase = 0; phase < 2; ++phase) {
+            std::vector<Point> pts = RandomPoints(200, seed + phase);
+            if (phase == 1) {
+                // Shift into the gaps of phase one so every insert lands
+                // inside an existing bucket rather than past the last one.
+                for (auto& p : pts) p.ts += kUsPerDay / 4;
+            }
+            std::shuffle(pts.begin(), pts.end(), rng);
+            // Reference: sequential ascending Upserts of the same shuffled
+            // list. stable_sort keeps the shuffled relative order of equal
+            // timestamps, so the last-wins winner for a repeated timestamp
+            // matches UpsertBatch, which stable-sorts its input the same way.
+            std::vector<Point> ascending = pts;
+            std::stable_sort(ascending.begin(), ascending.end(),
+                             [](const Point& a, const Point& b) { return a.ts < b.ts; });
+            for (const auto& p : ascending) {
+                ASSERT_TRUE(session.series().Upsert(session.txn(), seq, 0, p.ts, p.values,
+                                                    cols, policy));
+            }
+            BatchStats stats;
+            ASSERT_TRUE(session.series().UpsertBatch(session.txn(), batch, 0, pts, cols,
+                                                     policy, &stats));
+            std::vector<int64_t> distinct;
+            for (const auto& p : pts) distinct.push_back(p.ts);
+            std::sort(distinct.begin(), distinct.end());
+            distinct.erase(std::unique(distinct.begin(), distinct.end()), distinct.end());
+            EXPECT_EQ(stats.written + stats.replaced, distinct.size());
+            EXPECT_EQ(BucketSnapshot(session, batch), BucketSnapshot(session, seq));
+        }
+    };
+
+    int64_t vid = 100;
+    for (uint32_t cap : {4u, 7u, 1000u}) {
+        BucketPolicy policy;
+        policy.max_points = cap;
+        check_equivalence(vid, vid + 1, policy, 42 + cap);
+        vid += 2;
+    }
+    BucketPolicy span_policy;
+    span_policy.max_span_us = 2 * static_cast<uint64_t>(kUsPerDay);
+    check_equivalence(vid, vid + 1, span_policy, 99);
+    session.Commit();
+}
+
+TEST_F(TestSeriesStore, BatchByteCapKeepsPointsAndCap) {
+    SeriesSession session(dir_);
+    const ElementKey v = ElementKey::FromVertex(20);
+    const std::vector<MeasureColumn> cols = OhlcColumns();
+    BucketPolicy policy;
+    policy.max_points = 1000;
+    policy.max_bytes = 128;
+
+    std::vector<Point> pts;
+    for (int i = 0; i < 12; ++i) {
+        Point p;
+        p.ts = i * kUsPerDay;
+        p.values = Point5(i);
+        pts.push_back(std::move(p));
+    }
+    BatchStats stats;
+    ASSERT_TRUE(session.series().UpsertBatch(session.txn(), v, 0, pts, cols, policy, &stats));
+    EXPECT_EQ(stats.written, 12u);
+    EXPECT_EQ(stats.replaced, 0u);
+    session.Commit();
+
+    // With only the byte cap binding, boundaries may differ from sequential
+    // splits, but every point survives and every stored bucket obeys the cap.
+    EXPECT_GT(session.series().Table()->GetKeyCount(session.txn()), 1u);
+    std::vector<Point> points;
+    ASSERT_TRUE(session.series().Range(session.txn(), v, 0, kMinTs, kMaxTs, cols, &points));
+    ASSERT_EQ(points.size(), 12u);
+    for (int i = 0; i < 12; ++i) {
+        EXPECT_EQ(points[i].ts, i * kUsPerDay);
+        EXPECT_DOUBLE_EQ(points[i].values[1].d, static_cast<double>(i) + 1);
+    }
+    auto it = session.series().Table()->GetIterator(session.txn());
+    ASSERT_TRUE(it->GotoFirstKey());
+    for (; it->IsValid(); it->Next()) {
+        EXPECT_LE(it->GetValue().Size(), policy.max_bytes);
+    }
+}
+
+TEST_F(TestSeriesStore, BatchIsOrderIndependent) {
+    SeriesSession session(dir_);
+    const std::vector<MeasureColumn> cols = OhlcColumns();
+    BucketPolicy policy;
+    policy.max_points = 4;
+
+    std::vector<Point> pts;
+    for (int i = 0; i < 10; ++i) {
+        Point p;
+        p.ts = i * kUsPerDay;
+        p.values = Point5(i);
+        pts.push_back(std::move(p));
+    }
+    std::vector<Point> descending(pts.rbegin(), pts.rend());
+    std::vector<Point> shuffled = pts;
+    std::shuffle(shuffled.begin(), shuffled.end(), std::mt19937_64(7));
+
+    // Descending sequential Upserts fragment into one bucket per point; the
+    // batch sorts first, so all three orders produce the same two-bucket layout.
+    ASSERT_TRUE(session.series().UpsertBatch(session.txn(), ElementKey::FromVertex(30), 0, pts,
+                                             cols, policy, nullptr));
+    ASSERT_TRUE(session.series().UpsertBatch(session.txn(), ElementKey::FromVertex(31), 0,
+                                             descending, cols, policy, nullptr));
+    ASSERT_TRUE(session.series().UpsertBatch(session.txn(), ElementKey::FromVertex(32), 0,
+                                             shuffled, cols, policy, nullptr));
+    session.Commit();
+    const auto ascending_snapshot = BucketSnapshot(session, ElementKey::FromVertex(30));
+    EXPECT_EQ(ascending_snapshot.size(), 4u);  // same half-split layout as sequential
+    EXPECT_EQ(BucketSnapshot(session, ElementKey::FromVertex(31)), ascending_snapshot);
+    EXPECT_EQ(BucketSnapshot(session, ElementKey::FromVertex(32)), ascending_snapshot);
+}
+
+TEST_F(TestSeriesStore, BatchStatsAndLastWinsDuplicates) {
+    SeriesSession session(dir_);
+    const ElementKey v = ElementKey::FromVertex(40);
+    const std::vector<MeasureColumn> cols = OhlcColumns();
+
+    BatchStats stats;
+    ASSERT_TRUE(session.series().UpsertBatch(session.txn(), v, 0, {}, cols, kDefaultPolicy,
+                                             &stats));
+    EXPECT_EQ(stats.written, 0u);
+    EXPECT_EQ(stats.replaced, 0u);
+    EXPECT_EQ(session.series().Table()->GetKeyCount(session.txn()), 0u);
+
+    auto point_at = [](int64_t day, double base) {
+        Point p;
+        p.ts = day * kUsPerDay;
+        p.values = Point5(base);
+        return p;
+    };
+    // ts 1 appears twice: the later occurrence wins and counts once.
+    std::vector<Point> first{point_at(0, 10), point_at(1, 11), point_at(1, 111),
+                             point_at(2, 12), point_at(3, 13)};
+    ASSERT_TRUE(session.series().UpsertBatch(session.txn(), v, 0, first, cols, kDefaultPolicy,
+                                             &stats));
+    EXPECT_EQ(stats.written, 4u);
+    EXPECT_EQ(stats.replaced, 0u);
+
+    std::vector<Point> second{point_at(1, 999), point_at(4, 14), point_at(5, 15)};
+    ASSERT_TRUE(session.series().UpsertBatch(session.txn(), v, 0, second, cols, kDefaultPolicy,
+                                             &stats));
+    EXPECT_EQ(stats.written, 2u);
+    EXPECT_EQ(stats.replaced, 1u);
+    session.Commit();
+
+    std::vector<Point> points;
+    ASSERT_TRUE(session.series().Range(session.txn(), v, 0, kMinTs, kMaxTs, cols, &points));
+    ASSERT_EQ(points.size(), 6u);
+    EXPECT_DOUBLE_EQ(points[1].values[0].d, 999.0);
+    EXPECT_EQ(points[1].ts, kUsPerDay);
+}
+
+TEST_F(TestSeriesStore, BatchRejectsInvalidPointsBeforeWriting) {
+    SeriesSession session(dir_);
+    const ElementKey v = ElementKey::FromVertex(50);
+    const std::vector<MeasureColumn> cols = OhlcColumns();
+
+    auto point_at = [](int64_t ts) {
+        Point p;
+        p.ts = ts;
+        p.values = Point5(1);
+        return p;
+    };
+    BatchStats stats;
+    // One bad point anywhere in the batch rejects the whole batch untouched.
+    std::vector<Point> bad_ts{point_at(0), point_at(kMaxTs), point_at(2 * kUsPerDay)};
+    EXPECT_FALSE(session.series().UpsertBatch(session.txn(), v, 0, bad_ts, cols,
+                                              kDefaultPolicy, &stats));
+    std::vector<Point> bad_double{point_at(0), point_at(kUsPerDay)};
+    bad_double[1].values[0] = D(std::numeric_limits<double>::quiet_NaN());
+    EXPECT_FALSE(session.series().UpsertBatch(session.txn(), v, 0, bad_double, cols,
+                                              kDefaultPolicy, &stats));
+    std::vector<Point> bad_count{point_at(0), point_at(kUsPerDay)};
+    bad_count[1].values.pop_back();
+    EXPECT_FALSE(session.series().UpsertBatch(session.txn(), v, 0, bad_count, cols,
+                                              kDefaultPolicy, &stats));
+    EXPECT_EQ(session.series().Table()->GetKeyCount(session.txn()), 0u);
+
+    // A stored measure set that no longer matches the schema fails the batch
+    // before it writes anything.
+    ASSERT_TRUE(session.series().Upsert(session.txn(), v, 0, 0, Point5(1), cols,
+                                        kDefaultPolicy));
+    const auto before = BucketSnapshot(session, v);
+    std::vector<MeasureColumn> other_cols(4, MeasureColumn{MeasureType::DOUBLE});
+    std::vector<Point> mismatch{point_at(kUsPerDay)};
+    EXPECT_FALSE(session.series().UpsertBatch(session.txn(), v, 0, mismatch, other_cols,
+                                              kDefaultPolicy, &stats));
+    EXPECT_EQ(BucketSnapshot(session, v), before);
+
+    std::vector<Point> good{point_at(kUsPerDay), point_at(2 * kUsPerDay)};
+    ASSERT_TRUE(session.series().UpsertBatch(session.txn(), v, 0, good, cols, kDefaultPolicy,
+                                             &stats));
+    EXPECT_EQ(stats.written, 2u);
+    session.Commit();
+}
+
+TEST_F(TestSeriesStore, BatchDecodesEachBucketOnce) {
+    SeriesSession session(dir_);
+    const ElementKey v = ElementKey::FromVertex(60);
+    const std::vector<MeasureColumn> cols = OhlcColumns();
+
+    std::vector<Point> pts;
+    for (int i = 0; i < 200; ++i) {
+        Point p;
+        p.ts = i * kUsPerDay;
+        p.values = Point5(i);
+        pts.push_back(std::move(p));
+    }
+    session.series().ResetDecodeCount();
+    ASSERT_TRUE(session.series().UpsertBatch(session.txn(), v, 0, pts, cols, kDefaultPolicy,
+                                             nullptr));
+    // The field is empty, so the batch builds one bucket in memory without
+    // decoding anything; sequential Upserts would decode/re-encode 200 times.
+    EXPECT_EQ(session.series().DecodeCount(), 0u);
+
+    std::vector<Point> more;
+    for (int i = 200; i < 400; ++i) {
+        Point p;
+        p.ts = i * kUsPerDay;
+        p.values = Point5(i);
+        more.push_back(std::move(p));
+    }
+    session.series().ResetDecodeCount();
+    ASSERT_TRUE(session.series().UpsertBatch(session.txn(), v, 0, more, cols, kDefaultPolicy,
+                                             nullptr));
+    EXPECT_EQ(session.series().DecodeCount(), 1u);
+    session.Commit();
+    size_t count = 0;
+    ASSERT_TRUE(session.series().Count(session.txn(), v, 0, kMinTs, kMaxTs, cols, &count));
+    EXPECT_EQ(count, 400u);
+    EXPECT_EQ(session.series().Table()->GetKeyCount(session.txn()), 1u);
+}
+
+TEST_F(TestSeriesStore, BatchFailedByteCapAbortKeepsOriginalData) {
+    SeriesSession session(dir_);
+    const ElementKey v = ElementKey::FromVertex(70);
+    const std::vector<MeasureColumn> cols = OhlcColumns();
+    for (int i = 0; i < 4; ++i) {
+        ASSERT_TRUE(session.series().Upsert(session.txn(), v, 0, i * kUsPerDay, Point5(i), cols,
+                                             kDefaultPolicy));
+    }
+    session.Commit();
+
+    // No half of any split can fit one byte, so the batch reports false. The
+    // contract for that case is abort: the caller rolls the transaction back
+    // and the original data is intact.
+    BucketPolicy impossible;
+    impossible.max_points = 2;
+    impossible.max_bytes = 1;
+    std::vector<Point> pts;
+    for (int i = 4; i < 8; ++i) {
+        Point p;
+        p.ts = i * kUsPerDay;
+        p.values = Point5(i);
+        pts.push_back(std::move(p));
+    }
+    EXPECT_FALSE(session.series().UpsertBatch(session.txn(), v, 0, pts, cols, impossible,
+                                              nullptr));
+    session.Abort();
+    std::vector<Point> points;
+    ASSERT_TRUE(session.series().Range(session.txn(), v, 0, kMinTs, kMaxTs, cols, &points));
+    ASSERT_EQ(points.size(), 4u);
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_EQ(points[i].ts, i * kUsPerDay);
+        EXPECT_DOUBLE_EQ(points[i].values[0].d, static_cast<double>(i));
+    }
+    session.Commit();
 }

@@ -21,6 +21,7 @@
 #include "http/import_task.h"
 #include "http/algo_task.h"
 #include "protobuf/ha.pb.h"
+#include "cypher/execution_plan/scheduler.h"
 #include "server/json_convert.h"
 #include "server/db_management_client.h"
 #include "fma-common/string_formatter.h"

@@ -110,6 +110,30 @@ class SeriesStore {
                 const std::vector<MeasureColumn>& columns, const BucketPolicy& policy);
 
     /**
+     * Writes many points in one pass, merging them into each bucket they land
+     * in instead of rewriting the bucket once per point. Every point is
+     * validated before anything is written; duplicate timestamps within the
+     * batch collapse to the last occurrence (last-wins). Points may arrive in
+     * any order: the batch is sorted first, so unlike repeated Upsert calls a
+     * descending back-fill does not fragment into one bucket per point.
+     *
+     * When the point cap binds, buckets split at exactly the same moments as
+     * sequential Upsert calls in ascending order, so the resulting layout is
+     * identical. When only the byte cap binds, the final point set is the same
+     * but bucket boundaries may differ (sequential splits earlier).
+     *
+     * `stats` (optional) receives the written/replaced counts. Returns false if
+     * any point is invalid (nothing written), if a stored bucket does not match
+     * `columns`, or if a point cannot be made to fit the bucket byte cap. In
+     * the last two cases earlier buckets of the batch may already be written
+     * into `txn`: the caller must abort the transaction to keep the batch
+     * atomic.
+     */
+    bool UpsertBatch(KvTransaction& txn, const ElementKey& elem, uint16_t field_id,
+                     std::vector<Point> points, const std::vector<MeasureColumn>& columns,
+                     const BucketPolicy& policy, BatchStats* stats);
+
+    /**
      * Reads every point with t0 <= ts <= t1 in ascending time order. Ranges are
      * inclusive and may be unbounded via kMinTs/kMaxTs. An empty range is not an
      * error. Returns false only if a stored bucket is malformed.

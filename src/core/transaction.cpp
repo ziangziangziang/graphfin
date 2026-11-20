@@ -1663,6 +1663,43 @@ bool Transaction::SetVertexSeriesPoint(VertexId id, const std::string& field, in
                                  columns, policy);
 }
 
+namespace {
+
+/** Per-point checks of a batch, with the same error texts as the single-point
+ *  setters; runs before the store touches the transaction. */
+void ValidateSeriesBatch(const std::string& field, const std::vector<series::Point>& points,
+                         const std::vector<series::MeasureColumn>& columns) {
+    for (const auto& pt : points) {
+        if (!series::IsValidSeriesTimestamp(pt.ts)) {
+            THROW_CODE(InputError, "Series timestamp [{}] out of DATETIME range.", pt.ts);
+        }
+        if (pt.values.size() != columns.size()) {
+            THROW_CODE(InputError, "Series field [{}] has {} measures, but {} values were given.",
+                       field, columns.size(), pt.values.size());
+        }
+        if (!series::MeasureValuesAreStorable(pt.values, columns)) {
+            THROW_CODE(InputError, "Series DOUBLE measure values must be finite numbers.");
+        }
+    }
+}
+
+}  // namespace
+
+bool Transaction::SetVertexSeriesPoints(VertexId id, const std::string& field,
+                                        std::vector<series::Point> points,
+                                        series::BatchStats* stats) {
+    ThrowIfReadOnlyTxn();
+    VertexIterator it = GetVertexIterator(id);
+    if (!it.IsValid()) return false;
+    uint16_t field_id = 0;
+    std::vector<series::MeasureColumn> columns;
+    series::BucketPolicy policy;
+    if (!ResolveVertexSeries(it, field, &field_id, &columns, &policy)) return false;
+    ValidateSeriesBatch(field, points, columns);
+    return series_store_->UpsertBatch(*txn_, series::ElementKey::FromVertex(id), field_id,
+                                      std::move(points), columns, policy, stats);
+}
+
 bool Transaction::GetVertexSeriesRange(VertexId id, const std::string& field, int64_t t0,
                                        int64_t t1, std::vector<series::Point>* points) {
     VertexIterator it = GetVertexIterator(id);
@@ -1817,6 +1854,19 @@ bool Transaction::SetEdgeSeriesPoint(const EdgeUid& uid, const std::string& fiel
     }
     return series_store_->Upsert(*txn_, series::ElementKey::FromEdge(uid), field_id, ts, values,
                                  columns, policy);
+}
+
+bool Transaction::SetEdgeSeriesPoints(const EdgeUid& uid, const std::string& field,
+                                      std::vector<series::Point> points,
+                                      series::BatchStats* stats) {
+    ThrowIfReadOnlyTxn();
+    uint16_t field_id = 0;
+    std::vector<series::MeasureColumn> columns;
+    series::BucketPolicy policy;
+    if (!ResolveEdgeSeries(uid, field, &field_id, &columns, &policy)) return false;
+    ValidateSeriesBatch(field, points, columns);
+    return series_store_->UpsertBatch(*txn_, series::ElementKey::FromEdge(uid), field_id,
+                                      std::move(points), columns, policy, stats);
 }
 
 bool Transaction::GetEdgeSeriesRange(const EdgeUid& uid, const std::string& field, int64_t t0,

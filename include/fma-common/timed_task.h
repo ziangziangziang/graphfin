@@ -13,6 +13,7 @@
 #include <condition_variable>
 #include <map>
 #include <mutex>
+#include <queue>
 #include <thread>
 
 #include "tools/lgraph_log.h"

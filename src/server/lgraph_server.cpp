@@ -16,11 +16,6 @@
 #include <thread>
 #include <boost/log/core.hpp>
 
-#ifndef _WIN32
-// disable thread limit on windows
-#include <pplx/threadpool.h>
-#endif
-
 #include "fma-common/fma_stream.h"
 #include "fma-common/hardware_info.h"
 #include "server/lgraph_server.h"
@@ -29,7 +24,6 @@
 #include "core/version_info.h"
 #include "core/full_text_index.h"
 #include "core/thread_id.h"  // LGRAPH_MAX_THREADS for the memory estimate
-#include "restful/server/rest_server.h"
 #include "server/state_machine.h"
 #include "server/ha_state_machine.h"
 #include "server/db_management_client.h"
@@ -291,13 +285,7 @@ int LGraphServer::Start() {
 
 #ifndef _WIN32
         // set REST thread limit
-        if (config_->thread_limit != 0) {
-            try {
-                crossplat::threadpool::initialize_with_threads(config_->thread_limit);
-            } catch (const std::exception& e) {
-                LOG_WARN() << "failed to init cpprest threadpool, exception:" << e.what();
-            }
-        }
+        lgraph::InitRestThreadPool(config_->thread_limit);
         rpc_service_ = std::make_unique<RPCService>(state_machine_.get());
         // start RPC service
         if (config_->enable_rpc) {
@@ -359,9 +347,7 @@ int LGraphServer::Start() {
             state_machine_->SetTokenTimeUnlimited();
         }
         // start rest
-        lgraph::RestServer::Config rest_config(*config_);
-        rest_server_ = std::make_unique<lgraph::RestServer>(state_machine_.get(),
-                                                            rest_config, config_);
+        rest_server_ = lgraph::CreateRestServer(state_machine_.get(), config_);
         if (config_->bolt_port > 0) {
             if (!bolt::BoltServer::Instance().Start(state_machine_.get(),
                                                config_->bolt_port,

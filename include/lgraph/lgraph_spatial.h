@@ -24,7 +24,14 @@
 #include <string>
 #include <vector>
 #include <iostream>
+#include <memory>
 
+#include <boost/cstdint.hpp>
+
+// The full Boost.Geometry algorithm/io headers are kept in this installed SDK
+// header for backward compatibility: downstream clients historically included
+// lgraph/lgraph_spatial.h and relied on these being available transitively.
+// They are also included directly by src/core/lgraph_spatial.cpp.
 #include <boost/geometry/algorithms/equals.hpp>
 #include <boost/geometry/geometries/geometries.hpp>
 #include <boost/geometry/io/wkt/read.hpp>
@@ -32,6 +39,10 @@
 #include <boost/geometry/extensions/gis/io/wkb/utility.hpp>
 #include <boost/geometry/io/wkt/wkt.hpp>
 #include <boost/geometry/extensions/gis/io/wkb/read_wkb.hpp>
+#include <boost/geometry/core/cs.hpp>
+#include <boost/geometry/geometries/linestring.hpp>
+#include <boost/geometry/geometries/point.hpp>
+#include <boost/geometry/geometries/polygon.hpp>
 
 namespace lgraph_api {
 

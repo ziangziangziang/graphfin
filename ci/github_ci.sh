@@ -101,9 +101,12 @@ else
       # lives in test/suites.json (procedure_off_exclusions). suites.py fails
       # loudly on catalog errors so OFF can never miscount as a pass.
       # shellcheck disable=SC2046
-      rm -f $(python3 ./test/suites.py --suite main-it --field procedure_off_exclusions)
+      rm -f $(python3 $WORKSPACE/test/suites.py --suite main-it --field procedure_off_exclusions)
   fi
-  pytest ./
+  # Correctness gate: perf and soak measurements are recorded, never gated, so
+  # the main integration job runs everything except those markers.
+  MAIN_IT_MARKER="$(python3 $WORKSPACE/test/suites.py --suite main-it --field pytest_marker)"
+  pytest ./ -m "$MAIN_IT_MARKER"
   # codecov
   cd $WORKSPACE
   mkdir testresult

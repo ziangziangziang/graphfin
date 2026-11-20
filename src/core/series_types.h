@@ -141,6 +141,17 @@ struct Point {
 };
 
 /**
+ * Outcome of a batched write, counted per distinct timestamp: `written` is a
+ * timestamp new to the series, `replaced` is a correction of a stored point.
+ * Within-batch duplicates are collapsed before counting, so
+ * written + replaced == the number of distinct timestamps in the batch.
+ */
+struct BatchStats {
+    size_t written = 0;
+    size_t replaced = 0;
+};
+
+/**
  * A decoded bucket value. `columns[c][p]` is measure column c at point p, and
  * `measure_ids[c]` is the schema measure index that column came from. Decoding
  * is generic over the ids present, but the store always writes every measure of

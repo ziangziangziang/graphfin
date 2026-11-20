@@ -9,7 +9,7 @@ stale (it posts `userName`, the server requires `user`), and driving the wire
 directly is exactly what pins the client-visible contract.
 
 Run:
-  PHASE0_TEST_FILES=test_timeseries.py dev/phase0/run_tests.sh it
+  QA_TEST_FILES=test_timeseries.py qa/local/run.sh it
 """
 
 import json
@@ -24,7 +24,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from phase0_util import (DEFAULT_PASSWORD, DEFAULT_USER, ServerHandle, create_graph,
+from server_harness import (DEFAULT_PASSWORD, DEFAULT_USER, ServerHandle, create_graph,
                            cypher)
 
 log = logging.getLogger(__name__)
@@ -641,7 +641,7 @@ def backup_binary():
         candidate = os.path.abspath(candidate)
         if os.path.isfile(candidate):
             return candidate
-    raise RuntimeError("lgraph_backup not found. Build it with dev/phase0/build.sh first.")
+    raise RuntimeError("lgraph_backup not found. Build it with qa/local/run.sh build first.")
 
 
 def test_sigkill_durable_recovery(tmp_path):
@@ -747,7 +747,7 @@ def test_eviction_reopen_preserves_series(tmp_path):
 
     import httpx
 
-    from phase0_util import free_port
+    from server_harness import free_port
     monitor_port = free_port()
     db_dir = str(tmp_path / "evict_db")
     srv = ServerHandle(db_dir, extra_args=["--max_open_graphs", "2",
@@ -974,3 +974,133 @@ def test_clear_is_not_auto_retryable(rest):
         raise AssertionError("clear retry unexpectedly allowed")
     except ValueError as e:
         assert "not safe for automatic retry" in str(e)
+
+
+def test_append_batch_wire_and_atomicity(rest):
+    # series.append_batch: one call merges many points per bucket. Pins the
+    # YIELD written/replaced contract, last-wins duplicates, order independence
+    # and whole-call atomicity on a bad point (REST wire).
+    rest.cypher("CALL db.createVertexLabel('Batch', 'id', 'id', 'INT64', false)")
+    rest.cypher("CALL db.createSeriesField('Batch', 'prices', "
+                "[{name:'close', type:'DOUBLE'}, {name:'volume', type:'INT64'}], "
+                "{bucket_max_points:4}) YIELD field RETURN field")
+    rest.cypher("CREATE (c:Batch {id:1})")
+
+    base = 1704153600000000  # 2024-01-02 00:00:00
+    day = 86400000000
+
+    def call_batch(points_lit, match="(c:Batch {id:1})", proc="series.append_batch"):
+        return rest.cypher(
+            "MATCH %s CALL %s(c, 'prices', %s) "
+            "YIELD written, replaced RETURN written, replaced"
+            % (match, proc, points_lit))
+
+    def count():
+        _, rows = rest.cypher(
+            "MATCH (c:Batch {id:1}) RETURN series.count(c, 'prices') AS n")
+        return rows[0][0]
+
+    # Seven entries, six distinct timestamps, shuffled; the later ts=base+day
+    # entry wins (last-wins within the batch).
+    entries = [(3, 13.0, 130), (0, 10.0, 100), (1, 11.0, 110), (5, 15.0, 150),
+               (1, 99.0, 990), (2, 12.0, 120), (4, 14.0, 140)]
+    batch = "[" + ", ".join("{ts: %d, close: %s, volume: %d}"
+                            % (base + i * day, c, v) for i, c, v in entries) + "]"
+    _, rows = call_batch(batch)
+    assert rows == [[6, 0]]
+    assert count() == 6
+    _, rows = rest.cypher(
+        "MATCH (c:Batch {id:1}) RETURN series.at(c, 'prices', %d) AS point"
+        % (base + day))
+    point = json.loads(rows[0][0])
+    assert point["close"] == 99.0 and point["volume"] == 990
+    _, rows = rest.cypher(
+        "MATCH (c:Batch {id:1}) RETURN series.range(c, 'prices', %d, %d) AS pts"
+        % (base, base + 5 * day))
+    pts = json.loads(rows[0][0])
+    assert [p["close"] for p in pts] == [10.0, 99.0, 12.0, 13.0, 14.0, 15.0]
+
+    # A second batch mixes corrections of stored points with new appends.
+    _, rows = call_batch(
+        "[{ts: %d, close: 100.5, volume: 100}, {ts: %d, close: 15.0, volume: 550}, "
+        "{ts: %d, close: 16.0, volume: 160}, {ts: %d, close: 17.0, volume: 170}]"
+        % (base, base + 5 * day, base + 6 * day, base + 7 * day))
+    assert rows == [[2, 2]]
+    assert count() == 8
+
+    # Empty batch is a no-op; the underscore alias and a YIELD subset work;
+    # DATETIME timestamps are accepted alongside INT64 microseconds.
+    _, rows = call_batch("[]")
+    assert rows == [[0, 0]]
+    _, rows = rest.cypher(
+        "MATCH (c:Batch {id:1}) CALL series_append_batch(c, 'prices', "
+        "[{ts: %d, close: 18.0, volume: 180}]) YIELD written RETURN written"
+        % (base + 8 * day))
+    assert rows == [[1]]
+    _, rows = call_batch("[{ts: datetime('2024-02-01 00:00:00'), close: 1.5}]")
+    assert rows == [[1, 0]]
+    assert count() == 10
+
+    # A bad point anywhere rejects the whole call: the valid first point of
+    # each failing batch (all at the same fresh timestamp) must never land.
+    fresh = base + 100 * day
+    good_first = "{ts: %d, close: 1.0, volume: 1}" % fresh
+    bad_batches = [
+        ("[" + good_first + ", {close: 2.0}]", "point map needs a 'ts' entry"),
+        ("[" + good_first + ", {ts: %d, close: 2.0, bogus: 1}]" % (fresh + day),
+         "unknown measure"),
+        ("[" + good_first + ", 5]", "each point must be a map"),
+        ("[" + good_first + ", {ts: %d, close: 2.0, volume: [99]}]" % (fresh + day),
+         "declared type"),
+        ("[" + good_first + ", {ts: %d, close: toFloat('NaN')}]" % (fresh + day),
+         "finite"),
+        ("[" + good_first + ", {ts: 9223372036854775807, close: 2.0}]",
+         "out of DATETIME range"),
+    ]
+    for lit, needle in bad_batches:
+        try:
+            call_batch(lit)
+            raise AssertionError("bad batch unexpectedly succeeded: %s" % lit)
+        except CypherError as e:
+            assert needle in str(e), str(e)
+    assert count() == 10
+    _, rows = rest.cypher(
+        "MATCH (c:Batch {id:1}) RETURN series.at(c, 'prices', %d) AS point" % fresh)
+    assert rows[0][0] is None
+
+    # The recommended ingestion shape: one multi-row MATCH, one batch call per
+    # element, all inside one statement (one transaction). UNWIND-leading
+    # single-part queries are not supported by the engine, so the symbol set is
+    # expressed as a MATCH filter.
+    rest.cypher("CREATE (c:Batch {id:4}), (d:Batch {id:5})")
+    _, rows = rest.cypher(
+        "MATCH (c:Batch) WHERE c.id IN [4, 5] "
+        "CALL series.append_batch(c, 'prices', "
+        "[{ts: %d, close: 1.0, volume: c.id}, {ts: %d, close: 2.0, volume: c.id}]) "
+        "YIELD written, replaced RETURN written, replaced" % (base, base + day))
+    assert rows == [[2, 0], [2, 0]]
+
+    # Edge series take the same batch call.
+    rest.cypher("CALL db.createEdgeLabel('BLINK', '[]')")
+    rest.cypher("CALL db.createEdgeSeriesField('BLINK', 'w', "
+                "[{name:'v', type:'INT64'}], {bucket_max_points:4}) "
+                "YIELD field RETURN field")
+    rest.cypher("MATCH (a:Batch {id:4}), (b:Batch {id:5}) CREATE (a)-[:BLINK]->(b)")
+    _, rows = rest.cypher(
+        "MATCH ()-[r:BLINK]->() CALL series.append_batch(r, 'w', "
+        "[{ts: %d, v: 2}, {ts: %d, v: 1}, {ts: %d, v: 9}]) "
+        "YIELD written, replaced RETURN written, replaced"
+        % (base + 2 * day, base + day, base + 2 * day))
+    assert rows == [[2, 0]]
+    _, rows = rest.cypher(
+        "MATCH ()-[r:BLINK]->() CALL series.append_batch(r, 'w', "
+        "[{ts: %d, v: 7}, {ts: %d, v: 3}]) "
+        "YIELD written, replaced RETURN written, replaced"
+        % (base + day, base + 3 * day))
+    assert rows == [[1, 1]]
+    _, rows = rest.cypher(
+        "MATCH ()-[r:BLINK]->() RETURN series.at(r, 'w', %d) AS p" % (base + 2 * day))
+    assert json.loads(rows[0][0])["v"] == 9
+    _, rows = rest.cypher(
+        "MATCH ()-[r:BLINK]->() RETURN series.count(r, 'w') AS n")
+    assert rows == [[3]]

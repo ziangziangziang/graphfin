@@ -21,7 +21,7 @@ A number from this directory is only meaningful next to the environment block
 embedded in the JSON. Before comparing two results, check that these match:
 
 1. `env.container.image_id` — the pinned compile image (see
-   `ci/phase0/images.lock`). A different image means a different toolchain.
+   `qa/local/images.lock`). A different image means a different toolchain.
 2. `env.host.arch` — **do not compare arm64 and amd64 numbers.**
 3. `env.cpu.count`, `env.memory.cgroup_limit_bytes`, `env.limits.*` — the
    benchmark is resource-sensitive, especially thread and fd counts.

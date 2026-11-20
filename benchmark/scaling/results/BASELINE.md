@@ -110,14 +110,14 @@ Automatically derived from this run; confirm against `docs/architecture/07-scala
 ## 8. Reproduction
 
 ```bash
-# 1. build (see ci/phase0/images.lock for the pinned image)
-ci/phase0/doctor.sh
-ci/phase0/build.sh
+# 1. build (see qa/local/images.lock for the pinned image)
+qa/local/doctor.sh
+qa/local/run.sh build
 
 # 2. reproduce these measurements
 GRAPH_COUNTS='1 100 1000 4000'
-PHASE0_DOCKER_EXTRA='--cpus=4 --memory=6g' \
-  ci/phase0/run_bench.sh --graphs $GRAPH_COUNTS \
+QA_DOCKER_EXTRA='--cpus=4 --memory=6g' \
+  qa/local/run.sh bench --graphs $GRAPH_COUNTS \
     --out benchmark/scaling/results/baseline.json
 
 # 3. render this report

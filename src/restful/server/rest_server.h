@@ -24,13 +24,18 @@
 #include "server/state_machine.h"
 
 #include "restful/server/json_convert.h"
+#include "server/rest_service.h"
 
 #ifndef _WIN32
-#include "cypher/execution_plan/scheduler.h"
+// Only referenced through a pointer; the definition stays in
+// restful/server/rest_server.cpp.
+namespace cypher {
+class Scheduler;
+}
 #endif
 
 namespace lgraph {
-class RestServer {
+class RestServer : public IRestServer {
     enum RestPathCases {
         INVALID = 0,
         WEB = 1,
@@ -118,7 +123,7 @@ class RestServer {
     ~RestServer();
 
     void Start();
-    void Stop();
+    void Stop() override;
 
  private:
     void handle_get(web::http::http_request request);

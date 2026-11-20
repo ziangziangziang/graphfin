@@ -249,7 +249,7 @@ flowchart LR
 
 ```bash
 # 构建本分支；后续运行保留已有编译产物。
-CLEAN=0 JOBS=2 BUILD_TYPE=RelWithDebInfo bash dev/phase0/build.sh
+CLEAN=0 JOBS=2 BUILD_TYPE=RelWithDebInfo bash qa/local/run.sh build
 
 # 复用二进制；以下命令不会重新编译。
 bash ci/merge/run.sh unit

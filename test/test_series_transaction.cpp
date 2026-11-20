@@ -12,8 +12,10 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <random>
 #include <string>
 #include <thread>
 #include <vector>
@@ -588,6 +590,167 @@ TEST_F(TestSeriesTransaction, RepeatUpsertIsByteIdentical) {
                                              OnePoint(100.0 + i, 101.0 + i, 1000 + i)));
     }
     EXPECT_EQ(snapshot(), before);
+    txn.Commit();
+}
+
+namespace {
+
+series::Point BatchPoint(int64_t ts, double open, double close, int64_t volume) {
+    series::Point p;
+    p.ts = ts;
+    p.values = OnePoint(open, close, volume);
+    return p;
+}
+
+}  // namespace
+
+TEST_F(TestSeriesTransaction, BatchSetterMatchesSequentialLayout) {
+    const std::string dir = "./testdb_series_txn_batch";
+    AutoCleanDir cleaner(dir);
+    DBConfig conf;
+    conf.dir = dir;
+    LightningGraph db(conf);
+    AddCompanyLabel(db);  // bucket_max_points = 4
+
+    auto txn = db.CreateWriteTxn();
+    VertexId v1 = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                                std::vector<std::string>{"1"});
+    VertexId v2 = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                                std::vector<std::string>{"2"});
+    std::vector<series::Point> pts;
+    for (int i = 0; i < 10; ++i) {
+        pts.push_back(BatchPoint(i * kUsPerDay, 100.0 + i, 101.0 + i, 1000 + i));
+    }
+    for (const auto& p : pts) {
+        ASSERT_TRUE(txn.SetVertexSeriesPoint(v1, "prices", p.ts, p.values));
+    }
+    std::vector<series::Point> shuffled = pts;
+    std::shuffle(shuffled.begin(), shuffled.end(), std::mt19937_64(11));
+    series::BatchStats stats;
+    ASSERT_TRUE(txn.SetVertexSeriesPoints(v2, "prices", shuffled, &stats));
+    EXPECT_EQ(stats.written, 10u);
+    EXPECT_EQ(stats.replaced, 0u);
+
+    std::vector<series::Point> p1, p2;
+    ASSERT_TRUE(txn.GetVertexSeriesRange(v1, "prices", kMinTs, kMaxTs, &p1));
+    ASSERT_TRUE(txn.GetVertexSeriesRange(v2, "prices", kMinTs, kMaxTs, &p2));
+    ASSERT_EQ(p1.size(), p2.size());
+    for (size_t i = 0; i < p1.size(); ++i) {
+        EXPECT_EQ(p1[i].ts, p2[i].ts);
+        EXPECT_DOUBLE_EQ(p1[i].values[0].d, p2[i].values[0].d);
+        EXPECT_EQ(p1[i].values[2].i, p2[i].values[2].i);
+    }
+    // Same half-split layout as the sequential writer: 4 buckets each.
+    EXPECT_EQ(SeriesKeyCount(db, txn), 8u);
+
+    // A second batch mixes corrections of stored points with new appends.
+    std::vector<series::Point> second{BatchPoint(3 * kUsPerDay, 999.0, 1000.0, 7),
+                                      BatchPoint(7 * kUsPerDay, 888.0, 889.0, 8),
+                                      BatchPoint(10 * kUsPerDay, 110.0, 111.0, 1010),
+                                      BatchPoint(11 * kUsPerDay, 111.0, 112.0, 1011),
+                                      BatchPoint(12 * kUsPerDay, 112.0, 113.0, 1012)};
+    ASSERT_TRUE(txn.SetVertexSeriesPoints(v2, "prices", second, &stats));
+    EXPECT_EQ(stats.written, 3u);
+    EXPECT_EQ(stats.replaced, 2u);
+    ASSERT_TRUE(txn.GetVertexSeriesRange(v2, "prices", kMinTs, kMaxTs, &p2));
+    ASSERT_EQ(p2.size(), 13u);
+    EXPECT_DOUBLE_EQ(p2[3].values[0].d, 999.0);
+    EXPECT_DOUBLE_EQ(p2[7].values[0].d, 888.0);
+    EXPECT_EQ(p2[12].values[2].i, 1012);
+    txn.Commit();
+}
+
+TEST_F(TestSeriesTransaction, BatchSetterGuardsMirrorSinglePoint) {
+    const std::string dir = "./testdb_series_txn_batch_guards";
+    AutoCleanDir cleaner(dir);
+    DBConfig conf;
+    conf.dir = dir;
+    LightningGraph db(conf);
+    AddCompanyLabel(db);
+
+    auto txn = db.CreateWriteTxn();
+    VertexId v = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                               std::vector<std::string>{"1"});
+    for (int i = 0; i < 3; ++i) {
+        ASSERT_TRUE(txn.SetVertexSeriesPoint(v, "prices", i * kUsPerDay, OnePoint(i, i, i)));
+    }
+
+    // The vectors are built outside the macros: a brace-list with a comma in
+    // it would split the macro's argument list.
+    std::vector<series::Point> bad_count{BatchPoint(3 * kUsPerDay, 3, 3, 3)};
+    bad_count[0].values.pop_back();
+    UT_EXPECT_THROW_CODE(txn.SetVertexSeriesPoints(v, "prices", bad_count, nullptr),
+                         InputError);
+    std::vector<series::Point> bad_ts{BatchPoint(3 * kUsPerDay, 3, 3, 3),
+                                      BatchPoint(kMaxTs, 4, 4, 4)};
+    UT_EXPECT_THROW_CODE(txn.SetVertexSeriesPoints(v, "prices", bad_ts, nullptr), InputError);
+    std::vector<series::Point> bad_double{BatchPoint(3 * kUsPerDay, 3, 3, 3),
+                                          BatchPoint(4 * kUsPerDay, 4, 4, 4)};
+    bad_double[1].values[0] = MeasureValue::Double(std::numeric_limits<double>::quiet_NaN());
+    UT_EXPECT_THROW_CODE(txn.SetVertexSeriesPoints(v, "prices", bad_double, nullptr),
+                         InputError);
+    // Every rejected batch validated before writing: the series is untouched.
+    size_t count = 0;
+    ASSERT_TRUE(txn.GetVertexSeriesCount(v, "prices", kMinTs, kMaxTs, &count));
+    EXPECT_EQ(count, 3u);
+
+    std::vector<series::Point> one{BatchPoint(0, 1, 1, 1)};
+    EXPECT_FALSE(txn.SetVertexSeriesPoints(v + 100, "prices", one, nullptr));
+    EXPECT_FALSE(txn.SetVertexSeriesPoints(v, "no_such_field", one, nullptr));
+    UT_EXPECT_THROW_CODE(txn.SetVertexSeriesPoints(v, "id", one, nullptr), InputError);
+    txn.Commit();
+
+    auto rtxn = db.CreateReadTxn();
+    UT_EXPECT_THROW_CODE(rtxn.SetVertexSeriesPoints(v, "prices", one, nullptr),
+                         WriteNotAllowed);
+}
+
+TEST_F(TestSeriesTransaction, EdgeBatchSetterRoundTrip) {
+    const std::string dir = "./testdb_series_txn_edge_batch";
+    AutoCleanDir cleaner(dir);
+    DBConfig conf;
+    conf.dir = dir;
+    LightningGraph db(conf);
+    AddCompanyLabel(db);
+    AddLinkLabel(db);
+
+    auto txn = db.CreateWriteTxn();
+    VertexId v0 = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                                std::vector<std::string>{"1"});
+    VertexId v1 = txn.AddVertex(std::string("Company"), std::vector<std::string>{"id"},
+                                std::vector<std::string>{"2"});
+    EdgeUid euid = txn.AddEdge(v0, v1, std::string("link"), std::vector<std::string>{},
+                               std::vector<std::string>{});
+    auto edge_point = [](int64_t ts, int64_t v) {
+        series::Point p;
+        p.ts = ts;
+        p.values = IntPoint(v);
+        return p;
+    };
+    // Six entries, five distinct timestamps; the later ts=1 entry wins.
+    std::vector<series::Point> pts{edge_point(2 * kUsPerDay, 12), edge_point(0, 10),
+                                   edge_point(1 * kUsPerDay, 11), edge_point(4 * kUsPerDay, 14),
+                                   edge_point(1 * kUsPerDay, 99), edge_point(3 * kUsPerDay, 13)};
+    series::BatchStats stats;
+    ASSERT_TRUE(txn.SetEdgeSeriesPoints(euid, "w", pts, &stats));
+    EXPECT_EQ(stats.written, 5u);
+    EXPECT_EQ(stats.replaced, 0u);
+
+    std::vector<series::Point> points;
+    ASSERT_TRUE(txn.GetEdgeSeriesRange(euid, "w", kMinTs, kMaxTs, &points));
+    ASSERT_EQ(points.size(), 5u);
+    EXPECT_EQ(points[1].values[0].i, 99);
+
+    std::vector<series::Point> second{edge_point(0, 77), edge_point(5 * kUsPerDay, 15)};
+    ASSERT_TRUE(txn.SetEdgeSeriesPoints(euid, "w", second, &stats));
+    EXPECT_EQ(stats.written, 1u);
+    EXPECT_EQ(stats.replaced, 1u);
+    ASSERT_TRUE(txn.GetEdgeSeriesRange(euid, "w", kMinTs, kMaxTs, &points));
+    ASSERT_EQ(points.size(), 6u);
+    EXPECT_EQ(points[0].values[0].i, 77);
+
+    const EdgeUid no_such_edge(euid.dst, euid.src, euid.lid, euid.tid, euid.eid);
+    EXPECT_FALSE(txn.SetEdgeSeriesPoints(no_such_edge, "w", second, &stats));
     txn.Commit();
 }
 
@@ -1258,6 +1421,9 @@ TEST_F(TestSeriesTransaction, MutatingProcedureCallsWithReturnClassifyAsWrites) 
          false},
         {"MATCH (n:L {id:1}) CALL series.append(n, 's', {ts:1, v:1.0}) "
          "YIELD written RETURN written",
+         false},
+        {"MATCH (n:L {id:1}) CALL series.append_batch(n, 's', [{ts:1, v:1.0}]) "
+         "YIELD written, replaced RETURN written, replaced",
          false},
         {"MATCH (n:L {id:1}) CALL series.update_cas(n, 's', 'v', 1, 1.0, 2.0) "
          "YIELD written RETURN written",

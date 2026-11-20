@@ -35,7 +35,7 @@ This is a conceptual product illustration, not a deployed-cluster diagram.
 | Area | Implemented | Qualification / remaining work |
 | --- | --- | --- |
 | Property graph | Labeled nodes/edges, graph queries, indexes and ordinary properties inherited from TuGraph | Existing API limitations still apply |
-| Native series | Vertex/edge fields; typed measures; append, update, CAS, clear, exact-point/range/endpoint reads and aggregates | One mutable observation per timestamp; no built-in revision history |
+| Native series | Vertex/edge fields; typed measures; append (single-point and batched), update, CAS, clear, exact-point/range/endpoint reads and aggregates | One mutable observation per timestamp; no built-in revision history |
 | Transactions | Series buckets live in the graph's LMDB transaction | Cross-graph transactions and a global multi-graph snapshot are not promised |
 | Multi-graph resource control | Lazy graph open, eviction, cap/admission and lifecycle metrics | Active operations pin resources; graph-count limits are not complete process-RAM limits |
 | Replication | Existing three-node HA machinery and parent-branch chaos harness | Series schema/values must pass merged-binary failover and reconciliation tests; choose one write-replication path |

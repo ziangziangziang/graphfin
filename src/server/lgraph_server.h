@@ -18,7 +18,7 @@
 #include "core/global_config.h"
 #include "server/service.h"
 #include "server/state_machine.h"
-#include "restful/server/rest_server.h"
+#include "server/rest_service.h"
 #include "http/http_server.h"
 
 #ifndef _WIN32
@@ -83,7 +83,7 @@ class LGraphServer {
     Signal server_exit_;
     std::shared_ptr<lgraph::GlobalConfig> config_;
     std::unique_ptr<lgraph::StateMachine> state_machine_;
-    std::unique_ptr<lgraph::RestServer> rest_server_;
+    std::unique_ptr<lgraph::IRestServer> rest_server_;
     std::thread heartbeat_detect;
 #ifndef _WIN32
     std::unique_ptr<lgraph::RPCService> rpc_service_;

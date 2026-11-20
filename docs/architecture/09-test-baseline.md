@@ -1,20 +1,23 @@
 # 09 — Test Baseline (Phase 0)
 
-Recorded from the pinned arm64 environment (`dev/phase0/images.lock`), commit
-`672e4b199`, build flags per `dev/phase0/images.lock` (`RelWithDebInfo`,
+Recorded from the pinned arm64 environment (`qa/local/images.lock`), commit
+`672e4b199`, build flags per `qa/local/images.lock` (`RelWithDebInfo`,
 `BUILD_PROCEDURE=OFF`, `WITH_TESTS=ON`).
 
 Reproduce with:
 
 ```bash
-dev/phase0/doctor.sh
-JOBS=2 dev/phase0/build.sh
-dev/phase0/run_tests.sh ut    # upstream suites
-dev/phase0/run_tests.sh it    # integration suites
+qa/local/doctor.sh
+JOBS=2 qa/local/run.sh build
+qa/local/run.sh ut    # upstream suites
+qa/local/run.sh it    # integration suites
 ```
 
-Machine-readable results and full logs: `phase0-results/summary.json`,
-`phase0-results/ut.log`, `phase0-results/unit_test.xml`, `phase0-results/it.log`.
+Machine-readable results and full logs: `qa-results/summary.json`,
+`qa-results/ut.log`, `qa-results/unit_test.xml`, `qa-results/it.log`.
+
+GitHub Actions (`ci.yml`) runs lint/site on pull requests; the compiled
+Docker matrix runs only for `v*` tags or a manual dispatch.
 
 ## 1. Build
 
@@ -31,7 +34,7 @@ Two upstream arm64 blockers had to be resolved first; see
 | Blocker | Resolution |
 |---|---|
 | `-msse4.2` applied unconditionally (x86-only) | `build.sh` auto-detects aarch64 and passes `-DENABLE_BUILD_ON_AARCH64=ON` |
-| `lgraph_db_python` needs Cython 3.0; image has 0.29.37 | derived image `dev/phase0/env/Dockerfile.phase0` adds Cython 3.0.0 |
+| `lgraph_db_python` needs Cython 3.0; image has 0.29.37 | derived image `qa/local/env/Dockerfile` adds Cython 3.0.0 |
 
 Plus one resource blocker: `-j4` OOM-kills `cc1plus` on a ~7.8 GiB VM
 (`cypher/execution_plan/*.cpp` TUs need 1.5–2.5 GiB each). The default is now
@@ -56,7 +59,7 @@ Exit code 0.
 | Wall time | 932.8 s (15.5 min) |
 | Exit code | 1 |
 
-Source: `phase0-results/unit_test.xml`.
+Source: `qa-results/unit_test.xml`.
 
 #### The failing test
 
@@ -111,7 +114,7 @@ be triaged early in the next phase, starting by diffing `real_file` against
 ## 3. Phase 0 integration and failure tests
 
 The Phase 0-integrated suites pass against a freshly built server (the count
-below is the Phase-added subset; the full `dev/phase0/run_tests.sh it` run also
+below is the Phase-added subset; the full `qa/local/run.sh it` run also
 includes upstream integration files):
 
 | Suite | Tests | Focus |
@@ -126,7 +129,7 @@ includes upstream integration files):
 | `test_graph_lifecycle_restart.py` | 1 | restart with a large registered population stays lazy |
 | **Total** | **44** | |
 
-Run `dev/phase0/run_tests.sh it`; the Phase-added subset takes ~19 s, the full
+Run `qa/local/run.sh it`; the Phase-added subset takes ~19 s, the full
 upstream-integration run ~15 min.
 
 ### Notable expectations encoded in these tests
@@ -194,4 +197,4 @@ The ~998-graph ceiling documented in
 | Startup time, RAM, disk and fd usage recorded for each test size | **Met for achievable sizes** — `benchmark/scaling/results/BASELINE.md` |
 | Restart/recovery tests complete without data corruption | **Met** — includes SIGKILL mid-transaction atomicity |
 | Architecture document explains graph lifecycle and HA/Raft paths | **Met** — `docs/architecture/01`-`06` |
-| Benchmark results reproducible by another developer | **Met in principle** — pinned image ID verified on every run, environment captured with every result, exact commands recorded. Subject to the image-transfer caveat in `dev/phase0/env/README.md` (the image cannot be rebuilt from this checkout) |
+| Benchmark results reproducible by another developer | **Met in principle** — pinned image ID verified on every run, environment captured with every result, exact commands recorded. Subject to the image-transfer caveat in `qa/local/env/README.md` (the image cannot be rebuilt from this checkout) |

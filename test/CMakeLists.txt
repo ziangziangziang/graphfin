@@ -130,6 +130,7 @@ add_executable(unit_test
         test_upsert.cpp
         test_olap_vertex_traversal.cpp
         test_lgraph_log.cpp
+        test_public_headers.cpp
         test_detach_property.cpp
         test_ha_base.cpp
         test_global_ha_config.cpp
@@ -154,7 +155,7 @@ add_executable(unit_test
 
 target_link_libraries(unit_test
         vsag
-        /opt/OpenBLAS/lib/libopenblas.a
+        ${LGRAPH_OPENBLAS_LIBRARY}
         faiss
         lgraph_server_lib
         geax_isogql

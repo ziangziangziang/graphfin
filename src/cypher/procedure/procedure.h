@@ -158,6 +158,9 @@ class BuiltinProcedure {
     static void SeriesAppend(RTContext *ctx, const Record *record, const VEC_EXPR &args,
                              const VEC_STR &yield_items, std::vector<Record> *records);
 
+    static void SeriesAppendBatch(RTContext *ctx, const Record *record, const VEC_EXPR &args,
+                                  const VEC_STR &yield_items, std::vector<Record> *records);
+
     static void SeriesSet(RTContext *ctx, const Record *record, const VEC_EXPR &args,
                           const VEC_STR &yield_items, std::vector<Record> *records);
 
@@ -750,6 +753,22 @@ static std::vector<Procedure> global_procedures = {
                                   {"point", {2, lgraph_api::LGraphType::MAP}}},
               Procedure::SIG_SPEC{{"written", {0, lgraph_api::LGraphType::INTEGER}}}, false,
               false),
+
+    Procedure("series.append_batch", BuiltinProcedure::SeriesAppendBatch,
+              Procedure::SIG_SPEC{{"element", {0, lgraph_api::LGraphType::ANY}},
+                                  {"field", {1, lgraph_api::LGraphType::STRING}},
+                                  {"points", {2, lgraph_api::LGraphType::LIST}}},
+              Procedure::SIG_SPEC{{"written", {0, lgraph_api::LGraphType::INTEGER}},
+                                  {"replaced", {1, lgraph_api::LGraphType::INTEGER}}},
+              false, false),
+
+    Procedure("series_append_batch", BuiltinProcedure::SeriesAppendBatch,
+              Procedure::SIG_SPEC{{"element", {0, lgraph_api::LGraphType::ANY}},
+                                  {"field", {1, lgraph_api::LGraphType::STRING}},
+                                  {"points", {2, lgraph_api::LGraphType::LIST}}},
+              Procedure::SIG_SPEC{{"written", {0, lgraph_api::LGraphType::INTEGER}},
+                                  {"replaced", {1, lgraph_api::LGraphType::INTEGER}}},
+              false, false),
 
     Procedure("series.update", BuiltinProcedure::SeriesSet,
               Procedure::SIG_SPEC{{"element", {0, lgraph_api::LGraphType::ANY}},

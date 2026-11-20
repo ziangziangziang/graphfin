@@ -29,16 +29,25 @@ Intra-graph sharding, cross-shard query execution and distributed graph transact
 are separate designs, not consequences of whole-graph placement. Financial models
 and vendor-specific ingestion are application projects, not engine milestones.
 
+## Series track progress
+
+| Status | Item |
+| --- | --- |
+| done (unpushed) | Item 3 first slice: `series.append_batch` — per-bucket merge (`SeriesStore::UpsertBatch` + transaction batch setters), last-wins within-batch duplicates, `written`/`replaced` stats, 100k points/call cap. No on-disk format change; point-cap split layout byte-identical to sequential ascending appends |
+| TODO | Item 3 remainder: resumable ingestion, bounded reads/as-of access, streaming aggregates |
+| TODO | Open-bucket catalog (in-memory directory of the writable bucket per series) so per-symbol micro-batches stay cheap across calls |
+| TODO | Segmented bucket format (TSB2) design, gated behind item 2's identity/compatibility review |
+
 ## Reorganization track (REVIEW.md follow-ups)
 
 | Status | Item |
 | --- | --- |
 | done (unpushed) | PR fast checks vs main full suite; `pr-targeted` Docker gate disabled |
-| done (unpushed) | `ci/phase0/` → `dev/phase0/` |
+| done (unpushed) | `dev/phase0/` → `qa/local/`; experiment/sanitizer sources archived under `docs/architecture/evidence/phase0/` |
 | done (unpushed) | `graphfin_server` alias, `lgraph_server` compat + smoke check |
-| done (unpushed) | `test/suites.json` catalog; pr/merge/phase0 runners wired |
+| done (unpushed) | `test/suites.json` catalog; pr/merge/main/qa runners wired |
+| done (unpushed) | Perf/soak tiers (`perf-smoke`, `perf-series`, `perf-soak`) split from the main correctness gate |
 | TODO | Push the 4 local commits to PR #1 |
-| TODO | `dev/phase0/experiments/` → `test/stress/`; tests under GraphFin name |
 | TODO | Decide PR C++ slice: catalog has `pr-unit`, job currently disabled |
 | TODO | Scope CodeQL c-cpp off PRs (settings change, not code) |
 | TODO | GraphFin-tagged images + new lockfile; client/lib/storage migration per REVIEW stages |

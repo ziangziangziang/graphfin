@@ -18,7 +18,7 @@ the test can be tightened or loosened without code edits.
 
 Run:
   PHASE2_EVICT_POP=200 PHASE2_EVICT_THREADS=8 \
-      PHASE0_TEST_FILES=test_graph_lifecycle_eviction.py dev/phase0/run_tests.sh it
+      QA_TEST_FILES=test_graph_lifecycle_eviction.py qa/local/run.sh it
 """
 
 import logging
@@ -28,7 +28,7 @@ import threading
 
 import pytest
 
-from phase0_util import (
+from server_harness import (
     ServerHandle, count_vertices, create_graph, cypher, declare_vertex_label,
     list_graphs,
 )

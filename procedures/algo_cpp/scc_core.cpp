@@ -39,8 +39,6 @@ void SCCCore(OlapBase<Empty> & graph, ParallelVector<size_t>& label) {
                        ? a
                        : b;
         });
-    printf("use %lu as the pivot with out/in degree = (%lu, %lu)\n", pivot,
-           graph.OutDegree(pivot), graph.InDegree(pivot));
     // use the pivot to find the giant component via BFS
     size_t active_vertices = 1;
     active_in.Clear();

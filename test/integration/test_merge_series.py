@@ -10,7 +10,7 @@ import shutil
 
 import pytest
 
-from phase0_util import ServerHandle, create_graph, cypher, CypherError
+from server_harness import ServerHandle, create_graph, cypher, CypherError
 
 
 BASE_TS = 1704153600000000

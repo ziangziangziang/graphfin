@@ -13,6 +13,7 @@
 #define _TURN_OFF_PLATFORM_STRING
 #include "cpprest/http_client.h"
 #include "./ut_utils.h"
+#include "restful/server/json_convert.h"
 #include "lgraph/lgraph.h"
 #include "client/cpp/restful/rest_client.h"
 #include "lgraph/lgraph_rpc_client.h"

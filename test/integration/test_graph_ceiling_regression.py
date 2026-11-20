@@ -14,9 +14,9 @@ tests assert the ceiling is gone, on both the create path and the reopen path,
 and that the policy is actually in effect.
 
 Run:
-  PHASE0_TEST_FILES=test_graph_ceiling_regression.py dev/phase0/run_tests.sh it
-  PHASE0_CEILING_N=2000 PHASE0_TEST_FILES=test_graph_ceiling_regression.py \
-      dev/phase0/run_tests.sh it
+  QA_TEST_FILES=test_graph_ceiling_regression.py qa/local/run.sh it
+  QA_CEILING_N=2000 QA_TEST_FILES=test_graph_ceiling_regression.py \
+      qa/local/run.sh it
 """
 
 import logging
@@ -24,15 +24,15 @@ import os
 
 import pytest
 
-from phase0_util import (
+from server_harness import (
     ServerHandle, count_vertices, create_graph, cypher, delete_graph,
     graph_exists, list_graphs,
 )
 
 log = logging.getLogger(__name__)
 
-# Comfortably past the old 998 ceiling. Override with PHASE0_CEILING_N.
-CEILING_N = int(os.environ.get("PHASE0_CEILING_N", "1200"))
+# Comfortably past the old 998 ceiling. Override with QA_CEILING_N.
+CEILING_N = int(os.environ.get("QA_CEILING_N", "1200"))
 
 VERTEX_SCHEMA = (
     "CALL db.createVertexLabel('person', 'id', "

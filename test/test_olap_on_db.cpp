@@ -58,7 +58,7 @@ static const std::vector<std::pair<std::string, std::string>> data_import = {
             "primary" : "id",
             "properties" : [
                 {"name" : "id", "type":"INT32"},
-                {"name" : "value", "type" : "STRING", "optional": true}
+                {"name" : "value", "type" : "INT64", "optional": true}
             ]
         },
         {
@@ -387,19 +387,29 @@ TEST_F(TestOlapOnDB, OlapOnDB) {
         UT_EXPECT_EQ(filter_graph_two.NumVertices(), 21);
         UT_EXPECT_EQ(filter_graph_two.NumEdges(), 35);
 
-        txn.Commit();
-
-        // WriteToGraphDB
         ParallelVector<size_t> parent = filter_graph.AllocVertexArray<size_t>();
         for (int i = 0; i < parent.Size(); i++) {
             parent[i] = i;
         }
+        // A thread may hold only one transaction, so write-back refuses to start while
+        // the snapshot is still open rather than failing inside the transaction layer.
+        UT_EXPECT_THROW_MSG(filter_graph.WriteToGraphDB(parent, "value"),
+                            "while the snapshot transaction is open");
+
+        txn.Commit();
+
+        // WriteToGraphDB: with the snapshot committed, the size_t results land in the
+        // INT64 field as numbers, not as text.
         filter_graph.WriteToGraphDB(parent, "value");
         txn = db.CreateReadTxn();
         auto vit = txn.GetVertexIterator();
         vit.Goto(2);
+        UT_EXPECT_EQ(vit.GetField("value").GetType(), FieldType::INT64);
+        UT_EXPECT_EQ(vit.GetField("value").AsInt64(), (int64_t)2);
         UT_EXPECT_EQ(vit.GetField("value").ToString(), "2");
         vit.Goto(20);
+        UT_EXPECT_EQ(vit.GetField("value").GetType(), FieldType::INT64);
+        UT_EXPECT_EQ(vit.GetField("value").AsInt64(), (int64_t)20);
         UT_EXPECT_EQ(vit.GetField("value").ToString(), "20");
 
         // WriteToFile

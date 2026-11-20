@@ -1069,6 +1069,21 @@ class Transaction {
     bool SetVertexSeriesPoint(VertexId id, const std::string& field, int64_t ts,
                               const std::vector<series::MeasureValue>& values);
 
+    /**
+     * Writes many points of a vertex's series field in one pass, merging them
+     * into each bucket instead of rewriting it per point. Points may arrive in
+     * any order; duplicate timestamps within the batch collapse to the last
+     * occurrence. Every point is validated (same InputError texts as the
+     * single-point setter) before anything is written.
+     *
+     * `stats` (optional) receives the written/replaced counts. Returns false
+     * for a missing vertex or field, or when a point cannot fit the bucket
+     * byte cap; in the latter case earlier points may already sit in this
+     * transaction, so the caller must abort it to keep the batch atomic.
+     */
+    bool SetVertexSeriesPoints(VertexId id, const std::string& field,
+                               std::vector<series::Point> points, series::BatchStats* stats);
+
     /** Reads the points of a vertex's series with t0 <= ts <= t1, oldest first.
      *  kMinTs/kMaxTs are valid bounds. */
     bool GetVertexSeriesRange(VertexId id, const std::string& field, int64_t t0, int64_t t1,
@@ -1129,6 +1144,8 @@ class Transaction {
      */
     bool SetEdgeSeriesPoint(const EdgeUid& uid, const std::string& field, int64_t ts,
                             const std::vector<series::MeasureValue>& values);
+    bool SetEdgeSeriesPoints(const EdgeUid& uid, const std::string& field,
+                             std::vector<series::Point> points, series::BatchStats* stats);
     bool GetEdgeSeriesRange(const EdgeUid& uid, const std::string& field, int64_t t0, int64_t t1,
                             std::vector<series::Point>* points);
     bool GetEdgeSeriesCount(const EdgeUid& uid, const std::string& field, int64_t t0, int64_t t1,

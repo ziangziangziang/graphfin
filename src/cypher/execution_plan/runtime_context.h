@@ -20,8 +20,13 @@
 #include "cypher/parser/data_typedef.h"
 #include "cypher/resultset/result_info.h"
 #include "lgraph/lgraph_result.h"
-#include "bolt/connection.h"
 #include "geax-front-end/common/ObjectAllocator.h"
+
+// Only a pointer member is needed here; including bolt/connection.h would drag
+// boost::asio/beast into every cypher TU (about 1 GB of compiler peak RSS).
+namespace bolt {
+class BoltConnection;
+}
 
 namespace cypher {
 

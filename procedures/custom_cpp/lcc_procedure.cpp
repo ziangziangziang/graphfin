@@ -28,7 +28,7 @@ using json = nlohmann::json;
  *        The request should contain the following parameters:
  *        - "vertex_label_filter": Filter vertex sets based on vertex labels
  *        - "edge_label_filter": Filter edge sets based on edge labels
- *        - "lcc_value": Vertex field name to be written back into the database.
+ *        - "lcc_value": Name of a DOUBLE vertex field the scores are written back into.
  *        - "output_file": Lcc value to be written to the file.
  * @param response The output response in JSON format.
  *        The response will contain the following parameters:

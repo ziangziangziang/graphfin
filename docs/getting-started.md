@@ -7,15 +7,15 @@ GraphFin's merged changes. No public GraphFin runtime image is assumed here.
 
 Clone this repository with its submodules. On the documented arm64 development
 host, provision the pinned compile image using
-[the environment instructions](../dev/phase0/env/README.md). Other architectures
+[the environment instructions](../qa/local/env/README.md). Other architectures
 need their own compatible toolchain and evidence; an image-ID override is not
 equivalent to reproducing the pinned arm64 environment.
 
 ```bash
 git clone --recursive https://github.com/ziangziangziang/graphfin.git
 cd graphfin
-bash dev/phase0/doctor.sh
-CLEAN=0 JOBS=2 BUILD_TYPE=RelWithDebInfo bash dev/phase0/build.sh
+bash qa/local/doctor.sh
+CLEAN=0 JOBS=2 BUILD_TYPE=RelWithDebInfo bash qa/local/run.sh build
 ```
 
 `CLEAN=0` retains objects. A new checkout still needs its first complete build.
@@ -25,8 +25,8 @@ the ~8 GiB baseline Docker VM; do not increase it without a memory budget.
 For a server-only development change, use the configured build's existing target:
 
 ```bash
-bash -c 'source dev/phase0/container.sh
-phase0_run_compile cmake --build /workspace/build --target lgraph_server --parallel 2'
+bash -c 'source qa/local/container.sh
+qa_run_compile cmake --build /workspace/build --target lgraph_server --parallel 2'
 ```
 
 Run only one build against a build directory. A gtest filter selects executed
@@ -45,7 +45,7 @@ docker run --rm --name graphfin-dev \
   -v "$PWD:/workspace:ro" -v graphfin-dev-data:/var/lib/graphfin \
   -w /workspace/build/output \
   -e LD_LIBRARY_PATH=/workspace/build/output:/usr/local/lib64/lgraph:/usr/local/lib64:/usr/local/lib:/usr/lib/jvm/java-11-openjdk/lib/server \
-  tugraph-compile-arm64:phase0 ./lgraph_server \
+  graphfin-compile-arm64:local ./lgraph_server \
   -c lgraph_standalone.json --directory /var/lib/graphfin \
   --host 0.0.0.0 --port 7070 --rpc_port 9090 --enable_rpc true
 ```
@@ -110,7 +110,7 @@ Explicit one-time client dependency provisioning (the test run itself stays offl
 mkdir -p /tmp/graphfin-python-deps
 docker run --rm --platform linux/arm64 \
   -v "$PWD:/workspace:ro" -v /tmp/graphfin-python-deps:/deps \
-  tugraph-compile-arm64:phase0 python3 -m pip install --target /deps \
+  graphfin-compile-arm64:local python3 -m pip install --target /deps \
   -r /workspace/ci/merge/requirements-clients.txt
 MERGE_PYTHON_DEPS=/tmp/graphfin-python-deps bash ci/merge/run.sh clients
 ```

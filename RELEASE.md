@@ -53,7 +53,9 @@ and migration remain outside the public support claim.
    Do not erase the shared development tree or rebuild for each pytest run.
 2. Run `bash ci/merge/run.sh unit`, `smoke`, `clients`, and `ha` as applicable.
    Provision the real driver in the selected image first. Archive each run's XML,
-   manifest and logs; required skips reject the candidate.
+   manifest and logs; required skips reject the candidate. The GitHub `ci`
+   workflow compiles only for `v*` tags or an explicit manual dispatch; pull
+   requests run lint/site checks only, so manual gates remain authoritative.
 3. Close the release-scope rows in [the test matrix](docs/testing/post-merge.md).
    Agree numeric scale/latency/memory budgets and archive dedicated benchmark and
    soak records. Parent-branch results are not merged-release evidence.

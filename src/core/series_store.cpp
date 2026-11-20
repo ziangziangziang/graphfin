@@ -598,6 +598,134 @@ bool SeriesStore::Upsert(KvTransaction& txn, const ElementKey& elem, uint16_t fi
     return WriteBucket(txn, field_prefix, bucket, columns, policy);
 }
 
+bool SeriesStore::UpsertBatch(KvTransaction& txn, const ElementKey& elem, uint16_t field_id,
+                              std::vector<Point> points, const std::vector<MeasureColumn>& columns,
+                              const BucketPolicy& policy, BatchStats* stats) {
+    if (stats) *stats = BatchStats();
+    const size_t n_measures = columns.size();
+    if (n_measures == 0) return false;
+    // Validate everything before the first write so an invalid point anywhere
+    // in the batch leaves the transaction untouched.
+    for (const Point& pt : points) {
+        if (!IsValidSeriesTimestamp(pt.ts)) return false;
+        if (!MeasureValuesAreStorable(pt.values, columns)) return false;
+    }
+    if (points.empty()) return true;
+
+    std::stable_sort(points.begin(), points.end(),
+                     [](const Point& a, const Point& b) { return a.ts < b.ts; });
+    // Last-wins dedup: of equal timestamps the later input occurrence survives.
+    size_t n = 0;
+    for (size_t i = 0; i < points.size(); ++i) {
+        if (n > 0 && points[n - 1].ts == points[i].ts) {
+            points[n - 1].values = std::move(points[i].values);
+        } else {
+            if (n != i) points[n] = std::move(points[i]);
+            ++n;
+        }
+    }
+    points.resize(n);
+
+    std::string field_prefix;
+    MakeFieldPrefix(elem, field_id, &field_prefix);
+
+    Bucket cur;
+    bool have_cur = false;
+    bool dirty = false;
+    // Start of the first stored bucket after cur; a point at or past it belongs
+    // to a different bucket and forces a reload. Key-only peek, no decode.
+    int64_t next_start = kMaxTs;
+    size_t written = 0;
+    size_t replaced = 0;
+
+    for (const Point& pt : points) {
+        bool merge = false;
+        if (have_cur && pt.ts < next_start) {
+            merge = !(policy.max_span_us > 0 && pt.ts > cur.LastTs() &&
+                      static_cast<uint64_t>(pt.ts) - static_cast<uint64_t>(cur.first_ts) >
+                          policy.max_span_us);
+        }
+        if (!merge) {
+            if (have_cur && dirty &&
+                !WriteBucket(txn, field_prefix, cur, columns, policy)) {
+                return false;
+            }
+            have_cur = false;
+            dirty = false;
+            next_start = kMaxTs;
+
+            std::string key;
+            bool found = false;
+            if (!FindBucketFloor(txn, field_prefix, pt.ts, &key, &found)) return false;
+            if (found) {
+                const Value stored = table_->GetValue(txn, Value::ConstRef(key), true);
+                decode_count_.fetch_add(1, std::memory_order_relaxed);
+                if (!DecodeBucket(stored.Data(), stored.Size(), columns, &cur)) return false;
+                auto it = table_->GetClosestIterator(txn, Value::ConstRef(key));
+                it->Next();
+                if (it->IsValid() &&
+                    fma_common::StartsWith(it->GetKey().AsString(), field_prefix)) {
+                    uint16_t fid = 0;
+                    if (!ParseBucketKey(it->GetKey(), &fid, &next_start)) return false;
+                }
+                if (policy.max_span_us > 0 && pt.ts > cur.LastTs() &&
+                    static_cast<uint64_t>(pt.ts) - static_cast<uint64_t>(cur.first_ts) >
+                        policy.max_span_us) {
+                    found = false;
+                }
+            } else {
+                // No bucket starts at or before pt.ts; the field's first bucket
+                // (if any) bounds the new one from above.
+                auto it = table_->GetClosestIterator(txn, Value::ConstRef(field_prefix));
+                if (it->IsValid() &&
+                    fma_common::StartsWith(it->GetKey().AsString(), field_prefix)) {
+                    uint16_t fid = 0;
+                    if (!ParseBucketKey(it->GetKey(), &fid, &next_start)) return false;
+                }
+            }
+            if (!found) {
+                cur = Bucket();
+                cur.first_ts = pt.ts;
+                cur.measure_ids.resize(n_measures);
+                cur.columns.assign(n_measures, std::vector<MeasureValue>());
+                for (size_t c = 0; c < n_measures; ++c) {
+                    cur.measure_ids[c] = static_cast<uint16_t>(c);
+                }
+            }
+            have_cur = true;
+        }
+
+        const auto pos = std::lower_bound(cur.timestamps.begin(), cur.timestamps.end(), pt.ts);
+        const size_t p = static_cast<size_t>(pos - cur.timestamps.begin());
+        if (pos != cur.timestamps.end() && *pos == pt.ts) {
+            for (size_t c = 0; c < n_measures; ++c) cur.columns[c][p] = pt.values[c];
+            ++replaced;
+        } else {
+            cur.timestamps.insert(pos, pt.ts);
+            for (size_t c = 0; c < n_measures; ++c) {
+                cur.columns[c].insert(cur.columns[c].begin() + p, pt.values[c]);
+            }
+            ++written;
+        }
+        dirty = true;
+
+        // Flush as soon as the point cap is exceeded, exactly when a sequential
+        // Upsert would split, so the split layout matches point-for-point. The
+        // next point reloads the floor and sees the split halves.
+        if (policy.max_points > 0 && cur.PointCount() > policy.max_points) {
+            if (!WriteBucket(txn, field_prefix, cur, columns, policy)) return false;
+            have_cur = false;
+            dirty = false;
+        }
+    }
+    if (have_cur && dirty && !WriteBucket(txn, field_prefix, cur, columns, policy)) return false;
+    if (stats) {
+        stats->written = written;
+        stats->replaced = replaced;
+    }
+    return true;
+}
+
 bool SeriesStore::Range(KvTransaction& txn, const ElementKey& elem, uint16_t field_id, int64_t t0,
                         int64_t t1, const std::vector<MeasureColumn>& columns,
                         std::vector<Point>* points) const {

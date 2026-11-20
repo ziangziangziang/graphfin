@@ -73,7 +73,5 @@ void HITSCore(OlapBase<Empty> & graph, ParallelVector<double>& authority,
                 },
                 active);
         hub_next.Swap(hub);
-
-        printf("delta(%d) = %lf\n", iter_i, curr_delta);
     }
 }

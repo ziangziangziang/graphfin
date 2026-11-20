@@ -28,7 +28,7 @@ using json = nlohmann::json;
  *        The request should contain the following parameters:
  *        - "vertex_label_filter": Filter vertex sets based on vertex labels
  *        - "edge_label_filter": Filter edge sets based on edge labels
- *        - "lpa_value": Vertex field name to be written back into the database.
+ *        - "lpa_value": Name of an INT64 vertex field the labels are written back into.
  *        - "output_file": Lpa value to be written to the file.
  * @param response The output response in JSON format.
  *       The response will contain the following parameters:
